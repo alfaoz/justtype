@@ -1,9 +1,10 @@
 // PM2 configuration for production
+// NOTE: Update 'interpreter' path to match your node installation
 module.exports = {
   apps: [{
     name: 'justtype',
     script: './server/index.js',
-    interpreter: '/root/.nvm/versions/node/v20.19.6/bin/node',
+    interpreter: 'node', // or specify your node path
     exec_mode: 'fork',
     instances: 1,
     autorestart: true,

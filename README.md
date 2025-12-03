@@ -2,47 +2,65 @@
 
 minimalist writing app with cloud storage and sharing.
 
+live at **[type.alfaoz.dev](https://type.alfaoz.dev)**
+
+## why open source?
+
+transparency. we claim your private slates are encrypted—now you can verify it yourself. check the code, audit the crypto, run your own instance if you want.
+
 ## features
 
 - distraction-free writing interface
-- cloud-synced slates
+- cloud-synced slates (auto-save)
 - publish and share with unique urls
 - end-to-end encryption (aes-256-gcm)
-- auto-save
 - export to txt/pdf
 
-## setup
+## how encryption works
+
+```
+your password → pbkdf2 (100k iterations) → encryption key
+your slates → aes-256-gcm → encrypted storage (backblaze b2)
+```
+
+- private slates: encrypted at rest, only you can decrypt
+- published slates: stored unencrypted for public access
+- keys never leave your browser, server never sees plaintext
+
+check the implementation: `server/index.js` (lines 23-64)
+
+## tech stack
+
+- frontend: react + tailwind css
+- backend: node.js + express
+- storage: sqlite + backblaze b2
+- encryption: pbkdf2 + aes-256-gcm
+
+## self-hosting
+
+want to run your own? we support it but don't optimize for it.
 
 ```bash
+git clone https://github.com/alfaoz/justtype.git
+cd justtype
 npm install
 cp .env.example .env
-# configure backblaze b2 credentials in .env
+# configure your b2 credentials in .env
+npm run build
 npm run server
 ```
 
-## tech
+requires: node 20+, backblaze b2 account, resend api key (for emails)
 
-- react + tailwind css
-- node.js + express
-- sqlite + backblaze b2
-- per-user encryption (pbkdf2 + aes-256-gcm)
+## contributing
 
-## env vars
+found a bug? security issue? want to add a feature?
 
-```
-PORT=3001
-JWT_SECRET=your-secret
-B2_APPLICATION_KEY_ID=your-key
-B2_APPLICATION_KEY=your-secret
-B2_BUCKET_ID=your-bucket
-```
+- **security issues:** email security@alfaoz.dev (not github issues)
+- **bugs/features:** open an issue or pr
+- **style guide:** see CONTRIBUTING.md
 
-## security
-
-- per-user encryption keys derived from passwords
-- aes-256-gcm authenticated encryption
-- published slates use unencrypted public copies
-- private slates remain encrypted at rest
+we're picky about ux but welcome thoughtful contributions.
 
 ## license
 

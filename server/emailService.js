@@ -3,7 +3,7 @@ const { Resend } = require('resend');
 const { strings } = require('./strings.cjs');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@type.alfaoz.dev';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@yourdomain.com';
 
 async function sendVerificationEmail(email, username, verificationCode) {
   try {

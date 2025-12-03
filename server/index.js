@@ -12,7 +12,12 @@ const { validateEmailForRegistration } = require('./emailValidator');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET not set in .env file');
+  process.exit(1);
+}
 
 // Generate short share IDs (e.g., "a3bK9qL")
 const generateShareId = customAlphabet('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 8);
@@ -720,7 +725,11 @@ app.get('/api/health', (req, res) => {
 // Admin authentication
 app.post('/api/admin/auth', (req, res) => {
   const { password } = req.body;
-  const adminPassword = process.env.ADMIN_PASSWORD || 'changeme123';
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminPassword) {
+    return res.status(503).json({ error: 'Admin access not configured' });
+  }
 
   if (password === adminPassword) {
     const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
