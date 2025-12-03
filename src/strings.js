@@ -58,7 +58,6 @@ const strings = {
       title: 'about justtype',
       description: 'minimalist writing app with cloud storage and sharing.',
       encryption: 'your slates are encrypted with AES-256-GCM. private slates stay encrypted, published ones are public.',
-      openSource: 'open source at github.com/alfaoz/justtype',
       version: (v) => `version ${v}`,
       close: 'close'
     }

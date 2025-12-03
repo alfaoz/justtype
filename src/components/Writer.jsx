@@ -643,7 +643,9 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             <div className="space-y-4 text-sm text-[#a0a0a0]">
               <p>{strings.writer.about.description}</p>
               <p className="text-xs">{strings.writer.about.encryption}</p>
-              <p className="text-xs">{strings.writer.about.openSource}</p>
+              <p className="text-xs">
+                open-source at <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">github</a> · by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">alfaoz</a>
+              </p>
               <p className="text-xs text-[#666] pt-2 border-t border-[#333]">
                 {strings.writer.about.version(VERSION)}
               </p>
