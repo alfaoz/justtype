@@ -33,9 +33,14 @@ if [ $? -ne 0 ]; then
 fi
 
 # switch to node 20 and build frontend
-echo "building frontend with Node 20..."
+echo "switching to Node 20..."
 source ~/.nvm/nvm.sh
 nvm use 20
+
+echo "installing dependencies for Node 20..."
+npm install --include=dev
+
+echo "building frontend..."
 npm run build
 
 if [ $? -ne 0 ]; then
