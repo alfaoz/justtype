@@ -5,15 +5,14 @@ thanks for wanting to make justtype better!
 ## what we're looking for
 
 - bug fixes (especially security/encryption related)
-- ux improvements (we're picky, be prepared to iterate)
-- export formats (markdown, docx, etc.)
+- ux improvements (we're picky with the design, but 100% open for qol improvements.)
 - performance optimizations
 - code cleanup/refactoring
 
-## what we're NOT looking for
+## what we're not looking for
 
 - major feature rewrites without discussion first
-- ui redesigns (the minimalism is intentional)
+- ui redesigns
 - tracking/analytics (privacy-first, always)
 
 ## development setup
@@ -58,14 +57,14 @@ server/
 
 ## making changes
 
-1. open an issue first for big changes (let's discuss before you spend time)
+1. open an issue first for big changes (let's discuss before you spend precious time!)
 2. create a new branch (`fix/thing` or `feature/thing`)
 3. make your changes
 4. test thoroughly (build, run, verify it works)
-5. commit with clear message (lowercase, imperative: "fix encryption bug" not "Fixed bug")
+5. commit with clear message (explanatory, imperative: "fix encryption bug" not "Fixed bug")
 6. push and create pull request
 
-## version numbering
+## version numbering (c'mon...)
 
 semantic versioning (MAJOR.MINOR.PATCH):
 - MAJOR: breaking changes
@@ -78,11 +77,9 @@ update in both:
 
 ## code style
 
-- lowercase for all ui text
+- lowercase for ui strings
 - functional react components with hooks
 - async/await for promises
-- clear variable names
-- comments for complex logic only
 
 ## testing
 
@@ -118,4 +115,4 @@ curl http://localhost:3001/api/health
 - not sure if something is worth doing? open an issue first
 - want to chat? open a discussion
 
-we're friendly, promise.
+,,don't fret, we're friendly.'' - justtype dev, alfaoz
