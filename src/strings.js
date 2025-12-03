@@ -152,26 +152,56 @@ const strings = {
       newPlaceholder: 'new password',
       confirmPlaceholder: 'confirm new password',
       submit: 'change password',
-      submitting: 'changing...'
+      submitting: 'changing...',
+      errors: {
+        mismatch: 'New passwords do not match',
+        tooShort: 'New password must be at least 6 characters',
+        changeFailed: 'Failed to change password'
+      },
+      success: 'Password changed successfully'
     },
     sessions: {
       title: 'sessions',
       loading: 'loading sessions...',
       count: (count) => `active sessions: ${count}`,
       unknownDevice: 'Unknown Device',
+      unknownIp: 'Unknown IP',
+      localhost: 'localhost',
       currentBadge: 'current',
       lastActive: (time) => `last active: ${time}`,
       created: (time) => `created: ${time}`,
       logout: 'logout',
       logoutAll: 'logout all sessions',
-      loggingOut: 'logging out...'
+      loggingOut: 'logging out...',
+      time: {
+        justNow: 'just now',
+        minutesAgo: (mins) => `${mins}m ago`,
+        hoursAgo: (hrs) => `${hrs}h ago`,
+        daysAgo: (days) => `${days}d ago`
+      },
+      modal: {
+        title: 'logout from all devices?',
+        message: 'you will need to login again on all devices, including this one.',
+        confirm: 'logout all',
+        cancel: 'cancel'
+      },
+      errors: {
+        logoutAllFailed: 'Failed to logout from all sessions'
+      }
     },
     danger: {
       title: 'danger zone',
       warning: 'Once you delete your account, all your slates will be permanently shredded and burned. Try bringing that back.',
       confirmPlaceholder: (username) => `type "${username}" to confirm`,
+      confirmInstruction: (username) => `type ${username} to confirm`,
       submit: 'delete account',
-      submitting: 'deleting...'
+      submitting: 'deleting...',
+      modal: {
+        cancel: 'cancel'
+      },
+      errors: {
+        confirmMismatch: (username) => `Please type "${username}" to confirm`
+      }
     },
     emailChange: {
       title: 'change email',
@@ -182,7 +212,15 @@ const strings = {
       verifyInstructions: (email) => `Enter the 6-digit code sent to ${email}`,
       codePlaceholder: 'verification code',
       submitVerify: 'verify',
-      submittingVerify: 'verifying...'
+      submittingVerify: 'verifying...',
+      success: {
+        codeSent: (email) => `Verification code sent to your new email`,
+        changed: 'Email changed successfully!'
+      },
+      errors: {
+        sendFailed: 'Failed to send verification code',
+        verifyFailed: 'Failed to verify code'
+      }
     }
   },
 
@@ -192,11 +230,21 @@ const strings = {
       title: 'admin console',
       tokenLabel: 'admin token',
       tokenPlaceholder: 'enter admin token',
-      submit: 'login'
+      submit: 'login',
+      errors: {
+        authFailed: 'Authentication failed',
+        failed: 'Failed to authenticate'
+      }
     },
     dashboard: {
       title: 'admin console',
       logout: 'logout',
+      tabs: {
+        overview: 'Overview',
+        users: 'Users',
+        logs: 'Logs',
+        health: 'Health'
+      },
       stats: {
         title: 'stats',
         totalUsers: 'total users:',
@@ -205,12 +253,64 @@ const strings = {
       },
       users: {
         title: 'users',
-        loading: 'loading users...',
+        loading: 'loading...',
+        loadingUsers: 'loading users...',
         slateCount: (count) => `${count} slates`,
         verified: 'verified',
         notVerified: 'not verified', // should be deprecated!
         joined: (date) => `joined ${date}`,
-        deleteUser: 'delete user'
+        deleteUser: 'delete user',
+        noUsers: 'no users found',
+        table: {
+          id: 'id',
+          username: 'username',
+          email: 'email',
+          verified: 'verified',
+          slates: 'slates',
+          storage: 'storage',
+          joined: 'joined',
+          actions: 'actions'
+        },
+        pagination: {
+          showing: (start, end, total) => `showing ${start}-${end} of ${total} users`,
+          prev: 'prev',
+          next: 'next'
+        },
+        deleteConfirm: (username) => `Are you sure you want to delete user "${username}"? This will delete all their slates and cannot be undone.`,
+        deleteSuccess: (username) => `User "${username}" deleted successfully`,
+        errors: {
+          fetchFailed: 'Failed to fetch users',
+          deleteFailed: 'Failed to delete user'
+        }
+      },
+      overview: {
+        b2Title: 'b2 storage usage',
+        classB: 'class b (reads)',
+        classC: 'class c (writes)',
+        bandwidth: 'bandwidth',
+        dailyCap: (percent, limit) => `${percent}% of ${limit} daily cap`,
+        quickStats: 'quick stats',
+        totalUsers: 'total users',
+        totalSlates: 'total slates',
+        published: 'published',
+        storageUsed: 'storage used',
+        todayGrowth: (count) => `+${count} today`
+      },
+      logs: {
+        title: 'activity logs',
+        loading: 'loading...',
+        noLogs: 'no logs found',
+        table: {
+          time: 'time',
+          action: 'action',
+          target: 'target',
+          details: 'details',
+          ip: 'ip address'
+        }
+      },
+      health: {
+        title: 'system health',
+        loading: 'loading...'
       }
     }
   },
@@ -264,6 +364,8 @@ or they mistyped their email? either way, it's safe to ignore this email!
     saveFailed: 'failed to save',
     loadFailed: 'failed to load',
     deleteFailed: 'failed to delete',
+    deleteSlate: 'Failed to delete slate',
+    publishFailed: 'Failed to update publish status',
     loginFailed: 'login failed',
     signupFailed: 'signup failed',
     verificationFailed: 'verification failed',

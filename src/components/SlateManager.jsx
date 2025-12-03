@@ -69,11 +69,11 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
         setSlates(prevSlates => prevSlates.filter(s => s.id !== id));
       } else {
         const data = await response.json();
-        alert(data.error || 'Failed to delete slate');
+        alert(data.error || strings.errors.deleteSlate);
       }
     } catch (err) {
       console.error('Failed to delete slate:', err);
-      alert('Failed to delete slate');
+      alert(strings.errors.deleteSlate);
     }
   };
 
@@ -108,11 +108,11 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
         );
       } else {
         const data = await response.json();
-        alert(data.error || 'Failed to update publish status');
+        alert(data.error || strings.errors.publishFailed);
       }
     } catch (err) {
       console.error('Failed to toggle publish:', err);
-      alert('Failed to update publish status');
+      alert(strings.errors.publishFailed);
     }
   };
 

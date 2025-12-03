@@ -110,10 +110,10 @@ export function AdminConsole() {
         setIsAuthenticated(true);
         setPassword('');
       } else {
-        setError(data.error || 'Authentication failed');
+        setError(data.error || strings.admin.login.errors.authFailed);
       }
     } catch (err) {
-      setError('Failed to authenticate');
+      setError(strings.admin.login.errors.failed);
     } finally {
       setLoading(false);
     }
@@ -132,14 +132,14 @@ export function AdminConsole() {
         setUsers(data.users);
         setUsersPagination(data.pagination);
       } else {
-        setError(data.error || 'Failed to fetch users');
+        setError(data.error || strings.admin.dashboard.users.errors.fetchFailed);
         if (response.status === 403) {
           setIsAuthenticated(false);
           localStorage.removeItem('admin-token');
         }
       }
     } catch (err) {
-      setError('Failed to fetch users');
+      setError(strings.admin.dashboard.users.errors.fetchFailed);
     } finally {
       setLoading(false);
     }
@@ -204,7 +204,7 @@ export function AdminConsole() {
   };
 
   const handleDeleteUser = async (userId, username) => {
-    if (!confirm(`Are you sure you want to delete user "${username}"? This will delete all their slates and cannot be undone.`)) {
+    if (!confirm(strings.admin.dashboard.users.deleteConfirm(username))) {
       return;
     }
 
@@ -217,13 +217,13 @@ export function AdminConsole() {
       const data = await response.json();
 
       if (response.ok) {
-        alert(`User "${username}" deleted successfully`);
+        alert(strings.admin.dashboard.users.deleteSuccess(username));
         fetchUsers(usersPagination.page);
       } else {
-        alert(data.error || 'Failed to delete user');
+        alert(data.error || strings.admin.dashboard.users.errors.deleteFailed);
       }
     } catch (err) {
-      alert('Failed to delete user');
+      alert(strings.admin.dashboard.users.errors.deleteFailed);
     }
   };
 
@@ -289,7 +289,7 @@ export function AdminConsole() {
                   : 'text-[#666] hover:text-[#a0a0a0]'
               }`}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {strings.admin.dashboard.tabs[tab]}
             </button>
           ))}
         </div>
@@ -336,10 +336,10 @@ function OverviewTab({ b2Stats, healthMetrics }) {
       {/* B2 Usage Stats */}
       {b2Stats && (
         <div>
-          <h2 className="text-sm text-white mb-4">b2 storage usage</h2>
+          <h2 className="text-sm text-white mb-4">{strings.admin.dashboard.overview.b2Title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <h3 className="text-xs text-[#666] mb-2">class b (reads)</h3>
+              <h3 className="text-xs text-[#666] mb-2">{strings.admin.dashboard.overview.classB}</h3>
               <p className="text-2xl text-white mb-1">{b2Stats.classB.toLocaleString()}</p>
               <div className="w-full bg-[#333] h-2 rounded overflow-hidden mb-1">
                 <div
@@ -354,12 +354,12 @@ function OverviewTab({ b2Stats, healthMetrics }) {
                 ></div>
               </div>
               <p className="text-xs text-[#666]">
-                {b2Stats.percentages.classB.percent}% of {b2Stats.percentages.classB.limit.toLocaleString()} daily cap
+                {strings.admin.dashboard.overview.dailyCap(b2Stats.percentages.classB.percent, b2Stats.percentages.classB.limit.toLocaleString())}
               </p>
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <h3 className="text-xs text-[#666] mb-2">class c (writes)</h3>
+              <h3 className="text-xs text-[#666] mb-2">{strings.admin.dashboard.overview.classC}</h3>
               <p className="text-2xl text-white mb-1">{b2Stats.classC.toLocaleString()}</p>
               <div className="w-full bg-[#333] h-2 rounded overflow-hidden mb-1">
                 <div
@@ -374,12 +374,12 @@ function OverviewTab({ b2Stats, healthMetrics }) {
                 ></div>
               </div>
               <p className="text-xs text-[#666]">
-                {b2Stats.percentages.classC.percent}% of {b2Stats.percentages.classC.limit.toLocaleString()} daily cap
+                {strings.admin.dashboard.overview.dailyCap(b2Stats.percentages.classC.percent, b2Stats.percentages.classC.limit.toLocaleString())}
               </p>
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <h3 className="text-xs text-[#666] mb-2">bandwidth</h3>
+              <h3 className="text-xs text-[#666] mb-2">{strings.admin.dashboard.overview.bandwidth}</h3>
               <p className="text-2xl text-white mb-1">{b2Stats.percentages.bandwidth.usedMB} MB</p>
               <div className="w-full bg-[#333] h-2 rounded overflow-hidden mb-1">
                 <div
@@ -394,7 +394,7 @@ function OverviewTab({ b2Stats, healthMetrics }) {
                 ></div>
               </div>
               <p className="text-xs text-[#666]">
-                {b2Stats.percentages.bandwidth.percent}% of {b2Stats.percentages.bandwidth.limitGB} GB daily cap
+                {strings.admin.dashboard.overview.dailyCap(b2Stats.percentages.bandwidth.percent, `${b2Stats.percentages.bandwidth.limitGB} GB`)}
               </p>
             </div>
           </div>
@@ -404,31 +404,31 @@ function OverviewTab({ b2Stats, healthMetrics }) {
       {/* Quick Stats */}
       {healthMetrics && (
         <div>
-          <h2 className="text-sm text-white mb-4">quick stats</h2>
+          <h2 className="text-sm text-white mb-4">{strings.admin.dashboard.overview.quickStats}</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <p className="text-xs text-[#666] mb-1">total users</p>
+              <p className="text-xs text-[#666] mb-1">{strings.admin.dashboard.overview.totalUsers}</p>
               <p className="text-2xl text-white">{healthMetrics.database.users.toLocaleString()}</p>
               {healthMetrics.growth.newUsers24h > 0 && (
-                <p className="text-xs text-green-400 mt-1">+{healthMetrics.growth.newUsers24h} today</p>
+                <p className="text-xs text-green-400 mt-1">{strings.admin.dashboard.overview.todayGrowth(healthMetrics.growth.newUsers24h)}</p>
               )}
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <p className="text-xs text-[#666] mb-1">total slates</p>
+              <p className="text-xs text-[#666] mb-1">{strings.admin.dashboard.overview.totalSlates}</p>
               <p className="text-2xl text-white">{healthMetrics.database.slates.toLocaleString()}</p>
               {healthMetrics.growth.newSlates24h > 0 && (
-                <p className="text-xs text-green-400 mt-1">+{healthMetrics.growth.newSlates24h} today</p>
+                <p className="text-xs text-green-400 mt-1">{strings.admin.dashboard.overview.todayGrowth(healthMetrics.growth.newSlates24h)}</p>
               )}
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <p className="text-xs text-[#666] mb-1">published</p>
+              <p className="text-xs text-[#666] mb-1">{strings.admin.dashboard.overview.published}</p>
               <p className="text-2xl text-white">{healthMetrics.database.published.toLocaleString()}</p>
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <p className="text-xs text-[#666] mb-1">storage used</p>
+              <p className="text-xs text-[#666] mb-1">{strings.admin.dashboard.overview.storageUsed}</p>
               <p className="text-2xl text-white">{healthMetrics.database.totalStorageGB} GB</p>
             </div>
           </div>
@@ -446,7 +446,11 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
       {pagination.total > 0 && (
         <div className="flex justify-between items-center text-xs">
           <p className="text-[#666]">
-            showing {((pagination.page - 1) * pagination.limit) + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} users
+            {strings.admin.dashboard.users.pagination.showing(
+              ((pagination.page - 1) * pagination.limit) + 1,
+              Math.min(pagination.page * pagination.limit, pagination.total),
+              pagination.total
+            )}
           </p>
           <div className="flex gap-2">
             <button
@@ -454,7 +458,7 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
               disabled={pagination.page === 1 || loading}
               className="px-3 py-1 bg-[#1a1a1a] border border-[#333] rounded hover:bg-[#222] disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              prev
+              {strings.admin.dashboard.users.pagination.prev}
             </button>
             <span className="px-3 py-1">
               {pagination.page} / {pagination.totalPages}
@@ -464,7 +468,7 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
               disabled={pagination.page >= pagination.totalPages || loading}
               className="px-3 py-1 bg-[#1a1a1a] border border-[#333] rounded hover:bg-[#222] disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              next
+              {strings.admin.dashboard.users.pagination.next}
             </button>
           </div>
         </div>
@@ -472,20 +476,20 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
 
       {/* Users Table */}
       {loading ? (
-        <p className="text-center py-8">loading...</p>
+        <p className="text-center py-8">{strings.admin.dashboard.users.loading}</p>
       ) : (
         <div className="overflow-x-auto -mx-4 md:mx-0">
           <table className="w-full border-collapse min-w-[800px]">
             <thead>
               <tr className="border-b border-[#333]">
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">id</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">username</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">email</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">verified</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">slates</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">storage</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">joined</th>
-                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">actions</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.id}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.username}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.email}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.verified}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.slates}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.storage}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.joined}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.actions}</th>
               </tr>
             </thead>
             <tbody>
@@ -514,7 +518,7 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
           </table>
 
           {users.length === 0 && (
-            <p className="text-center py-8">no users found</p>
+            <p className="text-center py-8">{strings.admin.dashboard.users.noUsers}</p>
           )}
         </div>
       )}

@@ -77,12 +77,12 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
         onLogout();
       } else {
         const data = await response.json();
-        alert(data.error || 'Failed to logout from all sessions');
+        alert(data.error || strings.account.sessions.errors.logoutAllFailed);
         setLoggingOutAll(false);
       }
     } catch (err) {
       console.error('Failed to logout from all sessions:', err);
-      alert('Failed to logout from all sessions');
+      alert(strings.account.sessions.errors.logoutAllFailed);
       setLoggingOutAll(false);
     }
   };
@@ -95,15 +95,15 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return strings.account.sessions.time.justNow;
+    if (diffMins < 60) return strings.account.sessions.time.minutesAgo(diffMins);
+    if (diffHours < 24) return strings.account.sessions.time.hoursAgo(diffHours);
+    if (diffDays < 7) return strings.account.sessions.time.daysAgo(diffDays);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const formatIpAddress = (ip) => {
-    if (!ip) return 'Unknown IP';
+    if (!ip) return strings.account.sessions.unknownIp;
 
     // Clean up IPv6-mapped IPv4 addresses
     if (ip.startsWith('::ffff:')) {
@@ -112,7 +112,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
 
     // Map localhost variations to friendly name
     if (ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
-      return 'localhost';
+      return strings.account.sessions.localhost;
     }
 
     // For other IPs, return as-is
@@ -125,12 +125,12 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     setPasswordSuccess('');
 
     if (newPassword !== confirmPassword) {
-      setPasswordError('New passwords do not match');
+      setPasswordError(strings.account.password.errors.mismatch);
       return;
     }
 
     if (newPassword.length < 6) {
-      setPasswordError('New password must be at least 6 characters');
+      setPasswordError(strings.account.password.errors.tooShort);
       return;
     }
 
@@ -152,15 +152,15 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       const data = await response.json();
 
       if (response.ok) {
-        setPasswordSuccess('Password changed successfully');
+        setPasswordSuccess(strings.account.password.success);
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
       } else {
-        setPasswordError(data.error || 'Failed to change password');
+        setPasswordError(data.error || strings.account.password.errors.changeFailed);
       }
     } catch (err) {
-      setPasswordError('Failed to change password');
+      setPasswordError(strings.account.password.errors.changeFailed);
     } finally {
       setChangingPassword(false);
     }
@@ -185,12 +185,12 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
 
       if (response.ok) {
         setEmailStep('verify');
-        setEmailSuccess('Verification code sent to your new email');
+        setEmailSuccess(strings.account.emailChange.success.codeSent());
       } else {
-        setEmailError(data.error || 'Failed to send verification code');
+        setEmailError(data.error || strings.account.emailChange.errors.sendFailed);
       }
     } catch (err) {
-      setEmailError('Failed to send verification code');
+      setEmailError(strings.account.emailChange.errors.sendFailed);
     } finally {
       setChangingEmail(false);
     }
@@ -219,12 +219,12 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
         setEmailStep('input');
         setNewEmail('');
         setVerificationCode('');
-        alert('Email changed successfully!');
+        alert(strings.account.emailChange.success.changed);
       } else {
-        setEmailError(data.error || 'Failed to verify code');
+        setEmailError(data.error || strings.account.emailChange.errors.verifyFailed);
       }
     } catch (err) {
-      setEmailError('Failed to verify code');
+      setEmailError(strings.account.emailChange.errors.verifyFailed);
     } finally {
       setChangingEmail(false);
     }
@@ -246,7 +246,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     setDeleteError('');
 
     if (deleteConfirmation !== username) {
-      setDeleteError(`Please type "${username}" to confirm`);
+      setDeleteError(strings.account.danger.errors.confirmMismatch(username));
       return;
     }
 
@@ -510,22 +510,22 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       {showLogoutAllModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">logout from all devices?</h2>
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.sessions.modal.title}</h2>
             <p className="text-sm text-[#666] mb-6">
-              you will need to login again on all devices, including this one.
+              {strings.account.sessions.modal.message}
             </p>
             <div className="flex gap-3">
               <button
                 onClick={confirmLogoutAll}
                 className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
               >
-                logout all
+                {strings.account.sessions.modal.confirm}
               </button>
               <button
                 onClick={cancelLogoutAll}
                 className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
               >
-                cancel
+                {strings.account.sessions.modal.cancel}
               </button>
             </div>
           </div>
@@ -541,7 +541,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
               {strings.account.danger.warning}
             </p>
             <p className="text-sm text-[#666] mb-6">
-              type <span className="text-white font-semibold">{username}</span> to confirm:
+              {strings.account.danger.confirmInstruction(username)}
             </p>
             <div className="space-y-4">
               <input
@@ -565,7 +565,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
                   onClick={cancelDeleteAccount}
                   className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
                 >
-                  cancel
+                  {strings.account.danger.modal.cancel}
                 </button>
               </div>
             </div>
