@@ -2,16 +2,16 @@
 
 minimalist writing app with cloud storage and sharing.
 
-live at **[type.alfaoz.dev](https://type.alfaoz.dev)**
+currently live at **[type.alfaoz.dev](https://type.alfaoz.dev)**
 
 ## why open source?
 
-transparency. we claim your private slates are encrypted—now you can verify it yourself. check the code, audit the crypto, run your own instance if you want.
+transparency + sweet community support.
 
-## features
+## what it offers
 
-- distraction-free writing interface
-- cloud-synced slates (auto-save)
+- a simple writing interface
+- cloud saved slates
 - publish and share with unique urls
 - end-to-end encryption (aes-256-gcm)
 - export to txt/pdf
@@ -25,9 +25,9 @@ your slates → aes-256-gcm → encrypted storage (backblaze b2)
 
 - private slates: encrypted at rest, only you can decrypt
 - published slates: stored unencrypted for public access
-- keys never leave your browser, server never sees plaintext
+- keys never leave your browser, server never sees plaintext (duh...)
 
-check the implementation: `server/index.js` (lines 23-64)
+>don't trust me? i wouldn't either. check the implementation: `server/index.js` (lines 23-64)
 
 ## tech stack
 
@@ -38,7 +38,7 @@ check the implementation: `server/index.js` (lines 23-64)
 
 ## self-hosting
 
-want to run your own? we support it but don't optimize for it.
+want to run your own justtype instance? we support it, but don't expect optimization for it.
 
 ```bash
 git clone https://github.com/alfaoz/justtype.git
@@ -54,13 +54,14 @@ requires: node 20+, backblaze b2 account, resend api key (for emails)
 
 ## contributing
 
-found a bug? security issue? want to add a feature?
+found a bug? security issue? want to add a feature? need a friend?
 
 - **security issues:** email security@alfaoz.dev (not github issues)
 - **bugs/features:** open an issue or pr
 - **style guide:** see CONTRIBUTING.md
+- **friend:** alfa.ozaltin@gmail.com
 
-we're picky about ux but welcome thoughtful contributions.
+we're (i am) picky about ux but welcome thoughtful contributions.
 
 ## license
 
