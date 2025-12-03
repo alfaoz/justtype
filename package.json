@@ -1,0 +1,33 @@
+{
+  "name": "justtype",
+  "version": "1.2.0",
+  "description": "Just Type - Minimalist writing app with slates",
+  "main": "server/index.js",
+  "scripts": {
+    "server": "node server/index.js",
+    "dev": "node server/index.js",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "backblaze-b2": "^1.7.0",
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^9.2.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "nanoid": "^3.3.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "resend": "^6.5.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.4.22",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.17",
+    "vite": "^7.2.6"
+  }
+}
