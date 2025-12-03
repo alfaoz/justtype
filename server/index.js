@@ -7,8 +7,12 @@ const crypto = require('crypto');
 const { customAlphabet } = require('nanoid');
 const db = require('./database');
 const b2Storage = require('./b2Storage');
+const b2Monitor = require('./b2Monitor');
+const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
+const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogger');
 const { validateEmailForRegistration } = require('./emailValidator');
+const { createRateLimitMiddleware } = require('./rateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -69,7 +73,10 @@ const getCachedEncryptionKey = (userId) => {
 };
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '5mb' })); // Lower limit to prevent bandwidth abuse
+
+// Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
+app.set('trust proxy', true);
 
 // Serve static files from dist directory with cache control
 const path = require('path');
@@ -115,11 +122,28 @@ const parseDevice = (userAgent) => {
 const createSession = (userId, token, req) => {
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const device = parseDevice(req.headers['user-agent']);
-  const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+
+  // Get IP address - prioritize x-forwarded-for for proxy/load balancer setups
+  let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.connection.remoteAddress || req.ip || '';
+
+  // If x-forwarded-for has multiple IPs (proxy chain), use the first one (client IP)
+  if (ipAddress.includes(',')) {
+    ipAddress = ipAddress.split(',')[0].trim();
+  }
+
+  // Clean up IPv6-mapped IPv4 addresses (::ffff:127.0.0.1 -> 127.0.0.1)
+  if (ipAddress && ipAddress.startsWith('::ffff:')) {
+    ipAddress = ipAddress.substring(7);
+  }
+
+  // Normalize localhost variations to a consistent format
+  if (ipAddress === '::1' || ipAddress === '127.0.0.1') {
+    ipAddress = 'localhost';
+  }
 
   try {
     // Clean up old sessions (older than 30 days)
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND datetime(last_activity) < datetime("now", "-30 days")').run(userId);
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND datetime(last_activity) < datetime(\'now\', \'-30 days\')').run(userId);
 
     // Create new session
     db.prepare('INSERT INTO sessions (user_id, token_hash, device, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
@@ -143,12 +167,18 @@ const authenticateToken = (req, res, next) => {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
 
-    // Update session last activity
+    // Check if session exists in database and update last activity
     try {
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
+      const result = db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
+
+      // If no rows were updated, the session doesn't exist (was deleted)
+      if (result.changes === 0) {
+        return res.status(401).json({ error: 'Session expired or logged out' });
+      }
     } catch (err) {
       console.error('Session update error:', err);
+      return res.status(500).json({ error: 'Session validation failed' });
     }
 
     req.user = user;
@@ -204,7 +234,11 @@ app.post('/api/auth/register', async (req, res) => {
     const result = stmt.run(username, hashedPassword, email.toLowerCase(), verificationCode, expiresAt);
 
     // Send verification email
-    await emailService.sendVerificationEmail(email, username, verificationCode);
+    const emailSent = await emailService.sendVerificationEmail(email, username, verificationCode);
+    if (!emailSent) {
+      console.error(`⚠️  Failed to send verification email to ${email}`);
+      // Continue anyway - user can resend later
+    }
 
     const token = jwt.sign({ id: result.lastInsertRowid, username }, JWT_SECRET, { expiresIn: '30d' });
 
@@ -478,7 +512,7 @@ app.get('/api/slates', authenticateToken, (req, res) => {
 });
 
 // Get single slate (with content)
-app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, res) => {
+app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('viewSlate'), async (req, res) => {
   try {
     const slate = db.prepare(`
       SELECT * FROM slates WHERE id = ? AND user_id = ?
@@ -497,16 +531,31 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
     res.json({ ...slate, content });
   } catch (error) {
     console.error('Get slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to fetch slate' });
   }
 });
 
 // Create new slate
-app.post('/api/slates', authenticateToken, requireEncryptionKey, async (req, res) => {
+app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
   const { title, content } = req.body;
 
   if (!title || !content) {
     return res.status(400).json({ error: 'Title and content required' });
+  }
+
+  // Check content size (5 MB limit)
+  const contentSize = Buffer.byteLength(content, 'utf8');
+  const maxSize = 5 * 1024 * 1024; // 5 MB
+  if (contentSize > maxSize) {
+    return res.status(413).json({
+      error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
+    });
   }
 
   try {
@@ -545,13 +594,28 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, async (req, res
     });
   } catch (error) {
     console.error('Create slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to create slate' });
   }
 });
 
 // Update slate
-app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, res) => {
+app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('updateSlate'), async (req, res) => {
   const { title, content } = req.body;
+
+  // Check content size (5 MB limit)
+  const contentSize = Buffer.byteLength(content, 'utf8');
+  const maxSize = 5 * 1024 * 1024; // 5 MB
+  if (contentSize > maxSize) {
+    return res.status(413).json({
+      error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
+    });
+  }
 
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -562,6 +626,22 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 
     // Use encryption key from middleware (already verified to exist)
     const encryptionKey = req.encryptionKey;
+
+    // Auto-unpublish if slate is currently published
+    // This prevents accidentally publishing work-in-progress changes
+    let wasUnpublished = false;
+    if (slate.is_published) {
+      wasUnpublished = true;
+
+      // Delete public B2 copy if it exists
+      if (slate.b2_public_file_id) {
+        try {
+          await b2Storage.deleteSlate(slate.b2_public_file_id);
+        } catch (err) {
+          console.warn('Failed to delete public B2 file:', err);
+        }
+      }
+    }
 
     // Upload new version to B2 (encrypted)
     const slateId = `${req.user.id}-${Date.now()}`;
@@ -579,23 +659,35 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
     const charCount = content.length;
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
-    // Update database with encryption_version = 1
+    // Update database - unpublish if it was published
     const stmt = db.prepare(`
       UPDATE slates
-      SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?, updated_at = CURRENT_TIMESTAMP
+      SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
+          is_published = ?, b2_public_file_id = NULL, published_at = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `);
-    stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0, req.params.id, req.user.id);
+    stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0, 0, req.params.id, req.user.id);
 
-    res.json({ success: true, word_count: wordCount, char_count: charCount });
+    res.json({
+      success: true,
+      word_count: wordCount,
+      char_count: charCount,
+      was_unpublished: wasUnpublished
+    });
   } catch (error) {
     console.error('Update slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to update slate' });
   }
 });
 
 // Publish/unpublish slate
-app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, async (req, res) => {
+app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
   const { isPublished } = req.body;
 
   try {
@@ -648,12 +740,18 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, as
     res.json({ success: true, share_id: shareId, share_url: shareUrl });
   } catch (error) {
     console.error('Publish slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to publish slate' });
   }
 });
 
 // Delete slate
-app.delete('/api/slates/:id', authenticateToken, async (req, res) => {
+app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
 
@@ -674,6 +772,12 @@ app.delete('/api/slates/:id', authenticateToken, async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Delete slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to delete slate' });
   }
 });
@@ -694,6 +798,19 @@ app.get('/api/public/slates/:shareId', async (req, res) => {
       return res.status(404).json({ error: 'Slate not found or not published' });
     }
 
+    // Generate ETag from slate updated_at timestamp and share_id
+    const etag = `"${slate.share_id}-${new Date(slate.updated_at).getTime()}"`;
+
+    // Check if client has cached version
+    if (req.headers['if-none-match'] === etag) {
+      return res.status(304).end(); // Not Modified - no B2 download needed!
+    }
+
+    // Set cache headers BEFORE fetching from B2
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600'); // 5min browser, 10min nginx
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', new Date(slate.updated_at).toUTCString());
+
     // Use public file ID if available (for encrypted slates), otherwise use regular file ID
     const fileIdToFetch = slate.b2_public_file_id || slate.b2_file_id;
 
@@ -711,6 +828,12 @@ app.get('/api/public/slates/:shareId', async (req, res) => {
     });
   } catch (error) {
     console.error('Get public slate error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
+        error: error.userMessage,
+        code: error.code
+      });
+    }
     res.status(500).json({ error: 'Failed to fetch slate' });
   }
 });
@@ -752,13 +875,30 @@ const authenticateAdmin = (req, res, next) => {
     if (err || !payload.admin) {
       return res.status(403).json({ error: 'Invalid admin token' });
     }
+
+    // Get IP address for logging
+    let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    if (ipAddress.startsWith('::ffff:')) {
+      ipAddress = ipAddress.substring(7);
+    }
+    req.adminIp = ipAddress;
+
     next();
   });
 };
 
-// Get all users with stats
+// Get all users with stats (with pagination)
 app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    const totalResult = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const total = totalResult.count;
+
+    // Get paginated users
     const users = db.prepare(`
       SELECT
         users.id,
@@ -774,9 +914,23 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
       LEFT JOIN slates ON users.id = slates.user_id
       GROUP BY users.id
       ORDER BY users.created_at DESC
-    `).all();
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
 
-    res.json({ users });
+    logAdminAction('view_users', {
+      ipAddress: req.adminIp,
+      details: { page, limit, total }
+    });
+
+    res.json({
+      users,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     console.error('Admin get users error:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -788,13 +942,22 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
 
+    // Get user info before deletion
+    const user = db.prepare('SELECT username, email FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id FROM slates WHERE user_id = ?').all(userId);
+    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(userId);
 
     // Delete slates from B2
     for (const slate of slates) {
       try {
         await b2Storage.deleteSlate(slate.b2_file_id);
+        if (slate.b2_public_file_id) {
+          await b2Storage.deleteSlate(slate.b2_public_file_id);
+        }
       } catch (err) {
         console.error(`Failed to delete B2 file ${slate.b2_file_id}:`, err);
       }
@@ -803,14 +966,128 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     // Delete user from database (CASCADE will delete slates)
     const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    // Log the deletion
+    logAdminAction('delete_user', {
+      targetType: 'user',
+      targetId: userId,
+      ipAddress: req.adminIp,
+      details: {
+        username: user.username,
+        email: user.email,
+        slatesDeleted: slates.length
+      }
+    });
 
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
     console.error('Admin delete user error:', error);
     res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// Get B2 usage stats
+app.get('/api/admin/b2-stats', authenticateAdmin, (req, res) => {
+  try {
+    const stats = b2Monitor.getStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('Admin get B2 stats error:', error);
+    res.status(500).json({ error: 'Failed to fetch B2 stats' });
+  }
+});
+
+// Get admin activity logs
+app.get('/api/admin/logs', authenticateAdmin, (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    const actionFilter = req.query.action || null;
+
+    const logs = getAdminLogs(limit, offset, actionFilter);
+    const stats = getAdminLogStats();
+
+    res.json({
+      logs,
+      stats,
+      pagination: {
+        page,
+        limit
+      }
+    });
+  } catch (error) {
+    console.error('Admin get logs error:', error);
+    res.status(500).json({ error: 'Failed to fetch logs' });
+  }
+});
+
+// Get system health and metrics
+app.get('/api/admin/health', authenticateAdmin, (req, res) => {
+  try {
+    const os = require('os');
+
+    // System metrics
+    const totalMemory = os.totalmem();
+    const freeMemory = os.freemem();
+    const usedMemory = totalMemory - freeMemory;
+
+    // Database metrics
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    const slateCount = db.prepare('SELECT COUNT(*) as count FROM slates').get().count;
+    const sessionCount = db.prepare('SELECT COUNT(*) as count FROM sessions').get().count;
+    const publishedCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE is_published = 1').get().count;
+
+    // Growth metrics (last 24h)
+    const newUsers24h = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE datetime(created_at) > datetime('now', '-1 day')
+    `).get().count;
+
+    const newSlates24h = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM slates
+      WHERE datetime(created_at) > datetime('now', '-1 day')
+    `).get().count;
+
+    // Storage metrics
+    const totalStorage = db.prepare(`
+      SELECT COALESCE(SUM(size_bytes), 0) as total
+      FROM slates
+    `).get().total;
+
+    res.json({
+      system: {
+        uptime: process.uptime(),
+        nodeVersion: process.version,
+        platform: os.platform(),
+        arch: os.arch(),
+        cpus: os.cpus().length,
+        memory: {
+          total: totalMemory,
+          free: freeMemory,
+          used: usedMemory,
+          percentUsed: ((usedMemory / totalMemory) * 100).toFixed(2)
+        },
+        loadAverage: os.loadavg()
+      },
+      database: {
+        users: userCount,
+        slates: slateCount,
+        sessions: sessionCount,
+        published: publishedCount,
+        totalStorageBytes: totalStorage,
+        totalStorageGB: (totalStorage / (1024 * 1024 * 1024)).toFixed(4)
+      },
+      growth: {
+        newUsers24h,
+        newSlates24h
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Admin get health error:', error);
+    res.status(500).json({ error: 'Failed to fetch health metrics' });
   }
 });
 

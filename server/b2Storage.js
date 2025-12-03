@@ -1,5 +1,7 @@
 const B2 = require('backblaze-b2');
 const crypto = require('crypto');
+const b2Monitor = require('./b2Monitor');
+const { handleB2Error } = require('./b2ErrorHandler');
 
 class B2Storage {
   constructor() {
@@ -111,10 +113,18 @@ class B2Storage {
         mime: mimeType,
       });
 
+      // Log Class C transaction (upload)
+      b2Monitor.logClassC('uploadSlate', {
+        slateId,
+        encrypted: !!encryptionKey,
+        sizeBytes: dataToUpload.length
+      });
+
       return response.data.fileId;
     } catch (error) {
-      console.error('B2 upload error:', error);
-      throw new Error('Failed to upload slate to storage');
+      b2Monitor.logError('uploadSlate', error);
+      const b2Error = handleB2Error(error, 'uploadSlate');
+      throw b2Error;
     }
   }
 
@@ -129,6 +139,13 @@ class B2Storage {
 
       const downloadedData = Buffer.from(response.data);
 
+      // Log Class B transaction (download)
+      b2Monitor.logClassB('getSlate', {
+        fileId,
+        encrypted: !!encryptionKey,
+        bytes: downloadedData.length
+      });
+
       let slateData;
       if (encryptionKey) {
         // Decrypt the data
@@ -141,8 +158,9 @@ class B2Storage {
 
       return slateData.content;
     } catch (error) {
-      console.error('B2 download error:', error);
-      throw new Error('Failed to retrieve slate from storage');
+      b2Monitor.logError('getSlate', error);
+      const b2Error = handleB2Error(error, 'getSlate');
+      throw b2Error;
     }
   }
 
@@ -160,10 +178,15 @@ class B2Storage {
         fileId: fileId,
         fileName: fileName,
       });
+
+      // Log Class C transaction (delete)
+      b2Monitor.logClassC('deleteSlate', { fileId, fileName });
+
       return true;
     } catch (error) {
-      console.error('B2 delete error:', error);
-      throw new Error('Failed to delete slate from storage');
+      b2Monitor.logError('deleteSlate', error);
+      const b2Error = handleB2Error(error, 'deleteSlate');
+      throw b2Error;
     }
   }
 }

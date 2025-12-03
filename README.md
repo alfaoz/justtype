@@ -2,7 +2,7 @@
 
 minimalist writing app with cloud storage and sharing.
 
-currently live at **[type.alfaoz.dev](https://type.alfaoz.dev)**
+live at **[justtype.io](https://justtype.io)**
 
 ## why open source?
 
@@ -56,7 +56,7 @@ requires: node 20+, backblaze b2 account, resend api key (for emails)
 
 found a bug? security issue? want to add a feature? need a friend?
 
-- **security issues:** email security@alfaoz.dev (not github issues)
+- **security issues:** email security@justtype.io (not github issues)
 - **bugs/features:** open an issue or pr
 - **style guide:** see CONTRIBUTING.md
 - **friend:** alfa.ozaltin@gmail.com

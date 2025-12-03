@@ -26,6 +26,10 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loggingOutAll, setLoggingOutAll] = useState(false);
 
+  // Modal states
+  const [showLogoutAllModal, setShowLogoutAllModal] = useState(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+
   useEffect(() => {
     if (token) {
       loadSessions();
@@ -49,11 +53,19 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     }
   };
 
-  const handleLogoutAllSessions = async () => {
-    const confirmed = window.confirm('Logout from all devices? You will need to login again on all devices.');
-    if (!confirmed) return;
+  const showLogoutAllConfirmation = () => {
+    setShowLogoutAllModal(true);
+  };
 
+  const cancelLogoutAll = () => {
+    setShowLogoutAllModal(false);
+  };
+
+  const confirmLogoutAll = async () => {
+    // Close modal immediately
+    setShowLogoutAllModal(false);
     setLoggingOutAll(true);
+
     try {
       const response = await fetch(`${API_URL}/account/logout-all`, {
         method: 'POST',
@@ -61,16 +73,16 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       });
 
       if (response.ok) {
-        alert('Logged out from all sessions');
+        // Immediately logout - don't wait for alert
         onLogout();
       } else {
         const data = await response.json();
         alert(data.error || 'Failed to logout from all sessions');
+        setLoggingOutAll(false);
       }
     } catch (err) {
       console.error('Failed to logout from all sessions:', err);
       alert('Failed to logout from all sessions');
-    } finally {
       setLoggingOutAll(false);
     }
   };
@@ -88,6 +100,23 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const formatIpAddress = (ip) => {
+    if (!ip) return 'Unknown IP';
+
+    // Clean up IPv6-mapped IPv4 addresses
+    if (ip.startsWith('::ffff:')) {
+      ip = ip.substring(7);
+    }
+
+    // Map localhost variations to friendly name
+    if (ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
+      return 'localhost';
+    }
+
+    // For other IPs, return as-is
+    return ip;
   };
 
   const handleChangePassword = async (e) => {
@@ -201,8 +230,19 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     }
   };
 
-  const handleDeleteAccount = async (e) => {
-    e.preventDefault();
+  const showDeleteAccountConfirmation = () => {
+    setShowDeleteAccountModal(true);
+    setDeleteConfirmation('');
+    setDeleteError('');
+  };
+
+  const cancelDeleteAccount = () => {
+    setShowDeleteAccountModal(false);
+    setDeleteConfirmation('');
+    setDeleteError('');
+  };
+
+  const confirmDeleteAccount = async () => {
     setDeleteError('');
 
     if (deleteConfirmation !== username) {
@@ -210,6 +250,8 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       return;
     }
 
+    // Close modal immediately
+    setShowDeleteAccountModal(false);
     setDeleting(true);
 
     try {
@@ -224,15 +266,18 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       const data = await response.json();
 
       if (response.ok) {
-        alert('Your account has been deleted');
         onLogout();
       } else {
         setDeleteError(data.error || 'Failed to delete account');
+        setDeleting(false);
+        // Reopen modal to show error
+        setShowDeleteAccountModal(true);
       }
     } catch (err) {
       setDeleteError('Failed to delete account');
-    } finally {
       setDeleting(false);
+      // Reopen modal to show error
+      setShowDeleteAccountModal(true);
     }
   };
 
@@ -332,7 +377,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
                         )}
                       </div>
                       <div className="text-[#666] space-y-0.5">
-                        <div>{session.ip_address}</div>
+                        <div>{formatIpAddress(session.ip_address)}</div>
                         <div>{strings.account.sessions.lastActive(formatSessionDate(session.last_activity))}</div>
                         <div>{strings.account.sessions.created(formatSessionDate(session.created_at))}</div>
                       </div>
@@ -350,7 +395,7 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
               </button>
               {sessions.length > 1 && (
                 <button
-                  onClick={handleLogoutAllSessions}
+                  onClick={showLogoutAllConfirmation}
                   disabled={loggingOutAll}
                   className="border border-red-600 text-red-400 px-6 py-2 md:py-3 rounded hover:bg-red-900 hover:bg-opacity-20 transition-colors text-sm disabled:opacity-50"
                 >
@@ -366,26 +411,13 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       <div className="bg-[#1a1a1a] border border-red-900 rounded p-4 md:p-6">
         <h2 className="text-base md:text-lg text-red-400 mb-2">{strings.account.danger.title}</h2>
         <p className="text-xs md:text-sm text-[#666] mb-4">{strings.account.danger.warning}</p>
-        <form onSubmit={handleDeleteAccount} className="space-y-4">
-          <div>
-            <input
-              type="text"
-              value={deleteConfirmation}
-              onChange={(e) => setDeleteConfirmation(e.target.value)}
-              placeholder={strings.account.danger.confirmPlaceholder(username)}
-              className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-red-400 text-white text-sm"
-              required
-            />
-          </div>
-          {deleteError && <p className="text-red-400 text-xs md:text-sm">{deleteError}</p>}
-          <button
-            type="submit"
-            disabled={deleting}
-            className="bg-red-600 text-white px-6 py-2 md:py-3 rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
-          >
-            {deleting ? strings.account.danger.submitting : strings.account.danger.submit}
-          </button>
-        </form>
+        <button
+          onClick={showDeleteAccountConfirmation}
+          disabled={deleting}
+          className="bg-red-600 text-white px-6 py-2 md:py-3 rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
+        >
+          {deleting ? strings.account.danger.submitting : strings.account.danger.submit}
+        </button>
       </div>
 
       {/* Email Change Modal */}
@@ -470,6 +502,73 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Logout All Sessions Confirmation Modal */}
+      {showLogoutAllModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">logout from all devices?</h2>
+            <p className="text-sm text-[#666] mb-6">
+              you will need to login again on all devices, including this one.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={confirmLogoutAll}
+                className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
+              >
+                logout all
+              </button>
+              <button
+                onClick={cancelLogoutAll}
+                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+              >
+                cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Confirmation Modal */}
+      {showDeleteAccountModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.danger.title}</h2>
+            <p className="text-sm text-[#666] mb-4">
+              {strings.account.danger.warning}
+            </p>
+            <p className="text-sm text-[#666] mb-6">
+              type <span className="text-white font-semibold">{username}</span> to confirm:
+            </p>
+            <div className="space-y-4">
+              <input
+                type="text"
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                placeholder={strings.account.danger.confirmPlaceholder(username)}
+                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-red-400 text-white text-sm"
+                autoFocus
+              />
+              {deleteError && <p className="text-red-400 text-xs md:text-sm">{deleteError}</p>}
+              <div className="flex gap-3">
+                <button
+                  onClick={confirmDeleteAccount}
+                  disabled={!deleteConfirmation}
+                  className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {strings.account.danger.submit}
+                </button>
+                <button
+                  onClick={cancelDeleteAccount}
+                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                >
+                  cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -49,6 +49,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity);
+
+  CREATE TABLE IF NOT EXISTS admin_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id INTEGER,
+    details TEXT,
+    ip_address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_admin_logs_created_at ON admin_logs(created_at);
+  CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action);
 `);
 
 // Add email columns if they don't exist (migration)

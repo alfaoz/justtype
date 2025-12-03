@@ -99,7 +99,7 @@ curl http://localhost:3001/api/health
 - never commit `.env`, database files, or real credentials
 - all user inputs must be sanitized/validated
 - encryption changes need extra scrutiny
-- if you find a vulnerability, email security@alfaoz.dev first (not github)
+- if you find a vulnerability, email security@justtype.io first (not github)
 
 ## pull request checklist
 

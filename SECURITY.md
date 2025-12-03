@@ -2,7 +2,7 @@
 
 ## reporting vulnerabilities
 
-found a security issue? please email **security@alfaoz.dev**
+found a security issue? please email **security@justtype.io**
 
 do not open public github issues for security vulnerabilities.
 
