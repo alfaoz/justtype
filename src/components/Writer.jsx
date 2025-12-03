@@ -15,6 +15,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [wasPublishedBeforeEdit, setWasPublishedBeforeEdit] = useState(false);
   const textareaRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
@@ -30,6 +31,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setContent('');
       setTitle('');
       setHasUnsavedChanges(false);
+      setWasPublishedBeforeEdit(false);
       lastSavedContentRef.current = '';
       setIsLoading(false);
     }
@@ -49,6 +51,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setHasUnsavedChanges(true);
     }
   }, [content, title]);
+
+  // Show "private draft" status when editing a previously published slate
+  useEffect(() => {
+    if (wasPublishedBeforeEdit && status === 'ready') {
+      setStatus(strings.writer.status.privateDraft);
+    }
+  }, [wasPublishedBeforeEdit, status]);
 
   // Auto-save
   useEffect(() => {
@@ -150,6 +159,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setTitle(data.title);
       setContent(data.content);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
+      setWasPublishedBeforeEdit(data.is_published);
       lastSavedContentRef.current = JSON.stringify({ content: data.content, title: data.title });
       setHasUnsavedChanges(false);
       setIsLoading(false);
@@ -248,8 +258,17 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       lastSavedContentRef.current = JSON.stringify({ content, title });
       setHasUnsavedChanges(false);
-      setStatus('saved');
-      setTimeout(() => setStatus('ready'), 2000);
+
+      // Handle unpublishing due to edit
+      if (data.was_unpublished) {
+        setShareUrl(null);
+        setWasPublishedBeforeEdit(true);
+        setStatus(strings.writer.status.savedAsPrivate);
+        setTimeout(() => setStatus(strings.writer.status.privateDraft), 3000);
+      } else {
+        setStatus('saved');
+        setTimeout(() => setStatus('ready'), 2000);
+      }
 
       return data; // Return the saved slate data
     } catch (err) {
@@ -292,11 +311,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       if (response.ok) {
         if (data.share_url) {
           setShareUrl(data.share_url);
+          setWasPublishedBeforeEdit(false); // Reset since we're now published
           navigator.clipboard.writeText(data.share_url);
-          setStatus('link copied!');
+          setStatus(strings.writer.status.linkCopied);
           setTimeout(() => setStatus('ready'), 3000);
         } else {
           setShareUrl(null);
+          setWasPublishedBeforeEdit(false);
           setStatus(strings.writer.status.unpublished);
           setTimeout(() => setStatus('ready'), 2000);
         }
@@ -435,7 +456,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
           {/* Right Controls */}
           <div className="flex gap-6 items-center">
-            <span className={`transition-opacity duration-300 ${status === 'ready' ? 'opacity-0' : 'opacity-100 text-green-500'}`}>
+            <span className={`transition-opacity duration-300 ${
+              status === 'ready' ? 'opacity-0' : 'opacity-100'
+            } ${
+              status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate ? 'text-orange-400' :
+              status === 'saved' ? 'text-green-500' :
+              'text-green-500'
+            }`}>
               {status}
             </span>
 
@@ -450,9 +477,15 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               <div className="relative">
                 <button
                   onClick={() => setShowPublishMenu(!showPublishMenu)}
-                  className={`hover:text-white transition-colors duration-200 ${shareUrl ? 'text-blue-400' : ''}`}
+                  className={`hover:text-white transition-colors duration-200 ${
+                    shareUrl ? 'text-blue-400' :
+                    wasPublishedBeforeEdit ? 'text-orange-400' :
+                    ''
+                  }`}
                 >
-                  {shareUrl ? strings.writer.buttons.published : strings.writer.buttons.publish}
+                  {shareUrl ? strings.writer.publishButton.published :
+                   wasPublishedBeforeEdit ? strings.writer.publishButton.republish :
+                   strings.writer.publishButton.publish}
                 </button>
                 {showPublishMenu && (
                   <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[180px]">
@@ -550,7 +583,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
               {/* Status */}
               {status !== 'ready' && (
-                <div className="p-3 bg-green-900/20 border border-green-700/50 rounded-lg text-green-500 text-center text-sm">
+                <div className={`p-3 rounded-lg text-center text-sm ${
+                  status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
+                    ? 'bg-orange-900/20 border border-orange-700/50 text-orange-400'
+                    : 'bg-green-900/20 border border-green-700/50 text-green-500'
+                }`}>
                   {status}
                 </div>
               )}
@@ -560,7 +597,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 onClick={() => {
                   if (token) saveSlate();
                   else onLogin();
-                  setShowMobileMenu(false);
+                  // Keep menu open to show status
                 }}
                 className="p-4 bg-white text-black rounded-lg hover:bg-[#e5e5e5] transition-colors font-medium text-base"
               >
@@ -608,19 +645,31 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   <button
                     onClick={() => {
                       handlePublish();
-                      setShowMobileMenu(false);
+                      // Keep menu open to show status
                     }}
-                    className={`w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left ${shareUrl ? 'text-blue-400' : ''}`}
+                    className={`w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left ${
+                      shareUrl ? 'text-blue-400' :
+                      wasPublishedBeforeEdit ? 'text-orange-400' :
+                      ''
+                    }`}
                   >
-                    {shareUrl ? strings.writer.menu.unpublishSlateAction : strings.writer.menu.getShareLinkAction}
+                    {shareUrl ? strings.writer.menu.unpublishSlateAction :
+                     wasPublishedBeforeEdit ? `${strings.writer.publishButton.republish} slate` :
+                     strings.writer.menu.getShareLinkAction}
                   </button>
                   {shareUrl && (
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(shareUrl);
                         setStatus(strings.writer.status.linkCopied);
-                        setTimeout(() => setStatus(strings.writer.status.ready), 2000);
-                        setShowMobileMenu(false);
+                        setTimeout(() => {
+                          if (wasPublishedBeforeEdit) {
+                            setStatus(strings.writer.status.privateDraft);
+                          } else {
+                            setStatus(strings.writer.status.ready);
+                          }
+                        }, 2000);
+                        // Keep menu open
                       }}
                       className="w-full mt-3 p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
                     >

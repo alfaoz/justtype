@@ -52,7 +52,15 @@ const strings = {
     status: {
       ready: 'ready',
       unpublished: 'unpublished',
-      linkCopied: 'link copied!'
+      linkCopied: 'link copied!',
+      privateDraft: 'private draft',
+      savedAsPrivate: 'saved as private',
+      published: 'published'
+    },
+    publishButton: {
+      publish: 'publish',
+      published: 'published',
+      republish: 'republish'
     },
     about: {
       title: 'about justtype',
