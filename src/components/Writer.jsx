@@ -641,21 +641,9 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
             <div className="space-y-4 text-sm text-[#a0a0a0]">
-              <p>
-                {strings.writer.about.description1}
-              </p>
-              <p>
-                {strings.writer.about.description2}
-              </p>
-              <div className="pt-4 border-t border-[#333] space-y-3">
-                <p className="text-white text-sm">{strings.writer.about.encryptionTitle}</p>
-                <p className="text-xs text-[#666]">
-                  your slates are encrypted with <span className="text-[#888]">AES-256-GCM</span> before storage. each user has a unique encryption key derived from your password using <span className="text-[#888]">PBKDF2</span> (100,000 iterations). even if our storage is compromised, your private slates remain secure. published slates are stored unencrypted for public access.
-                </p>
-                <p className="text-xs text-[#666] italic">
-                  {strings.writer.about.securityChallenge}
-                </p>
-              </div>
+              <p>{strings.writer.about.description}</p>
+              <p className="text-xs">{strings.writer.about.encryption}</p>
+              <p className="text-xs">{strings.writer.about.openSource}</p>
               <p className="text-xs text-[#666] pt-2 border-t border-[#333]">
                 {strings.writer.about.version(VERSION)}
               </p>

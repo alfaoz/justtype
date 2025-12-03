@@ -56,11 +56,9 @@ const strings = {
     },
     about: {
       title: 'about justtype',
-      description1: 'a minimalist writing app designed to help you just type, and not worry about the rest..',
-      description2: 'write freely, save your work, and share them when you\'re ready.',
-      encryptionTitle: 'end-to-end encryption',
-      encryptionDetails: 'your slates are encrypted with AES-256-GCM before storage. each user has a unique encryption key derived from your password using PBKDF2. even if our storage is compromised, your private slates remain secure. published slates are stored unencrypted for public access.',
-      securityChallenge: '',
+      description: 'minimalist writing app with cloud storage and sharing.',
+      encryption: 'your slates are encrypted with AES-256-GCM. private slates stay encrypted, published ones are public.',
+      openSource: 'open source at github.com/alfaoz/justtype',
       version: (v) => `version ${v}`,
       close: 'close'
     }
