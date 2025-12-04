@@ -14,6 +14,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishModalUrl, setPublishModalUrl] = useState('');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [wasPublishedBeforeEdit, setWasPublishedBeforeEdit] = useState(false);
   const textareaRef = useRef(null);
@@ -46,11 +48,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
   // Track unsaved changes
   useEffect(() => {
-    const currentData = JSON.stringify({ content, title });
+    const currentData = JSON.stringify({ content });
     if (currentData !== lastSavedContentRef.current) {
       setHasUnsavedChanges(true);
     }
-  }, [content, title]);
+  }, [content]);
 
   // Show "private draft" status when editing a previously published slate
   useEffect(() => {
@@ -66,13 +68,19 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     }
 
     saveTimeoutRef.current = setTimeout(() => {
-      if (hasUnsavedChanges && content && token && currentSlate) {
-        saveSlate();
+      if (hasUnsavedChanges && content) {
+        if (!token) {
+          // Not logged in - show login modal
+          onLogin();
+        } else if (currentSlate) {
+          // Logged in with existing slate - auto-save
+          saveSlate();
+        }
       }
     }, 2000);
 
     return () => clearTimeout(saveTimeoutRef.current);
-  }, [content, title, hasUnsavedChanges]);
+  }, [content, hasUnsavedChanges, token, currentSlate]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -159,7 +167,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setTitle(data.title);
       setContent(data.content);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
-      setWasPublishedBeforeEdit(data.is_published);
+      setWasPublishedBeforeEdit(false); // Only set true after edit, not on load
       lastSavedContentRef.current = JSON.stringify({ content: data.content, title: data.title });
       setHasUnsavedChanges(false);
       setIsLoading(false);
@@ -175,13 +183,17 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     setStatus('saving...');
 
     try {
+      // Extract title from first line of content
+      const firstLine = content.split('\n')[0].trim();
+      const titleToSave = firstLine || 'untitled slate';
+
       const response = await fetch(`${API_URL}/slates/${currentSlate.id}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ title: title || 'untitled slate', content }),
+        body: JSON.stringify({ title: titleToSave, content }),
       });
 
       // Check if encryption key is missing (server restarted)
@@ -195,7 +207,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       }
 
       if (response.ok) {
-        lastSavedContentRef.current = JSON.stringify({ content, title });
+        lastSavedContentRef.current = JSON.stringify({ content });
         setHasUnsavedChanges(false);
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);
@@ -216,7 +228,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   }));
 
   const saveSlate = async () => {
-    if (!title.trim()) return null;
+    // Extract title from first line of content
+    const firstLine = content.split('\n')[0].trim();
+    const titleToSave = firstLine || 'untitled slate';
+
+    if (!content.trim()) return null;
 
     setStatus('saving...');
 
@@ -232,7 +248,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ title: title || 'untitled slate', content }),
+        body: JSON.stringify({ title: titleToSave, content }),
       });
 
       // Check if encryption key is missing (server restarted)
@@ -296,6 +312,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       slateToPublish = savedSlate;
     }
 
+    // Detect if this is a first publish or republish
+    const isFirstPublish = !wasPublishedBeforeEdit && !shareUrl;
+    const isRepublish = wasPublishedBeforeEdit && !shareUrl;
+
     try {
       const response = await fetch(`${API_URL}/slates/${slateToPublish.id}/publish`, {
         method: 'PATCH',
@@ -312,10 +332,23 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         if (data.share_url) {
           setShareUrl(data.share_url);
           setWasPublishedBeforeEdit(false); // Reset since we're now published
-          navigator.clipboard.writeText(data.share_url);
-          setStatus(strings.writer.status.linkCopied);
-          setTimeout(() => setStatus('ready'), 3000);
+
+          if (isFirstPublish) {
+            // First publish: Show modal with link
+            setPublishModalUrl(data.share_url);
+            setShowPublishModal(true);
+          } else if (isRepublish) {
+            // Republish: Just show status, no modal, no auto-copy
+            setStatus(strings.writer.status.republished);
+            setTimeout(() => setStatus('ready'), 2000);
+          } else {
+            // Already published, user clicked "unpublish" then "get shareable link" again
+            // This shouldn't happen with current UI, but handle it as first publish
+            setPublishModalUrl(data.share_url);
+            setShowPublishModal(true);
+          }
         } else {
+          // Unpublishing
           setShareUrl(null);
           setWasPublishedBeforeEdit(false);
           setStatus(strings.writer.status.unpublished);
@@ -410,19 +443,6 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         </div>
       )}
 
-      {/* TITLE */}
-      {token && (
-        <div className="px-8 pt-6 transition-opacity duration-500">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={strings.writer.titlePlaceholder}
-            className="w-full max-w-3xl mx-auto block bg-transparent border-none text-2xl text-[#e5e5e5] focus:outline-none placeholder-[#333333]"
-          />
-        </div>
-      )}
-
       {/* WRITING AREA */}
       <main className="flex-grow flex justify-center w-full bg-[#111111] overflow-y-auto">
         <textarea
@@ -476,7 +496,15 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             {token && (
               <div className="relative">
                 <button
-                  onClick={() => setShowPublishMenu(!showPublishMenu)}
+                  onClick={() => {
+                    if (wasPublishedBeforeEdit) {
+                      // Republish directly without showing menu
+                      handlePublish();
+                    } else {
+                      // Show menu for first publish or already published
+                      setShowPublishMenu(!showPublishMenu);
+                    }
+                  }}
                   className={`hover:text-white transition-colors duration-200 ${
                     shareUrl ? 'text-blue-400' :
                     wasPublishedBeforeEdit ? 'text-orange-400' :
@@ -705,6 +733,37 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             >
               {strings.writer.about.close}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* PUBLISH MODAL */}
+      {showPublishModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowPublishModal(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
+            <p className="text-sm text-[#a0a0a0] mb-4">anyone with this link can view your slate:</p>
+            <div className="bg-[#111] border border-[#333] rounded p-3 mb-6 break-all text-sm text-blue-400">
+              {publishModalUrl}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(publishModalUrl);
+                  setStatus(strings.writer.status.linkCopied);
+                  setTimeout(() => setStatus('ready'), 2000);
+                }}
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+              >
+                copy link
+              </button>
+              <button
+                onClick={() => setShowPublishModal(false)}
+                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+              >
+                okay
+              </button>
+            </div>
           </div>
         </div>
       )}
