@@ -16,7 +16,8 @@ class RateLimiter {
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
     deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
-    viewSlate: { max: 10000, windowMs: 60 * 60 * 1000 }, // 10,000 per hour (published slates can be used as blogs)
+    adminAuth: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 attempts per 15 minutes (IP-based)
+    // viewSlate removed - public slates should be unlimited (CDN will handle caching)
   };
 
   check(userId, operation) {
@@ -112,12 +113,24 @@ const rateLimiter = new RateLimiter();
 
 function createRateLimitMiddleware(operation) {
   return (req, res, next) => {
-    // Skip rate limiting if no user (shouldn't happen with authenticateToken)
-    if (!req.user || !req.user.id) {
-      return next();
+    // For admin auth, use IP address instead of user ID
+    let identifier;
+    if (operation === 'adminAuth') {
+      // Get IP address
+      let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+      if (ipAddress.startsWith('::ffff:')) {
+        ipAddress = ipAddress.substring(7);
+      }
+      identifier = `ip:${ipAddress}`;
+    } else {
+      // Skip rate limiting if no user (shouldn't happen with authenticateToken)
+      if (!req.user || !req.user.id) {
+        return next();
+      }
+      identifier = req.user.id;
     }
 
-    const result = rateLimiter.check(req.user.id, operation);
+    const result = rateLimiter.check(identifier, operation);
 
     if (!result.allowed) {
       return res.status(429).json({

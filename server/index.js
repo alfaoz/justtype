@@ -14,6 +14,7 @@ const emailService = require('./emailService');
 const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogger');
 const { validateEmailForRegistration } = require('./emailValidator');
 const { createRateLimitMiddleware } = require('./rateLimiter');
+const { healthChecks } = require('./startupHealth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -37,6 +38,20 @@ if (!process.env.RESEND_API_KEY) {
 
 // Generate short share IDs (e.g., "a3bK9qL")
 const generateShareId = customAlphabet('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 8);
+
+// Generate unique share ID with collision checking
+const generateUniqueShareId = () => {
+  let attempts = 0;
+  while (attempts < 10) {
+    const shareId = generateShareId();
+    const existing = db.prepare('SELECT id FROM slates WHERE share_id = ?').get(shareId);
+    if (!existing) {
+      return shareId;
+    }
+    attempts++;
+  }
+  throw new Error('Failed to generate unique share ID after 10 attempts');
+};
 
 // In-memory cache for encryption keys (keyed by userId)
 const encryptionKeyCache = new Map();
@@ -99,6 +114,17 @@ app.use(helmet({
 }));
 
 app.use(express.json({ limit: '5mb' })); // Lower limit to prevent bandwidth abuse
+
+// Handle payload too large errors
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Slate content too large. Maximum size is 5MB.',
+      maxSize: '5MB'
+    });
+  }
+  next(err);
+});
 
 // Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
 app.set('trust proxy', true);
@@ -167,10 +193,7 @@ const createSession = (userId, token, req) => {
   }
 
   try {
-    // Clean up old sessions (older than 30 days)
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND datetime(last_activity) < datetime(\'now\', \'-30 days\')').run(userId);
-
-    // Create new session
+    // Create new session (cleanup handled by hourly cron)
     db.prepare('INSERT INTO sessions (user_id, token_hash, device, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
       .run(userId, tokenHash, device, ipAddress, req.headers['user-agent']);
   } catch (err) {
@@ -727,7 +750,7 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
 
     // Generate share ID if publishing for the first time
     if (isPublished && !shareId) {
-      shareId = generateShareId();
+      shareId = generateUniqueShareId();
     }
 
     // If publishing an encrypted slate, create an unencrypted public copy
@@ -870,8 +893,8 @@ app.get('/api/health', (req, res) => {
 
 // ============ ADMIN ROUTES ============
 
-// Admin authentication
-app.post('/api/admin/auth', (req, res) => {
+// Admin authentication (rate-limited)
+app.post('/api/admin/auth', createRateLimitMiddleware('adminAuth'), async (req, res) => {
   const { password } = req.body;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
@@ -879,8 +902,16 @@ app.post('/api/admin/auth', (req, res) => {
     return res.status(503).json({ error: 'Admin access not configured' });
   }
 
-  if (password === adminPassword) {
-    const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
+  // Use bcrypt comparison for security
+  const isValid = await bcrypt.compare(password, adminPassword);
+
+  if (isValid) {
+    // Shorter token expiry (1 hour instead of 24)
+    const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '1h' });
+
+    // Log admin login
+    logAdminAction('admin_login', null, null, 'Admin logged in', req.adminIp || req.ip);
+
     return res.json({ token: adminToken, message: 'Admin authenticated' });
   }
 
@@ -1108,6 +1139,7 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
         newUsers24h,
         newSlates24h
       },
+      startup: global.startupHealth || null,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1355,7 +1387,24 @@ runCleanup();
 // Run cleanup every hour
 setInterval(runCleanup, 60 * 60 * 1000);
 
-app.listen(PORT, () => {
-  console.log(`✓ Server running on port ${PORT}`);
-  console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Run startup health checks and start server
+(async () => {
+  try {
+    const healthResults = await healthChecks();
+
+    // Store results globally for admin console
+    global.startupHealth = {
+      results: healthResults,
+      timestamp: new Date().toISOString(),
+      uptime: 0
+    };
+
+    app.listen(PORT, () => {
+      console.log(`✓ Server running on port ${PORT}`);
+      console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+})();

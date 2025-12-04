@@ -11,6 +11,7 @@ class B2Storage {
     });
     this.bucketId = process.env.B2_BUCKET_ID;
     this.authorized = false;
+    this.authExpiry = null; // Track when auth token expires
   }
 
   // Encrypt content using AES-256-GCM (authenticated encryption)
@@ -67,13 +68,21 @@ class B2Storage {
   }
 
   async authorize() {
-    if (this.authorized) return;
+    // Check if we need to re-authorize (not authorized or token expiring soon)
+    const now = Date.now();
+    const needsAuth = !this.authorized || !this.authExpiry || now > this.authExpiry - (60 * 60 * 1000); // Re-auth 1h before expiry
+
+    if (!needsAuth) return;
+
     try {
       await this.b2.authorize();
       this.authorized = true;
-      console.log('✓ Backblaze B2 authorized');
+      this.authExpiry = now + (23 * 60 * 60 * 1000); // B2 tokens last 24h, set to 23h to be safe
+      console.log('✓ Backblaze B2 authorized (expires in 23 hours)');
     } catch (error) {
       console.error('✗ B2 authorization failed:', error.message);
+      this.authorized = false;
+      this.authExpiry = null;
       throw error;
     }
   }

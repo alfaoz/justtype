@@ -40,8 +40,13 @@ export function AdminConsole() {
   const [password, setPassword] = useState('');
   const [adminToken, setAdminToken] = useState(localStorage.getItem('admin-token'));
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState('overview');
+  // Tab state - get initial tab from URL
+  const getInitialTab = () => {
+    const path = window.location.pathname;
+    const match = path.match(/\/holyfuckwhereami\/(overview|users|logs|health|sentry)/);
+    return match ? match[1] : 'overview';
+  };
+  const [activeTab, setActiveTab] = useState(getInitialTab());
 
   // Data state
   const [users, setUsers] = useState([]);
@@ -51,6 +56,7 @@ export function AdminConsole() {
   const [activityLogs, setActivityLogs] = useState([]);
   const [logStats, setLogStats] = useState(null);
   const [logsPagination, setLogsPagination] = useState({ page: 1 });
+  const [errorLogs, setErrorLogs] = useState('');
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -73,6 +79,9 @@ export function AdminConsole() {
   }, [adminToken, activeTab]);
 
   const loadTabData = (tab) => {
+    // Update URL when tab changes
+    window.history.pushState({}, '', `/holyfuckwhereami/${tab}`);
+
     switch (tab) {
       case 'overview':
         fetchB2Stats();
@@ -86,6 +95,9 @@ export function AdminConsole() {
         break;
       case 'health':
         fetchHealthMetrics();
+        break;
+      case 'sentry':
+        fetchErrorLogs();
         break;
     }
   };
@@ -203,6 +215,25 @@ export function AdminConsole() {
     }
   };
 
+  const fetchErrorLogs = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/admin/error-logs`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setErrorLogs(data.logs);
+      }
+    } catch (err) {
+      console.error('Failed to fetch error logs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDeleteUser = async (userId, username) => {
     if (!confirm(strings.admin.dashboard.users.deleteConfirm(username))) {
       return;
@@ -279,17 +310,20 @@ export function AdminConsole() {
 
         {/* Tabs */}
         <div className="flex gap-4 mb-6 border-b border-[#333] overflow-x-auto">
-          {['overview', 'users', 'logs', 'health'].map((tab) => (
+          {['overview', 'users', 'logs', 'health', 'sentry'].map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setActiveTab(tab);
+                loadTabData(tab);
+              }}
               className={`pb-3 px-2 text-sm transition-colors whitespace-nowrap ${
                 activeTab === tab
                   ? 'text-white border-b-2 border-white'
                   : 'text-[#666] hover:text-[#a0a0a0]'
               }`}
             >
-              {strings.admin.dashboard.tabs[tab]}
+              {strings.admin.dashboard.tabs[tab] || (tab === 'sentry' ? 'Sentry' : tab)}
             </button>
           ))}
         </div>
@@ -323,6 +357,10 @@ export function AdminConsole() {
 
         {activeTab === 'health' && (
           <HealthTab healthMetrics={healthMetrics} b2Stats={b2Stats} />
+        )}
+
+        {activeTab === 'sentry' && (
+          <SentryTab errorLogs={errorLogs} loading={loading} onRefresh={fetchErrorLogs} />
         )}
       </div>
     </div>
@@ -759,6 +797,48 @@ function HealthTab({ healthMetrics, b2Stats }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Sentry Tab Component - Error Monitoring
+function SentryTab({ errorLogs, loading, onRefresh }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-sm text-white">error monitoring (last 100 lines)</h2>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+        >
+          {loading ? 'refreshing...' : 'refresh'}
+        </button>
+      </div>
+
+      {loading && !errorLogs ? (
+        <div className="text-[#666] text-sm">loading error logs...</div>
+      ) : !errorLogs ? (
+        <div className="text-[#666] text-sm">no error logs available</div>
+      ) : (
+        <div className="bg-[#0a0a0a] border border-[#333] rounded p-4 overflow-x-auto">
+          <pre className="text-xs text-red-400 font-mono whitespace-pre-wrap">
+            {errorLogs}
+          </pre>
+        </div>
+      )}
+
+      <div className="text-xs text-[#666]">
+        <p className="mb-2">this shows the last 100 lines of PM2 error logs for the justtype process.</p>
+        <p>errors include:</p>
+        <ul className="list-disc list-inside ml-2 mt-1 space-y-1">
+          <li>uncaught exceptions</li>
+          <li>database errors</li>
+          <li>b2 storage failures</li>
+          <li>authentication failures</li>
+          <li>email service errors</li>
+        </ul>
+      </div>
     </div>
   );
 }

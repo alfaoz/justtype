@@ -63,7 +63,7 @@ export default function App() {
       const path = window.location.pathname;
       if (path.startsWith('/s/')) {
         setView('public');
-      } else if (path === '/topsecretadminconsole') {
+      } else if (path.startsWith('/holyfuckwhereami')) {
         setView('admin');
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
