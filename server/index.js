@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -18,9 +19,20 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// Validate required environment variables on startup
 if (!JWT_SECRET) {
   console.error('FATAL: JWT_SECRET not set in .env file');
   process.exit(1);
+}
+
+if (!process.env.B2_APPLICATION_KEY_ID || !process.env.B2_APPLICATION_KEY || !process.env.B2_BUCKET_ID) {
+  console.error('FATAL: B2 credentials not set in .env file');
+  console.error('Required: B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_ID');
+  process.exit(1);
+}
+
+if (!process.env.RESEND_API_KEY) {
+  console.warn('WARNING: RESEND_API_KEY not set - email features will not work');
 }
 
 // Generate short share IDs (e.g., "a3bK9qL")
@@ -72,7 +84,20 @@ const getCachedEncryptionKey = (userId) => {
   return null;
 };
 
-app.use(cors());
+// CORS configuration - only allow our domain
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://justtype.io', 'https://www.justtype.io']
+    : true // Allow all in development
+  // Note: credentials not needed since we use Bearer tokens, not cookies
+}));
+
+// Security headers with helmet.js
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP to allow inline styles/scripts from Vite
+  crossOriginEmbedderPolicy: false // Allow embedding for public slates
+}));
+
 app.use(express.json({ limit: '5mb' })); // Lower limit to prevent bandwidth abuse
 
 // Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
@@ -206,7 +231,7 @@ const requireEncryptionKey = (req, res, next) => {
 // ============ AUTH ROUTES ============
 
 // Register
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req, res) => {
   const { username, password, email } = req.body;
 
   if (!username || !password || !email) {
@@ -273,7 +298,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -426,7 +451,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 });
 
 // Request password reset
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', createRateLimitMiddleware('forgotPassword'), async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -458,7 +483,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 });
 
 // Reset password
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'), async (req, res) => {
   const { email, code, newPassword } = req.body;
 
   if (!email || !code || !newPassword) {
@@ -1091,6 +1116,24 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
   }
 });
 
+// Get error logs from PM2
+app.get('/api/admin/error-logs', authenticateAdmin, (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+
+    // Get last 100 lines of PM2 error logs for justtype process
+    const errorLogs = execSync('pm2 logs justtype --err --lines 100 --nostream', {
+      encoding: 'utf-8',
+      timeout: 5000
+    });
+
+    res.json({ logs: errorLogs || 'No error logs found' });
+  } catch (error) {
+    console.error('Failed to fetch error logs:', error);
+    res.status(500).json({ error: 'Failed to fetch error logs', logs: error.message });
+  }
+});
+
 // ============ ACCOUNT ROUTES ============
 
 // Change password
@@ -1287,6 +1330,30 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
+
+// ============ PERIODIC CLEANUP ============
+
+const runCleanup = () => {
+  try {
+    // Clean up expired verification codes
+    const expiredCodes = db.prepare('UPDATE users SET verification_token = NULL, verification_code_expires = NULL WHERE verification_code_expires < datetime(\'now\')').run();
+
+    // Clean up old sessions (older than 30 days)
+    const oldSessions = db.prepare('DELETE FROM sessions WHERE datetime(last_activity) < datetime(\'now\', \'-30 days\')').run();
+
+    if (expiredCodes.changes > 0 || oldSessions.changes > 0) {
+      console.log(`✓ Cleanup: Removed ${expiredCodes.changes} expired codes and ${oldSessions.changes} old sessions`);
+    }
+  } catch (err) {
+    console.error('Cleanup job failed:', err);
+  }
+};
+
+// Run cleanup on startup
+runCleanup();
+
+// Run cleanup every hour
+setInterval(runCleanup, 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`✓ Server running on port ${PORT}`);
