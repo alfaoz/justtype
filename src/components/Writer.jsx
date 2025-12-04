@@ -225,7 +225,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         await saveSlateSync();
       }
     },
-    hasUnsavedChanges: () => hasUnsavedChanges
+    hasUnsavedChanges: () => hasUnsavedChanges,
+    needsRepublish: () => wasPublishedBeforeEdit,
+    getContent: () => content,
+    setContent: (newContent) => setContent(newContent)
   }));
 
   const saveSlate = async () => {

@@ -51,7 +51,7 @@ const strings = {
     },
     status: {
       ready: 'ready',
-      unpublished: 'unpublished',
+      unpublished: 'private draft',
       linkCopied: 'link copied!',
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
@@ -88,7 +88,7 @@ const strings = {
       chars: (count) => `${count} chars`,
       updated: (date) => `updated: ${date}`,
       published: (date) => `published: ${date}`,
-      unpublished: 'unpublished',
+      unpublished: 'private draft',
       pubShort: (date) => `pub: ${date}`
     },
     menu: {

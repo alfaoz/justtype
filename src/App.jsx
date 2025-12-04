@@ -15,10 +15,13 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showRepublishModal, setShowRepublishModal] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
   const [currentSlate, setCurrentSlate] = useState(null);
   const [zenMode, setZenMode] = useState(false);
   const writerRef = useRef(null);
   const lastSlateRef = useRef(null); // Track last working slate when switching views
+  const blankSlateContentRef = useRef(''); // Preserve blank slate content when navigating
 
   // Fetch current user data on mount to ensure email_verified is up to date
   useEffect(() => {
@@ -88,6 +91,18 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleRoute);
   }, [token]);
 
+  // Restore blank slate content when returning to writer view
+  useEffect(() => {
+    if (view === 'writer' && !currentSlate && blankSlateContentRef.current && writerRef.current) {
+      // Small delay to ensure Writer has mounted
+      setTimeout(() => {
+        if (writerRef.current && blankSlateContentRef.current) {
+          writerRef.current.setContent(blankSlateContentRef.current);
+        }
+      }, 50);
+    }
+  }, [view, currentSlate]);
+
   const handleAuth = (authData) => {
     setToken(authData.token);
     setUsername(authData.user.username);
@@ -115,6 +130,13 @@ export default function App() {
   };
 
   const handleSelectSlate = async (slate) => {
+    // Check if current slate needs republish
+    if (writerRef.current && writerRef.current.needsRepublish()) {
+      setPendingNavigation({ type: 'selectSlate', data: slate });
+      setShowRepublishModal(true);
+      return;
+    }
+
     // Save current slate if it has unsaved changes
     if (writerRef.current) {
       await writerRef.current.saveBeforeNavigate();
@@ -126,6 +148,13 @@ export default function App() {
   };
 
   const handleNewSlate = async () => {
+    // Check if current slate needs republish
+    if (writerRef.current && writerRef.current.needsRepublish()) {
+      setPendingNavigation({ type: 'newSlate' });
+      setShowRepublishModal(true);
+      return;
+    }
+
     // Save current slate if it has unsaved changes
     if (writerRef.current) {
       await writerRef.current.saveBeforeNavigate();
@@ -136,9 +165,21 @@ export default function App() {
   };
 
   const handleToggleView = async () => {
+    // Check if current slate needs republish
+    if (view === 'writer' && writerRef.current && writerRef.current.needsRepublish()) {
+      setPendingNavigation({ type: 'toggleView' });
+      setShowRepublishModal(true);
+      return;
+    }
+
     // Save current slate if it has unsaved changes
     if (writerRef.current) {
       await writerRef.current.saveBeforeNavigate();
+
+      // Preserve blank slate content
+      if (!currentSlate && writerRef.current.getContent()) {
+        blankSlateContentRef.current = writerRef.current.getContent();
+      }
     }
 
     if (view === 'writer') {
@@ -158,6 +199,52 @@ export default function App() {
       setView('writer');
       setZenMode(false);
     }
+  };
+
+  const handleRepublishModalContinue = async () => {
+    setShowRepublishModal(false);
+
+    // Execute the pending navigation
+    if (pendingNavigation) {
+      const { type, data } = pendingNavigation;
+      setPendingNavigation(null);
+
+      if (type === 'selectSlate') {
+        // Save current slate if it has unsaved changes
+        if (writerRef.current) {
+          await writerRef.current.saveBeforeNavigate();
+        }
+        setCurrentSlate(data);
+        setView('writer');
+        setZenMode(false);
+        window.history.pushState({}, '', `/slate/${data.id}`);
+      } else if (type === 'newSlate') {
+        if (writerRef.current) {
+          await writerRef.current.saveBeforeNavigate();
+        }
+        setCurrentSlate(null);
+        setView('writer');
+        window.history.pushState({}, '', '/');
+      } else if (type === 'toggleView') {
+        if (writerRef.current) {
+          await writerRef.current.saveBeforeNavigate();
+          if (!currentSlate && writerRef.current.getContent()) {
+            blankSlateContentRef.current = writerRef.current.getContent();
+          }
+        }
+        if (view === 'writer') {
+          lastSlateRef.current = currentSlate;
+          setView('slates');
+          setZenMode(false);
+          window.history.pushState({}, '', '/slates');
+        }
+      }
+    }
+  };
+
+  const handleRepublishModalCancel = () => {
+    setShowRepublishModal(false);
+    setPendingNavigation(null);
   };
 
   // Public viewer
@@ -286,6 +373,32 @@ export default function App() {
           onClose={() => setShowAuthModal(false)}
           onAuth={handleAuth}
         />
+      )}
+
+      {/* REPUBLISH WARNING MODAL */}
+      {showRepublishModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">slate not republished</h2>
+            <p className="text-sm text-[#666] mb-6">
+              you've edited a published slate but haven't republished it yet. the slate is currently saved as a private draft.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleRepublishModalContinue}
+                className="flex-1 bg-[#333] text-white px-6 py-3 rounded hover:bg-[#444] transition-colors text-sm"
+              >
+                continue without republishing
+              </button>
+              <button
+                onClick={handleRepublishModalCancel}
+                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+              >
+                go back
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
