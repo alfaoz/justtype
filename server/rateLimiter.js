@@ -142,8 +142,10 @@ function createRateLimitMiddleware(operation) {
     }
 
     // Add rate limit info to headers (useful for clients)
-    res.setHeader('X-RateLimit-Limit', result.limit);
-    res.setHeader('X-RateLimit-Remaining', result.remaining);
+    if (result.limit !== undefined) {
+      res.setHeader('X-RateLimit-Limit', result.limit);
+      res.setHeader('X-RateLimit-Remaining', result.remaining);
+    }
 
     next();
   };

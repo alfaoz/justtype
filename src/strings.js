@@ -55,7 +55,8 @@ const strings = {
       linkCopied: 'link copied!',
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
-      published: 'published'
+      published: 'published',
+      republished: 'republished'
     },
     publishButton: {
       publish: 'publish',

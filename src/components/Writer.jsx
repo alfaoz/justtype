@@ -28,8 +28,9 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     if (currentSlate && token) {
       setIsLoading(true);
       loadSlate(currentSlate.id);
-    } else {
-      // Start with blank content
+    } else if (!currentSlate && !content.trim()) {
+      // Only clear content if there's no current slate AND no content
+      // This prevents clearing user's work when they log in after writing
       setContent('');
       setTitle('');
       setHasUnsavedChanges(false);

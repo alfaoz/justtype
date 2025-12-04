@@ -560,7 +560,7 @@ app.get('/api/slates', authenticateToken, (req, res) => {
 });
 
 // Get single slate (with content)
-app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('viewSlate'), async (req, res) => {
+app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, res) => {
   try {
     const slate = db.prepare(`
       SELECT * FROM slates WHERE id = ? AND user_id = ?

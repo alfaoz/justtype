@@ -131,6 +131,41 @@ class B2Storage {
 
       return response.data.fileId;
     } catch (error) {
+      // If we get a 401, force re-authorization and retry once
+      if (error.response && error.response.status === 401) {
+        console.log('B2 auth expired, forcing re-authorization...');
+        this.authorized = false;
+        this.authExpiry = null;
+        await this.authorize();
+
+        // Retry the upload
+        try {
+          const uploadUrl = await this.b2.getUploadUrl({
+            bucketId: this.bucketId,
+          });
+
+          const response = await this.b2.uploadFile({
+            uploadUrl: uploadUrl.data.uploadUrl,
+            uploadAuthToken: uploadUrl.data.authorizationToken,
+            fileName: fileName,
+            data: dataToUpload,
+            mime: mimeType,
+          });
+
+          b2Monitor.logClassC('uploadSlate', {
+            slateId,
+            encrypted: !!encryptionKey,
+            sizeBytes: dataToUpload.length
+          });
+
+          return response.data.fileId;
+        } catch (retryError) {
+          b2Monitor.logError('uploadSlate', retryError);
+          const b2Error = handleB2Error(retryError, 'uploadSlate');
+          throw b2Error;
+        }
+      }
+
       b2Monitor.logError('uploadSlate', error);
       const b2Error = handleB2Error(error, 'uploadSlate');
       throw b2Error;
@@ -167,6 +202,44 @@ class B2Storage {
 
       return slateData.content;
     } catch (error) {
+      // If we get a 401, force re-authorization and retry once
+      if (error.response && error.response.status === 401) {
+        console.log('B2 auth expired, forcing re-authorization...');
+        this.authorized = false;
+        this.authExpiry = null;
+        await this.authorize();
+
+        // Retry the download
+        try {
+          const response = await this.b2.downloadFileById({
+            fileId: fileId,
+            responseType: 'arraybuffer',
+          });
+
+          const downloadedData = Buffer.from(response.data);
+
+          b2Monitor.logClassB('getSlate', {
+            fileId,
+            encrypted: !!encryptionKey,
+            bytes: downloadedData.length
+          });
+
+          let slateData;
+          if (encryptionKey) {
+            const decryptedJson = this.decrypt(downloadedData, encryptionKey);
+            slateData = JSON.parse(decryptedJson);
+          } else {
+            slateData = JSON.parse(downloadedData.toString());
+          }
+
+          return slateData.content;
+        } catch (retryError) {
+          b2Monitor.logError('getSlate', retryError);
+          const b2Error = handleB2Error(retryError, 'getSlate');
+          throw b2Error;
+        }
+      }
+
       b2Monitor.logError('getSlate', error);
       const b2Error = handleB2Error(error, 'getSlate');
       throw b2Error;
@@ -193,6 +266,35 @@ class B2Storage {
 
       return true;
     } catch (error) {
+      // If we get a 401, force re-authorization and retry once
+      if (error.response && error.response.status === 401) {
+        console.log('B2 auth expired, forcing re-authorization...');
+        this.authorized = false;
+        this.authExpiry = null;
+        await this.authorize();
+
+        // Retry the delete
+        try {
+          if (!fileName) {
+            const fileInfo = await this.b2.getFileInfo({ fileId });
+            fileName = fileInfo.data.fileName;
+          }
+
+          await this.b2.deleteFileVersion({
+            fileId: fileId,
+            fileName: fileName,
+          });
+
+          b2Monitor.logClassC('deleteSlate', { fileId, fileName });
+
+          return true;
+        } catch (retryError) {
+          b2Monitor.logError('deleteSlate', retryError);
+          const b2Error = handleB2Error(retryError, 'deleteSlate');
+          throw b2Error;
+        }
+      }
+
       b2Monitor.logError('deleteSlate', error);
       const b2Error = handleB2Error(error, 'deleteSlate');
       throw b2Error;

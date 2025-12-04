@@ -141,8 +141,9 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-4 md:p-8">
-      <div className="flex justify-between items-center mb-6 md:mb-8">
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-4xl mx-auto p-4 md:p-8">
+        <div className="flex justify-between items-center mb-6 md:mb-8">
         <h1 className="text-xl md:text-2xl text-white">{strings.slates.title}</h1>
         <button
           onClick={onNewSlate}
@@ -240,8 +241,8 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.slates.deleteModal.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
-              {strings.slates.deleteModal.message(deleteModal.slateTitle)}
+            <p className="text-sm text-[#666] mb-6 break-words">
+              {strings.slates.deleteModal.message(deleteModal.slateTitle.length > 100 ? deleteModal.slateTitle.substring(0, 100) + '...' : deleteModal.slateTitle)}
             </p>
             <div className="flex gap-3">
               <button
@@ -260,6 +261,7 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
