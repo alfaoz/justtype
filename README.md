@@ -1,6 +1,6 @@
 # justtype
 
-minimalist writing app with cloud storage and sharing.
+start typing, we'll handle the rewt.
 
 live at **[justtype.io](https://justtype.io)**
 
