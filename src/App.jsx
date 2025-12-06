@@ -5,18 +5,25 @@ import { PublicViewer } from './components/PublicViewer';
 import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
 import { Account } from './components/Account';
+import { ManageSubscription } from './components/ManageSubscription';
+import { TextViewer } from './components/TextViewer';
 import { API_URL } from './config';
 import { strings } from './strings';
 
 export default function App() {
-  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'public' | 'admin'
+  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'terms' | 'privacy'
   const [token, setToken] = useState(localStorage.getItem('justtype-token'));
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
+  const [showGoogleSuccessModal, setShowGoogleSuccessModal] = useState(false);
+  const [showGoogleErrorModal, setShowGoogleErrorModal] = useState(false);
+  const [googleErrorType, setGoogleErrorType] = useState('');
+  const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState(null);
+  const [authProvider, setAuthProvider] = useState(localStorage.getItem('justtype-auth-provider') || 'local');
   const [currentSlate, setCurrentSlate] = useState(null);
   const [zenMode, setZenMode] = useState(false);
   const writerRef = useRef(null);
@@ -38,6 +45,8 @@ export default function App() {
           setUsername(userData.username);
           setEmail(userData.email);
           setEmailVerified(userData.email_verified);
+          setAuthProvider(userData.auth_provider || 'local');
+          localStorage.setItem('justtype-auth-provider', userData.auth_provider || 'local');
           localStorage.setItem('justtype-username', userData.username);
           localStorage.setItem('justtype-email', userData.email);
           localStorage.setItem('justtype-email-verified', userData.email_verified);
@@ -68,6 +77,10 @@ export default function App() {
         setView('public');
       } else if (path.startsWith('/holyfuckwhereami')) {
         setView('admin');
+      } else if (path === '/terms') {
+        setView('terms');
+      } else if (path === '/privacy') {
+        setView('privacy');
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
@@ -78,6 +91,8 @@ export default function App() {
         setView('slates');
       } else if (path === '/account') {
         setView('account');
+      } else if (path === '/manage-subscription') {
+        setView('manage-subscription');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -102,6 +117,95 @@ export default function App() {
       }, 50);
     }
   }, [view, currentSlate]);
+
+  // Handle Google OAuth callback and payment status
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const googleAuth = urlParams.get('googleAuth');
+    const tokenFromOAuth = urlParams.get('token');
+    const usernameFromOAuth = urlParams.get('username');
+    const emailFromOAuth = urlParams.get('email');
+    const emailVerifiedFromOAuth = urlParams.get('emailVerified');
+    const isNewUser = urlParams.get('isNewUser');
+    const payment = urlParams.get('payment');
+
+    // Handle payment success/cancelled
+    if (payment === 'success') {
+      console.log('Payment success detected!');
+      console.log('Current URL:', window.location.href);
+      setShowPaymentSuccessModal(true);
+
+      // Clean URL first
+      window.history.replaceState({}, '', '/');
+
+      // In test mode, trigger upgrade via test endpoint
+      const tier = localStorage.getItem('justtype-pending-tier');
+      console.log('Pending tier from localStorage:', tier);
+      console.log('Token exists:', !!token);
+
+      if (tier && token) {
+        console.log('Calling test upgrade endpoint...');
+        fetch(`${API_URL}/stripe/test-upgrade`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ tier })
+        }).then(response => {
+          console.log('Test upgrade response:', response.status);
+          return response.json();
+        }).then(data => {
+          console.log('Test upgrade data:', data);
+          localStorage.removeItem('justtype-pending-tier');
+          // Refresh user data to get updated storage info
+          fetchUserData();
+        }).catch(err => console.error('Test upgrade failed:', err));
+      } else {
+        console.log('Skipping test upgrade - tier or token missing');
+        if (!tier) console.log('No tier in localStorage');
+        if (!token) console.log('No token available');
+      }
+    } else if (payment === 'cancelled') {
+      console.log('Payment cancelled');
+      // Just clean URL, no modal needed
+      localStorage.removeItem('justtype-pending-tier');
+      window.history.replaceState({}, '', '/');
+    }
+
+    if (googleAuth === 'success' && tokenFromOAuth) {
+      console.log('Google OAuth success, setting user data...');
+      setToken(tokenFromOAuth);
+      setUsername(usernameFromOAuth);
+      setEmail(emailFromOAuth);
+      setEmailVerified(emailVerifiedFromOAuth === 'true');
+      setAuthProvider('google');
+      localStorage.setItem('justtype-token', tokenFromOAuth);
+      localStorage.setItem('justtype-username', usernameFromOAuth);
+      localStorage.setItem('justtype-email', emailFromOAuth);
+      localStorage.setItem('justtype-email-verified', emailVerifiedFromOAuth);
+      localStorage.setItem('justtype-auth-provider', 'google');
+      setShowAuthModal(false);
+
+      // Show welcome modal for new users
+      if (isNewUser === 'true') {
+        setShowGoogleSuccessModal(true);
+      }
+
+      // Clean URL parameters
+      window.history.replaceState({}, '', '/');
+    } else if (googleAuth === 'account_exists') {
+      console.error('Google OAuth failed: account exists with password');
+      setGoogleErrorType('account_exists');
+      setShowGoogleErrorModal(true);
+      window.history.replaceState({}, '', '/');
+    } else if (googleAuth === 'error') {
+      console.error('Google OAuth authentication failed');
+      setGoogleErrorType('generic');
+      setShowGoogleErrorModal(true);
+      window.history.replaceState({}, '', '/');
+    }
+  }, []); // Run once on mount, will detect URL params
 
   const handleAuth = (authData) => {
     setToken(authData.token);
@@ -172,24 +276,28 @@ export default function App() {
       return;
     }
 
-    // Save current slate if it has unsaved changes
-    if (writerRef.current) {
-      await writerRef.current.saveBeforeNavigate();
-
-      // Preserve blank slate content
-      if (!currentSlate && writerRef.current.getContent()) {
-        blankSlateContentRef.current = writerRef.current.getContent();
-      }
-    }
-
     if (view === 'writer') {
-      // Switching from writer to slates - save current slate
+      // Only save if there's a currentSlate (existing slate)
+      // Don't save blank slates - just preserve content locally
+      if (writerRef.current) {
+        if (currentSlate) {
+          await writerRef.current.saveBeforeNavigate();
+        } else {
+          // Preserve blank slate content without saving to server
+          const content = writerRef.current.getContent();
+          if (content) {
+            blankSlateContentRef.current = content;
+          }
+        }
+      }
+
+      // Switching from writer to slates
       lastSlateRef.current = currentSlate;
       setView('slates');
       setZenMode(false);
       window.history.pushState({}, '', '/slates');
-    } else if (view === 'slates' || view === 'account') {
-      // Switching from slates/account to writer - restore last slate
+    } else if (view === 'slates' || view === 'account' || view === 'manage-subscription') {
+      // Switching from slates/account/manage-subscription to writer - restore last slate
       if (lastSlateRef.current) {
         setCurrentSlate(lastSlateRef.current);
         window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
@@ -227,9 +335,13 @@ export default function App() {
         window.history.pushState({}, '', '/');
       } else if (type === 'toggleView') {
         if (writerRef.current) {
-          await writerRef.current.saveBeforeNavigate();
-          if (!currentSlate && writerRef.current.getContent()) {
-            blankSlateContentRef.current = writerRef.current.getContent();
+          if (currentSlate) {
+            await writerRef.current.saveBeforeNavigate();
+          } else {
+            const content = writerRef.current.getContent();
+            if (content) {
+              blankSlateContentRef.current = content;
+            }
           }
         }
         if (view === 'writer') {
@@ -341,6 +453,7 @@ export default function App() {
             onSlateChange={setCurrentSlate}
             onLogin={() => setShowAuthModal(true)}
             onZenModeChange={setZenMode}
+            onOpenAuthModal={() => setShowAuthModal(true)}
           />
         )}
         {view === 'slates' && (
@@ -356,6 +469,7 @@ export default function App() {
             username={username}
             email={email}
             emailVerified={emailVerified}
+            authProvider={authProvider}
             onLogout={handleLogout}
             onEmailUpdate={(newEmail, verified) => {
               setEmail(newEmail);
@@ -364,6 +478,21 @@ export default function App() {
               localStorage.setItem('justtype-email-verified', verified);
             }}
           />
+        )}
+        {view === 'manage-subscription' && (
+          <ManageSubscription
+            token={token}
+            onBack={() => {
+              setView('account');
+              window.history.pushState({}, '', '/account');
+            }}
+          />
+        )}
+        {view === 'terms' && (
+          <TextViewer file="terms.txt" title="terms & conditions" />
+        )}
+        {view === 'privacy' && (
+          <TextViewer file="privacy.txt" title="privacy policy" />
         )}
       </main>
 
@@ -379,16 +508,16 @@ export default function App() {
       {showRepublishModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">slate not republished</h2>
+            <h2 className="text-lg md:text-xl text-white mb-4">unpublished changes</h2>
             <p className="text-sm text-[#666] mb-6">
-              you've edited a published slate but haven't republished it yet. the slate is currently saved as a private draft.
+              your edits won't be visible to others until you republish.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={handleRepublishModalContinue}
                 className="flex-1 bg-[#333] text-white px-6 py-3 rounded hover:bg-[#444] transition-colors text-sm"
               >
-                continue without republishing
+                keep as draft
               </button>
               <button
                 onClick={handleRepublishModalCancel}
@@ -397,6 +526,126 @@ export default function App() {
                 go back
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOOGLE OAUTH SUCCESS MODAL */}
+      {showGoogleSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">welcome to justtype!</h2>
+            <p className="text-sm text-[#666] mb-4">
+              you've successfully signed in with google as <span className="text-white">{username}</span>.
+            </p>
+            <p className="text-sm text-[#666] mb-6">
+              your slates are encrypted and saved automatically. happy writing!
+            </p>
+            <button
+              onClick={() => setShowGoogleSuccessModal(false)}
+              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+            >
+              get started
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PAYMENT SUCCESS MODAL */}
+      {showPaymentSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <style>{`
+            @keyframes confetti-fall {
+              0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+            }
+            @keyframes celebration-bounce {
+              0%, 100% { transform: scale(1); }
+              50% { transform: scale(1.05); }
+            }
+            .confetti {
+              position: fixed;
+              width: 10px;
+              height: 10px;
+              animation: confetti-fall 3s linear forwards;
+              pointer-events: none;
+            }
+            .celebration-modal {
+              animation: celebration-bounce 0.5s ease-out;
+            }
+          `}</style>
+
+          {/* Confetti elements */}
+          {[...Array(50)].map((_, i) => (
+            <div
+              key={i}
+              className="confetti"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `-20px`,
+                backgroundColor: ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dfe6e9'][Math.floor(Math.random() * 6)],
+                animationDelay: `${Math.random() * 0.5}s`,
+                animationDuration: `${2 + Math.random() * 2}s`
+              }}
+            />
+          ))}
+
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full celebration-modal">
+            <div className="text-center">
+              <div className="text-6xl mb-4">🎉</div>
+              <h2 className="text-2xl md:text-3xl text-white mb-4">thank you!</h2>
+              <p className="text-sm text-[#a0a0a0] mb-4">
+                your support means the world to us. your payment was successful!
+              </p>
+              {token && (
+                <p className="text-sm text-[#666] mb-6">
+                  your storage benefits have been updated. check the account tab to see your new plan.
+                </p>
+              )}
+              {!token && (
+                <p className="text-sm text-[#666] mb-6">
+                  to receive storage benefits, please sign up and we'll link your donation automatically.
+                </p>
+              )}
+              <button
+                onClick={() => {
+                  setShowPaymentSuccessModal(false);
+                  if (token) {
+                    setView('account');
+                  }
+                }}
+                className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm font-medium"
+              >
+                {token ? 'view my account' : 'continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GOOGLE OAUTH ERROR MODAL */}
+      {showGoogleErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">
+              {googleErrorType === 'account_exists' ? 'account already exists' : 'sign in failed'}
+            </h2>
+            <p className="text-sm text-[#666] mb-6">
+              {googleErrorType === 'account_exists'
+                ? 'an account with this email already exists with a password. please sign in using your username and password instead.'
+                : 'google authentication failed. please try again or use email/password to sign in.'}
+            </p>
+            <button
+              onClick={() => {
+                setShowGoogleErrorModal(false);
+                if (googleErrorType === 'account_exists') {
+                  setShowAuthModal(true);
+                }
+              }}
+              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+            >
+              {googleErrorType === 'account_exists' ? 'sign in with password' : 'ok'}
+            </button>
           </div>
         </div>
       )}

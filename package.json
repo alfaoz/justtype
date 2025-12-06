@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "backblaze-b2": "^1.7.0",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.2.2",
@@ -19,9 +20,12 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "nanoid": "^3.3.7",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "resend": "^6.5.2"
+    "resend": "^6.5.2",
+    "stripe": "^20.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",

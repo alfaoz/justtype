@@ -181,6 +181,8 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
                     <span>{strings.slates.stats.updated(formatDate(slate.updated_at))}</span>
                     {slate.is_published ? (
                       <span className="text-blue-400">{strings.slates.stats.published(formatDate(slate.published_at))}</span>
+                    ) : slate.published_at ? (
+                      <span className="text-orange-400">{strings.slates.stats.privateDraft}</span>
                     ) : (
                       <span className="text-[#666]">{strings.slates.stats.unpublished}</span>
                     )}
@@ -194,6 +196,8 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
                     </div>
                     {slate.is_published ? (
                       <div className="text-blue-400">{strings.slates.stats.pubShort(formatDateShort(slate.published_at))}</div>
+                    ) : slate.published_at ? (
+                      <div className="text-orange-400">{strings.slates.stats.privateDraft}</div>
                     ) : (
                       <div className="text-[#666]">{strings.slates.stats.unpublished}</div>
                     )}

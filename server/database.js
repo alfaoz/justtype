@@ -119,6 +119,33 @@ try {
     console.log('✓ Database migrated: Added pending_email column');
   }
 
+  // Add Google OAuth columns to users if they don't exist
+  const hasGoogleId = userColumns.some(col => col.name === 'google_id');
+  const hasAuthProvider = userColumns.some(col => col.name === 'auth_provider');
+  const hasEncryptedKey = userColumns.some(col => col.name === 'encrypted_key');
+
+  if (!hasGoogleId) {
+    db.exec(`ALTER TABLE users ADD COLUMN google_id TEXT;`);
+    console.log('✓ Database migrated: Added google_id column');
+  }
+
+  // Add unique index on google_id if it doesn't exist
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL;`);
+  } catch (err) {
+    // Ignore if index already exists
+  }
+
+  if (!hasAuthProvider) {
+    db.exec(`ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local';`);
+    console.log('✓ Database migrated: Added auth_provider column');
+  }
+
+  if (!hasEncryptedKey) {
+    db.exec(`ALTER TABLE users ADD COLUMN encrypted_key TEXT;`);
+    console.log('✓ Database migrated: Added encrypted_key column');
+  }
+
   // Add encryption_salt to users if it doesn't exist
   const hasEncryptionSalt = userColumns.some(col => col.name === 'encryption_salt');
   if (!hasEncryptionSalt) {
@@ -139,6 +166,96 @@ try {
   if (!hasPublicFileId) {
     db.exec(`ALTER TABLE slates ADD COLUMN b2_public_file_id TEXT;`);
     console.log('✓ Database migrated: Added b2_public_file_id column to slates');
+  }
+
+  // Add Google unlink verification columns
+  const hasUnlinkGoogleCode = userColumns.some(col => col.name === 'unlink_google_code');
+  const hasUnlinkGoogleCodeExpires = userColumns.some(col => col.name === 'unlink_google_code_expires');
+
+  if (!hasUnlinkGoogleCode) {
+    db.exec(`ALTER TABLE users ADD COLUMN unlink_google_code TEXT;`);
+    console.log('✓ Database migrated: Added unlink_google_code column');
+  }
+
+  if (!hasUnlinkGoogleCodeExpires) {
+    db.exec(`ALTER TABLE users ADD COLUMN unlink_google_code_expires DATETIME;`);
+    console.log('✓ Database migrated: Added unlink_google_code_expires column');
+  }
+
+  // Add storage tracking columns
+  const hasStorageLimit = userColumns.some(col => col.name === 'storage_limit');
+  const hasStorageUsed = userColumns.some(col => col.name === 'storage_used');
+
+  if (!hasStorageLimit) {
+    db.exec(`ALTER TABLE users ADD COLUMN storage_limit INTEGER DEFAULT 25000000;`); // 25MB default
+    console.log('✓ Database migrated: Added storage_limit column');
+  }
+
+  if (!hasStorageUsed) {
+    db.exec(`ALTER TABLE users ADD COLUMN storage_used INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added storage_used column');
+  }
+
+  // Add visit tracking column
+  const hasVisitCount = userColumns.some(col => col.name === 'visit_count');
+
+  if (!hasVisitCount) {
+    db.exec(`ALTER TABLE users ADD COLUMN visit_count INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added visit_count column');
+  }
+
+  // Add supporter tier columns
+  const hasSupporterTier = userColumns.some(col => col.name === 'supporter_tier');
+  const hasSupporterBadgeVisible = userColumns.some(col => col.name === 'supporter_badge_visible');
+  const hasDonatedAt = userColumns.some(col => col.name === 'donated_at');
+
+  if (!hasSupporterTier) {
+    db.exec(`ALTER TABLE users ADD COLUMN supporter_tier TEXT;`); // NULL, 'one_time', 'quarterly'
+    console.log('✓ Database migrated: Added supporter_tier column');
+  }
+
+  if (!hasSupporterBadgeVisible) {
+    db.exec(`ALTER TABLE users ADD COLUMN supporter_badge_visible BOOLEAN DEFAULT 1;`);
+    console.log('✓ Database migrated: Added supporter_badge_visible column');
+  }
+
+  if (!hasDonatedAt) {
+    db.exec(`ALTER TABLE users ADD COLUMN donated_at DATETIME;`);
+    console.log('✓ Database migrated: Added donated_at column');
+  }
+
+  // Add Stripe integration columns
+  const hasStripeCustomerId = userColumns.some(col => col.name === 'stripe_customer_id');
+  const hasStripeSubscriptionId = userColumns.some(col => col.name === 'stripe_subscription_id');
+  const hasSubscriptionExpiresAt = userColumns.some(col => col.name === 'subscription_expires_at');
+
+  if (!hasStripeCustomerId) {
+    db.exec(`ALTER TABLE users ADD COLUMN stripe_customer_id TEXT;`);
+    console.log('✓ Database migrated: Added stripe_customer_id column');
+  }
+
+  if (!hasStripeSubscriptionId) {
+    db.exec(`ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT;`);
+    console.log('✓ Database migrated: Added stripe_subscription_id column');
+  }
+
+  if (!hasSubscriptionExpiresAt) {
+    db.exec(`ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME;`);
+    console.log('✓ Database migrated: Added subscription_expires_at column');
+  }
+
+  // Add terms acceptance columns
+  const hasTermsAccepted = userColumns.some(col => col.name === 'terms_accepted');
+  const hasTermsAcceptedAt = userColumns.some(col => col.name === 'terms_accepted_at');
+
+  if (!hasTermsAccepted) {
+    db.exec(`ALTER TABLE users ADD COLUMN terms_accepted BOOLEAN DEFAULT 0;`);
+    console.log('✓ Database migrated: Added terms_accepted column');
+  }
+
+  if (!hasTermsAcceptedAt) {
+    db.exec(`ALTER TABLE users ADD COLUMN terms_accepted_at DATETIME;`);
+    console.log('✓ Database migrated: Added terms_accepted_at column');
   }
 } catch (err) {
   console.error('Database migration error:', err);

@@ -35,6 +35,43 @@ function formatUptime(seconds) {
   return `${minutes}m`;
 }
 
+// Modal Component
+function AdminModal({ isOpen, onClose, title, children, confirmText, cancelText, onConfirm, confirmDanger, confirmDisabled }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+        {title && <h2 className="text-lg md:text-xl text-white mb-4">{title}</h2>}
+        <div className="mb-6">
+          {children}
+        </div>
+        <div className="flex gap-3">
+          {onConfirm && (
+            <button
+              onClick={onConfirm}
+              disabled={confirmDisabled}
+              className={`flex-1 px-6 py-3 rounded transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                confirmDanger
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'bg-white text-black hover:bg-[#e5e5e5]'
+              }`}
+            >
+              {confirmText || 'confirm'}
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+          >
+            {cancelText || 'cancel'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminConsole() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
@@ -57,6 +94,15 @@ export function AdminConsole() {
   const [logStats, setLogStats] = useState(null);
   const [logsPagination, setLogsPagination] = useState({ page: 1 });
   const [errorLogs, setErrorLogs] = useState('');
+  const [stripeData, setStripeData] = useState(null);
+
+  // Search state
+  const [userSearch, setUserSearch] = useState('');
+  const [stripeSearch, setStripeSearch] = useState('');
+
+  // Modal state
+  const [modal, setModal] = useState({ isOpen: false, type: null, data: null });
+  const [modalInput, setModalInput] = useState('');
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -89,6 +135,9 @@ export function AdminConsole() {
         break;
       case 'users':
         fetchUsers(1);
+        break;
+      case 'stripe':
+        fetchStripeData();
         break;
       case 'logs':
         fetchActivityLogs(1);
@@ -234,10 +283,86 @@ export function AdminConsole() {
     }
   };
 
-  const handleDeleteUser = async (userId, username) => {
-    if (!confirm(strings.admin.dashboard.users.deleteConfirm(username))) {
-      return;
+  const fetchStripeData = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/admin/stripe-subscriptions`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setStripeData(data);
+      } else {
+        setError(data.error || 'failed to fetch stripe data');
+      }
+    } catch (err) {
+      console.error('Failed to fetch stripe data:', err);
+      setError('failed to fetch stripe data');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleStripeAction = async (action, userId = null, planData = null) => {
+    try {
+      const body = { action, userId };
+      if (planData) {
+        body.plan = planData;
+      }
+
+      const response = await fetch(`${API_URL}/admin/stripe-action`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setModal({
+          isOpen: true,
+          type: 'success',
+          data: { message: data.message || 'action completed successfully' }
+        });
+        fetchStripeData(); // Refresh data
+      } else {
+        setModal({
+          isOpen: true,
+          type: 'error',
+          data: { message: data.error || 'action failed' }
+        });
+      }
+    } catch (err) {
+      setModal({
+        isOpen: true,
+        type: 'error',
+        data: { message: 'action failed' }
+      });
+    }
+  };
+
+  const openModal = (type, data) => {
+    setModal({ isOpen: true, type, data });
+    setModalInput('');
+  };
+
+  const closeModal = () => {
+    setModal({ isOpen: false, type: null, data: null });
+    setModalInput('');
+  };
+
+  const handleDeleteUser = (userId, username) => {
+    openModal('deleteUser', { userId, username });
+  };
+
+  const confirmDeleteUser = async () => {
+    const { userId, username } = modal.data;
+    closeModal();
 
     try {
       const response = await fetch(`${API_URL}/admin/users/${userId}`, {
@@ -248,14 +373,59 @@ export function AdminConsole() {
       const data = await response.json();
 
       if (response.ok) {
-        alert(strings.admin.dashboard.users.deleteSuccess(username));
+        openModal('success', { message: strings.admin.dashboard.users.deleteSuccess(username) });
         fetchUsers(usersPagination.page);
       } else {
-        alert(data.error || strings.admin.dashboard.users.errors.deleteFailed);
+        openModal('error', { message: data.error || strings.admin.dashboard.users.errors.deleteFailed });
       }
     } catch (err) {
-      alert(strings.admin.dashboard.users.errors.deleteFailed);
+      openModal('error', { message: strings.admin.dashboard.users.errors.deleteFailed });
     }
+  };
+
+  const handleChangePlan = (userId, username, currentPlan) => {
+    openModal('changePlan', { userId, username, currentPlan });
+    setModalInput(currentPlan || 'free');
+  };
+
+  const confirmChangePlan = async () => {
+    const { userId, username } = modal.data;
+    const newPlan = modalInput.toLowerCase();
+
+    if (!['free', 'one_time', 'quarterly'].includes(newPlan)) {
+      openModal('error', { message: 'invalid plan. must be: free, one_time, or quarterly' });
+      return;
+    }
+
+    closeModal();
+
+    try {
+      const response = await fetch(`${API_URL}/admin/users/${userId}/plan`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${adminToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ plan: newPlan })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        openModal('success', { message: `plan updated successfully for ${username}` });
+        fetchUsers(usersPagination.page);
+      } else {
+        openModal('error', { message: data.error || 'failed to update plan' });
+      }
+    } catch (err) {
+      openModal('error', { message: 'failed to update plan' });
+    }
+  };
+
+  // Stripe-specific modal handlers
+  const confirmStripeAction = async (action, userId = null) => {
+    closeModal();
+    await handleStripeAction(action, userId);
   };
 
   const handleLogout = () => {
@@ -310,7 +480,7 @@ export function AdminConsole() {
 
         {/* Tabs */}
         <div className="flex gap-4 mb-6 border-b border-[#333] overflow-x-auto">
-          {['overview', 'users', 'logs', 'health', 'sentry'].map((tab) => (
+          {['overview', 'users', 'stripe', 'logs', 'health', 'sentry'].map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -342,6 +512,22 @@ export function AdminConsole() {
             loading={loading}
             onPageChange={fetchUsers}
             onDeleteUser={handleDeleteUser}
+            onChangePlan={handleChangePlan}
+            searchQuery={userSearch}
+            onSearchChange={setUserSearch}
+          />
+        )}
+
+        {activeTab === 'stripe' && (
+          <StripeTab
+            stripeData={stripeData}
+            loading={loading}
+            onAction={handleStripeAction}
+            onRefresh={fetchStripeData}
+            searchQuery={stripeSearch}
+            onSearchChange={setStripeSearch}
+            onChangePlan={handleChangePlan}
+            openModal={openModal}
           />
         )}
 
@@ -363,6 +549,178 @@ export function AdminConsole() {
           <SentryTab errorLogs={errorLogs} loading={loading} onRefresh={fetchErrorLogs} />
         )}
       </div>
+
+      {/* Modals */}
+      {modal.type === 'deleteUser' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="delete user?"
+          confirmText="delete"
+          cancelText="cancel"
+          onConfirm={confirmDeleteUser}
+          confirmDanger={true}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            are you sure you want to delete <span className="text-white">{modal.data.username}</span>? this will permanently delete their account and all their slates. this cannot be undone!
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'changePlan' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title={`change plan for ${modal.data.username}`}
+          confirmText="update plan"
+          cancelText="cancel"
+          onConfirm={confirmChangePlan}
+        >
+          <div className="space-y-3">
+            <p className="text-[#666] text-xs">
+              current: <span className="text-white">{modal.data.currentPlan || 'free'}</span>
+            </p>
+            <select
+              value={modalInput}
+              onChange={(e) => setModalInput(e.target.value)}
+              className="w-full bg-[#0a0a0a] border border-[#333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-[#666]"
+            >
+              <option value="free">free</option>
+              <option value="one_time">one_time (⭐)</option>
+              <option value="quarterly">quarterly (❤️)</option>
+            </select>
+          </div>
+        </AdminModal>
+      )}
+
+      {modal.type === 'success' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="success"
+          cancelText="okay"
+        >
+          <p className="text-green-400 text-sm">{modal.data.message}</p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'error' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="error"
+          cancelText="okay"
+        >
+          <p className="text-red-400 text-sm">{modal.data.message}</p>
+        </AdminModal>
+      )}
+
+      {/* Stripe Tab Modals */}
+      {modal.type === 'cleanTestData' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="clean test data?"
+          confirmText="clean"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('clean-test-data')}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            remove test IDs from <span className="text-white">{modal.data.count}</span> users? this will NOT affect their supporter status.
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'fixMismatches' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="fix mismatches?"
+          confirmText="fix"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('fix-mismatches')}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            fix <span className="text-white">{modal.data.count}</span> mismatches? this will sync database with stripe.
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'clearTestData' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="clear test data?"
+          confirmText="clear"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('clear-test-data', modal.data.userId)}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            clear test data for <span className="text-white">{modal.data.username}</span>?
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'clearCancellation' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="clear cancellation date?"
+          confirmText="clear"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('clear-cancellation', modal.data.userId)}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            clear cancellation date for <span className="text-white">{modal.data.username}</span>? this will restore their subscription to active.
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'cancelImmediately' && modal.data && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="cancel subscription immediately?"
+          confirmText="cancel subscription"
+          cancelText="go back"
+          onConfirm={() => confirmStripeAction('cancel-immediately', modal.data.userId)}
+          confirmDanger={true}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            cancel subscription for <span className="text-white">{modal.data.username}</span> immediately? they will lose access right away and revert to free tier.
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'clearAllCancellations' && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="clear all cancellation dates?"
+          confirmText="clear all"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('clear-all-cancellations')}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            clear ALL cancellation dates? this will restore all pending cancellations to active.
+          </p>
+        </AdminModal>
+      )}
+
+      {modal.type === 'cleanAllTestData' && (
+        <AdminModal
+          isOpen={modal.isOpen}
+          onClose={closeModal}
+          title="clean all test data?"
+          confirmText="clean all"
+          cancelText="cancel"
+          onConfirm={() => confirmStripeAction('clean-all-test-data')}
+        >
+          <p className="text-[#a0a0a0] text-sm">
+            remove ALL test stripe IDs? this will NOT affect supporter status.
+          </p>
+        </AdminModal>
+      )}
     </div>
   );
 }
@@ -477,17 +835,51 @@ function OverviewTab({ b2Stats, healthMetrics }) {
 }
 
 // Users Tab Component
-function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
+function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser, onChangePlan, searchQuery, onSearchChange }) {
+  // Filter users based on search query
+  const filteredUsers = users.filter(user => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      user.username.toLowerCase().includes(query) ||
+      user.email?.toLowerCase().includes(query) ||
+      user.id.toString().includes(query)
+    );
+  });
+
   return (
     <div className="space-y-4">
+      {/* Search Bar */}
+      <div className="flex gap-3 items-center">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="search by username, email, or id..."
+          className="flex-1 bg-[#1a1a1a] border border-[#333] rounded px-4 py-2 text-white text-sm focus:outline-none focus:border-[#666]"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onSearchChange('')}
+            className="text-xs text-[#666] hover:text-white transition-colors"
+          >
+            clear
+          </button>
+        )}
+      </div>
+
       {/* Pagination Header */}
       {pagination.total > 0 && (
         <div className="flex justify-between items-center text-xs">
           <p className="text-[#666]">
-            {strings.admin.dashboard.users.pagination.showing(
-              ((pagination.page - 1) * pagination.limit) + 1,
-              Math.min(pagination.page * pagination.limit, pagination.total),
-              pagination.total
+            {searchQuery ? (
+              `showing ${filteredUsers.length} of ${pagination.total} users`
+            ) : (
+              strings.admin.dashboard.users.pagination.showing(
+                ((pagination.page - 1) * pagination.limit) + 1,
+                Math.min(pagination.page * pagination.limit, pagination.total),
+                pagination.total
+              )
             )}
           </p>
           <div className="flex gap-2">
@@ -524,6 +916,7 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.username}</th>
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.email}</th>
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.verified}</th>
+                <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">plan</th>
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.slates}</th>
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.storage}</th>
                 <th className="text-left py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{strings.admin.dashboard.users.table.joined}</th>
@@ -531,12 +924,22 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
+              {filteredUsers.map((user) => (
                 <tr key={user.id} className="border-b border-[#222] hover:bg-[#1a1a1a]">
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{user.id}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm text-white">{user.username}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{maskEmail(user.email)}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{user.email_verified ? '✓' : '✗'}</td>
+                  <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">
+                    <button
+                      onClick={() => onChangePlan(user.id, user.username, user.supporter_tier)}
+                      className="text-blue-400 hover:text-blue-300 transition-colors"
+                    >
+                      {user.supporter_tier === 'quarterly' && '❤️ quarterly'}
+                      {user.supporter_tier === 'one_time' && '⭐ one_time'}
+                      {!user.supporter_tier && 'free'}
+                    </button>
+                  </td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{user.slate_count}/50</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{formatBytes(user.total_bytes)}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">
@@ -555,8 +958,10 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser }) {
             </tbody>
           </table>
 
-          {users.length === 0 && (
-            <p className="text-center py-8">{strings.admin.dashboard.users.noUsers}</p>
+          {filteredUsers.length === 0 && !loading && (
+            <p className="text-center py-8">
+              {searchQuery ? 'no users found matching your search' : strings.admin.dashboard.users.noUsers}
+            </p>
           )}
         </div>
       )}
@@ -838,6 +1243,235 @@ function SentryTab({ errorLogs, loading, onRefresh }) {
           <li>authentication failures</li>
           <li>email service errors</li>
         </ul>
+      </div>
+    </div>
+  );
+}
+
+// Stripe Tab Component - Subscription Management
+function StripeTab({ stripeData, loading, onAction, onRefresh, searchQuery, onSearchChange, onChangePlan, openModal }) {
+  if (loading && !stripeData) {
+    return <p className="text-center py-8">loading stripe data...</p>;
+  }
+
+  if (!stripeData) {
+    return <p className="text-center py-8">failed to load stripe data</p>;
+  }
+
+  const { stats, subscriptions, mismatches, testData } = stripeData;
+
+  // Filter subscriptions based on search query
+  const filteredSubscriptions = subscriptions.filter(sub => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      sub.username.toLowerCase().includes(query) ||
+      sub.email?.toLowerCase().includes(query) ||
+      sub.user_id.toString().includes(query) ||
+      sub.stripe_customer_id?.toLowerCase().includes(query) ||
+      sub.stripe_subscription_id?.toLowerCase().includes(query)
+    );
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Header with refresh */}
+      <div className="flex justify-between items-center">
+        <h2 className="text-sm text-white">stripe subscription management</h2>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+        >
+          {loading ? 'refreshing...' : 'refresh'}
+        </button>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex gap-3 items-center">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="search by username, email, id, or stripe ids..."
+          className="flex-1 bg-[#1a1a1a] border border-[#333] rounded px-4 py-2 text-white text-sm focus:outline-none focus:border-[#666]"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => onSearchChange('')}
+            className="text-xs text-[#666] hover:text-white transition-colors"
+          >
+            clear
+          </button>
+        )}
+      </div>
+
+      {/* Quick Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
+          <p className="text-xs text-[#666] mb-1">total subscribers</p>
+          <p className="text-2xl text-white">{stats.totalSubscriptions}</p>
+        </div>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
+          <p className="text-xs text-[#666] mb-1">active</p>
+          <p className="text-2xl text-green-400">{stats.activeSubscriptions}</p>
+        </div>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
+          <p className="text-xs text-[#666] mb-1">pending cancellation</p>
+          <p className="text-2xl text-yellow-400">{stats.pendingCancellations}</p>
+        </div>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
+          <p className="text-xs text-[#666] mb-1">monthly revenue</p>
+          <p className="text-2xl text-white">€{((stats.totalRevenue || 0) / 100).toFixed(0)}</p>
+        </div>
+      </div>
+
+      {/* Data Issues Alert */}
+      {(mismatches.length > 0 || testData.length > 0) && (
+        <div className="bg-[#1a1a1a] border border-yellow-600 rounded p-4">
+          <h3 className="text-sm text-yellow-400 mb-3">⚠ data health issues detected</h3>
+          <div className="space-y-2 text-xs">
+            {testData.length > 0 && (
+              <p className="text-[#a0a0a0]">
+                <span className="text-white font-medium">{testData.length}</span> users with test/fake stripe IDs
+              </p>
+            )}
+            {mismatches.length > 0 && (
+              <p className="text-[#a0a0a0]">
+                <span className="text-white font-medium">{mismatches.length}</span> database/stripe mismatches
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2 mt-4">
+            {testData.length > 0 && (
+              <button
+                onClick={() => openModal('cleanTestData', { count: testData.length })}
+                className="text-xs px-3 py-2 bg-yellow-600 text-black rounded hover:bg-yellow-500 transition-colors"
+              >
+                clean test data
+              </button>
+            )}
+            {mismatches.length > 0 && (
+              <button
+                onClick={() => openModal('fixMismatches', { count: mismatches.length })}
+                className="text-xs px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors"
+              >
+                fix mismatches
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Active Subscriptions */}
+      {filteredSubscriptions.length > 0 && (
+        <div>
+          <h3 className="text-sm text-white mb-4">
+            {searchQuery ? (
+              `showing ${filteredSubscriptions.length} of ${subscriptions.length} subscriptions`
+            ) : (
+              `active subscriptions (${subscriptions.length})`
+            )}
+          </h3>
+          <div className="space-y-2">
+            {filteredSubscriptions.map((sub) => (
+              <div key={sub.user_id} className="bg-[#1a1a1a] border border-[#333] rounded p-4 hover:bg-[#222]">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-sm text-white">
+                      {sub.username} <span className="text-[#666]">(#{sub.user_id})</span>
+                    </p>
+                    <p className="text-xs text-[#666]">{maskEmail(sub.email)}</p>
+                  </div>
+                  <div className="text-right">
+                    <button
+                      onClick={() => onChangePlan(sub.user_id, sub.username, sub.supporter_tier)}
+                      className="text-xs text-white hover:text-blue-400 transition-colors"
+                    >
+                      {sub.supporter_tier === 'quarterly' ? '❤️ quarterly' : '⭐ one_time'}
+                    </button>
+                    {sub.subscription_expires_at && (
+                      <p className="text-xs text-yellow-400 mt-1">
+                        ends: {new Date(sub.subscription_expires_at).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs text-[#666] mt-3 pt-3 border-t border-[#222]">
+                  <div>
+                    <p>stripe customer</p>
+                    <p className="text-white font-mono text-[10px] truncate">{sub.stripe_customer_id || 'none'}</p>
+                  </div>
+                  <div>
+                    <p>stripe subscription</p>
+                    <p className="text-white font-mono text-[10px] truncate">{sub.stripe_subscription_id || 'none'}</p>
+                  </div>
+                </div>
+
+                {sub.is_test_data && (
+                  <div className="mt-3 pt-3 border-t border-[#222]">
+                    <p className="text-xs text-yellow-400">⚠ test data detected</p>
+                    <button
+                      onClick={() => openModal('clearTestData', { userId: sub.user_id, username: sub.username })}
+                      className="text-xs text-blue-400 hover:text-blue-300 mt-2"
+                    >
+                      clear test data
+                    </button>
+                  </div>
+                )}
+
+                {sub.subscription_expires_at && (
+                  <div className="mt-3 flex gap-3">
+                    <button
+                      onClick={() => openModal('clearCancellation', { userId: sub.user_id, username: sub.username })}
+                      className="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      clear cancellation date
+                    </button>
+                    <button
+                      onClick={() => openModal('cancelImmediately', { userId: sub.user_id, username: sub.username })}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      cancel immediately
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {subscriptions.length === 0 && !searchQuery && (
+        <div className="text-center py-12 text-[#666]">
+          <p>no active subscriptions</p>
+        </div>
+      )}
+
+      {filteredSubscriptions.length === 0 && subscriptions.length > 0 && searchQuery && (
+        <div className="text-center py-12 text-[#666]">
+          <p>no subscriptions found matching your search</p>
+        </div>
+      )}
+
+      {/* Bulk Actions */}
+      <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
+        <h3 className="text-sm text-white mb-3">bulk actions</h3>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => openModal('clearAllCancellations', {})}
+            className="text-xs px-3 py-2 bg-[#2a2a2a] border border-[#444] rounded hover:bg-[#333] transition-colors"
+          >
+            clear all cancellation dates
+          </button>
+          <button
+            onClick={() => openModal('cleanAllTestData', {})}
+            className="text-xs px-3 py-2 bg-[#2a2a2a] border border-[#444] rounded hover:bg-[#333] transition-colors"
+          >
+            clean all test data
+          </button>
+        </div>
       </div>
     </div>
   );

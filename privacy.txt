@@ -1,0 +1,47 @@
+what we collect:
+- username, email, password (hashed)
+- your slates (encrypted)
+- visit count, storage used
+- stripe data (if you donate)
+- ip address (for security)
+
+how we use it:
+- authenticate you
+- save your slates (encrypted to backblaze b2)
+- send verification emails (via resend)
+- process donations (via stripe)
+- prevent abuse
+
+zero-knowledge encryption:
+- your private slates are encrypted with your password
+- we CANNOT read them
+- lost password = lost data forever
+- published slates are public (not encrypted)
+
+who sees your data:
+- stripe (payments)
+- backblaze (encrypted storage)
+- resend (emails)
+- nobody else. we don't sell data or use ads.
+
+your rights:
+- export your slates
+- delete your account
+- hide supporter badge
+- manage stripe subscription
+
+no tracking:
+- no cookies, no analytics, no third-party tracking
+- we use localStorage for your login token
+
+security:
+- https only
+- passwords hashed with bcrypt
+- content encrypted with aes-256-gcm
+- rate limiting
+
+data deletion:
+- delete your account anytime
+- all data gone within 24 hours
+
+questions? email [your email] or visit justtype.io

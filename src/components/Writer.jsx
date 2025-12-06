@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 
-export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode }, ref) => {
+export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('ready');
@@ -18,10 +18,19 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [publishModalUrl, setPublishModalUrl] = useState('');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [wasPublishedBeforeEdit, setWasPublishedBeforeEdit] = useState(false);
+  const [nudgeShown, setNudgeShown] = useState(false);
+  const [showDonateModal, setShowDonateModal] = useState(false);
+  const [donateAmount, setDonateAmount] = useState('3');
+  const [donateEmail, setDonateEmail] = useState('');
+  const [showAlreadySubscribedModal, setShowAlreadySubscribedModal] = useState(false);
+  const [supporterTier, setSupporterTier] = useState(null);
   const textareaRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
   const lastSavedContentRef = useRef('');
+  const keystrokeDetectedRef = useRef(false);
+  const nudgeTimeoutRef = useRef(null);
+  const visitTrackedRef = useRef(false);
 
   // Load current slate
   useEffect(() => {
@@ -46,6 +55,125 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       onZenModeChange(zenMode);
     }
   }, [zenMode, onZenModeChange]);
+
+  // Handle donate query parameter
+  useEffect(() => {
+    const checkSubscriptionAndDonate = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const donate = urlParams.get('donate');
+
+      if (donate === 'one_time') {
+        setShowDonateModal(true);
+        window.history.replaceState({}, '', '/');
+      } else if (donate === 'quarterly') {
+        if (!token) {
+          onOpenAuthModal();
+        } else {
+          // Check if user is already subscribed
+          try {
+            const response = await fetch(`${API_URL}/account/storage`, {
+              headers: { 'Authorization': `Bearer ${token}` },
+            });
+            const data = await response.json();
+            if (response.ok) {
+              if (data.supporterTier === 'quarterly') {
+                // Already subscribed - show modal
+                setShowAlreadySubscribedModal(true);
+              } else {
+                // Not subscribed - proceed to checkout
+                handleStripeCheckout('quarterly');
+              }
+            } else {
+              // Failed to check - proceed anyway
+              handleStripeCheckout('quarterly');
+            }
+          } catch (err) {
+            console.error('Failed to check subscription status:', err);
+            // Failed to check - proceed anyway
+            handleStripeCheckout('quarterly');
+          }
+        }
+        window.history.replaceState({}, '', '/');
+      }
+    };
+
+    checkSubscriptionAndDonate();
+  }, []);
+
+  // Track visit and show nudge
+  useEffect(() => {
+    const trackVisit = async () => {
+      if (visitTrackedRef.current) return;
+      visitTrackedRef.current = true;
+
+      try {
+        if (token) {
+          // Logged in: track in database
+          const response = await fetch(`${API_URL}/user/visit`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+
+            // Store supporter tier for later use
+            if (data.supporterTier) {
+              setSupporterTier(data.supporterTier);
+            }
+
+            // Don't show nudge if user is a supporter
+            if (data.supporterTier) return;
+
+            // Show nudge every 3rd visit (3, 6, 9, 12, 15...)
+            if (data.visitCount > 0 && data.visitCount % 3 === 0) {
+              scheduleNudge();
+            }
+          }
+        } else {
+          // Not logged in: track in localStorage
+          const visits = parseInt(localStorage.getItem('justtype_visits') || '0') + 1;
+          localStorage.setItem('justtype_visits', visits.toString());
+
+          // Show nudge every 3rd visit (3, 6, 9, 12, 15...)
+          if (visits > 0 && visits % 3 === 0) {
+            scheduleNudge();
+          }
+        }
+      } catch (err) {
+        console.error('Visit tracking error:', err);
+      }
+    };
+
+    trackVisit();
+  }, [token]);
+
+  // Schedule nudge after first keystroke
+  const scheduleNudge = () => {
+    // Listen for first keystroke
+    const handleFirstKeystroke = () => {
+      if (keystrokeDetectedRef.current) return;
+      keystrokeDetectedRef.current = true;
+
+      // Show nudge after 10 seconds
+      nudgeTimeoutRef.current = setTimeout(() => {
+        if (!nudgeShown) {
+          setStatus('⤴ enjoying justtype? support us →');
+          setNudgeShown(true);
+
+          // Hide after 20 seconds
+          setTimeout(() => {
+            setStatus('ready');
+          }, 20000);
+        }
+      }, 10000);
+
+      // Remove listener after first keystroke
+      document.removeEventListener('keydown', handleFirstKeystroke);
+    };
+
+    document.addEventListener('keydown', handleFirstKeystroke);
+  };
 
   // Track unsaved changes
   useEffect(() => {
@@ -82,6 +210,15 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
     return () => clearTimeout(saveTimeoutRef.current);
   }, [content, hasUnsavedChanges, token, currentSlate]);
+
+  // Cleanup nudge timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (nudgeTimeoutRef.current) {
+        clearTimeout(nudgeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -168,13 +305,60 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setTitle(data.title);
       setContent(data.content);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
-      setWasPublishedBeforeEdit(false); // Only set true after edit, not on load
+      // If slate was published before (has published_at) but is now unpublished, it's a draft
+      setWasPublishedBeforeEdit(data.published_at && !data.is_published);
       lastSavedContentRef.current = JSON.stringify({ content: data.content, title: data.title });
       setHasUnsavedChanges(false);
       setIsLoading(false);
     } catch (err) {
       console.error('Failed to load slate:', err);
       setIsLoading(false);
+    }
+  };
+
+  const handleStripeCheckout = async (tier, amount, email) => {
+    try {
+      setStatus('loading...');
+      const body = { tier };
+      if (amount) {
+        body.amount = amount;
+      }
+      if (email) {
+        body.email = email;
+      }
+
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+
+      // Add auth header if token exists
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const response = await fetch(`${API_URL}/stripe/create-checkout`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.url) {
+        // Store tier for test upgrade after payment
+        if (token) {
+          localStorage.setItem('justtype-pending-tier', tier);
+        }
+        // Redirect to Stripe checkout
+        window.location.href = data.url;
+      } else {
+        setStatus(data.error || 'failed to start checkout');
+        setTimeout(() => setStatus('ready'), 3000);
+      }
+    } catch (err) {
+      console.error('Stripe checkout error:', err);
+      setStatus('checkout failed');
+      setTimeout(() => setStatus('ready'), 3000);
     }
   };
 
@@ -718,8 +902,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowAboutModal(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowAboutModal(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full my-4" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
             <div className="space-y-4 text-sm text-[#a0a0a0]">
               <p>{strings.writer.about.description}</p>
@@ -727,6 +911,53 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               <p className="text-xs">
                 open-source at <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">github</a> · by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">alfaoz</a>
               </p>
+
+              {/* Support Section - Subtle */}
+              <div className="pt-4 border-t border-[#333]">
+                <p className="text-xs text-[#666] mb-3">
+                  justtype is free. if you'd like to support development:{' '}
+                  <button
+                    onClick={() => {
+                      setShowAboutModal(false);
+                      setShowDonateModal(true);
+                    }}
+                    className="text-white hover:underline transition-colors"
+                  >
+                    donate once
+                  </button>
+                  {' '}or{' '}
+                  <button
+                    onClick={async () => {
+                      if (!token) {
+                        setShowAboutModal(false);
+                        onOpenAuthModal();
+                      } else {
+                        // Check if already subscribed
+                        try {
+                          const response = await fetch(`${API_URL}/account/storage`, {
+                            headers: { 'Authorization': `Bearer ${token}` },
+                          });
+                          const data = await response.json();
+                          if (response.ok && data.supporterTier === 'quarterly') {
+                            setShowAboutModal(false);
+                            setShowAlreadySubscribedModal(true);
+                          } else {
+                            handleStripeCheckout('quarterly');
+                          }
+                        } catch (err) {
+                          console.error('Failed to check subscription:', err);
+                          handleStripeCheckout('quarterly');
+                        }
+                      }
+                    }}
+                    className="text-white hover:underline transition-colors"
+                  >
+                    subscribe
+                  </button>
+                  {' '}(7 eur / 3 months)
+                </p>
+              </div>
+
               <p className="text-xs text-[#666] pt-2 border-t border-[#333]">
                 {strings.writer.about.version(VERSION)}
               </p>
@@ -766,6 +997,91 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
               >
                 okay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DONATE MODAL */}
+      {showDonateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowDonateModal(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-white mb-4">support justtype</h2>
+            <p className="text-sm text-[#a0a0a0] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              value={donateAmount}
+              onChange={(e) => setDonateAmount(e.target.value)}
+              className="w-full bg-[#111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm mb-4"
+              autoFocus
+            />
+            {!token && (
+              <>
+                <p className="text-sm text-[#a0a0a0] mb-2">your email:</p>
+                <input
+                  type="email"
+                  value={donateEmail}
+                  onChange={(e) => setDonateEmail(e.target.value)}
+                  placeholder="email@example.com"
+                  className="w-full bg-[#111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm mb-4"
+                />
+                <p className="text-xs text-[#666] mb-4">
+                  note: you can donate without an account, but you won't get storage benefits until you sign up and link your payment
+                </p>
+              </>
+            )}
+            {token && <div className="mb-4" />}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const amount = parseFloat(donateAmount);
+                  if (amount >= 1 && (token || donateEmail.trim())) {
+                    setShowDonateModal(false);
+                    handleStripeCheckout('one_time', donateAmount, donateEmail);
+                  }
+                }}
+                disabled={parseFloat(donateAmount) < 1 || (!token && !donateEmail.trim())}
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                donate
+              </button>
+              <button
+                onClick={() => setShowDonateModal(false)}
+                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+              >
+                cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Already Subscribed Modal */}
+      {showAlreadySubscribedModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowAlreadySubscribedModal(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.subscription.alreadySubscribed.title}</h2>
+            <p className="text-sm text-[#a0a0a0] mb-6">
+              {strings.subscription.alreadySubscribed.message}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowAlreadySubscribedModal(false);
+                  window.location.href = '/manage-subscription';
+                }}
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+              >
+                {strings.subscription.alreadySubscribed.manageButton}
+              </button>
+              <button
+                onClick={() => setShowAlreadySubscribedModal(false)}
+                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+              >
+                {strings.subscription.alreadySubscribed.closeButton}
               </button>
             </div>
           </div>

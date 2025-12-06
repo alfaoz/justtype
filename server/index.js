@@ -15,10 +15,16 @@ const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogge
 const { validateEmailForRegistration } = require('./emailValidator');
 const { createRateLimitMiddleware } = require('./rateLimiter');
 const { healthChecks } = require('./startupHealth');
+const { passport, decryptEncryptionKey } = require('./googleAuth');
+const stripeModule = require('./stripe');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
+
+// Stripe
+const stripe = stripeModule?.stripe;
+let stripePriceIds = null;
 
 // Validate required environment variables on startup
 if (!JWT_SECRET) {
@@ -113,7 +119,213 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false // Allow embedding for public slates
 }));
 
+// Stripe webhook handler - MUST be before express.json() to preserve raw body for signature verification
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe) {
+    return res.status(503).send('Stripe not configured');
+  }
+
+  const sig = req.headers['stripe-signature'];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+
+  try {
+    // Verify webhook signature (only in production with real webhook secret)
+    if (webhookSecret && webhookSecret !== 'whsec_YOUR_WEBHOOK_SECRET_HERE') {
+      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+    } else {
+      // In test mode without webhook secret, just parse the body
+      event = JSON.parse(req.body.toString());
+    }
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const userId = parseInt(session.metadata.userId);
+        const tier = session.metadata.tier;
+
+        if (!userId || !tier) {
+          console.error('Missing metadata in checkout session:', session.id);
+          break;
+        }
+
+        // Update user tier
+        const now = new Date().toISOString();
+
+        if (tier === 'one_time') {
+          // One-time supporter: 50MB storage
+          db.prepare(`
+            UPDATE users
+            SET supporter_tier = 'one_time',
+                storage_limit = 50000000,
+                donated_at = ?,
+                stripe_customer_id = ?,
+                subscription_expires_at = NULL
+            WHERE id = ?
+          `).run(now, session.customer, userId);
+          console.log(`✓ User ${userId} upgraded to one-time supporter`);
+        } else if (tier === 'quarterly') {
+          // Quarterly supporter: unlimited storage
+          const subscriptionId = session.subscription;
+          db.prepare(`
+            UPDATE users
+            SET supporter_tier = 'quarterly',
+                storage_limit = 999999999999,
+                donated_at = ?,
+                stripe_customer_id = ?,
+                stripe_subscription_id = ?,
+                subscription_expires_at = NULL
+            WHERE id = ?
+          `).run(now, session.customer, subscriptionId, userId);
+          console.log(`✓ User ${userId} upgraded to quarterly supporter`);
+
+          // Send thank you email for subscription
+          const user = db.prepare('SELECT username, email FROM users WHERE id = ?').get(userId);
+          if (user && user.email) {
+            const { strings } = require('./strings.cjs');
+            emailService.sendEmail({
+              to: user.email,
+              subject: strings.email.subscriptionStarted.subject,
+              text: strings.email.subscriptionStarted.body(user.username)
+            }).catch(err => console.error('Failed to send subscription email:', err));
+          }
+        }
+        break;
+      }
+
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object;
+        const subscriptionId = subscription.id;
+
+        // Find user by subscription ID
+        const user = db.prepare('SELECT id, username, email FROM users WHERE stripe_subscription_id = ?').get(subscriptionId);
+
+        if (!user) {
+          console.error('User not found for subscription:', subscriptionId);
+          break;
+        }
+
+        // Check if subscription is scheduled to cancel
+        const cancelDate = subscription.cancel_at || (subscription.cancel_at_period_end && subscription.current_period_end);
+
+        if (cancelDate && subscription.status === 'active') {
+          // Subscription will cancel at a future date - keep access until then
+          const expiresAt = new Date(cancelDate * 1000).toISOString();
+
+          // Check if we already have a cancellation date set (to avoid duplicate emails)
+          const existingExpiration = db.prepare('SELECT subscription_expires_at FROM users WHERE id = ?').get(user.id);
+          const alreadyScheduled = existingExpiration && existingExpiration.subscription_expires_at;
+
+          db.prepare(`
+            UPDATE users
+            SET subscription_expires_at = ?
+            WHERE id = ?
+          `).run(expiresAt, user.id);
+          console.log(`✓ User ${user.id} subscription set to cancel on ${expiresAt}`);
+
+          // Send pending cancellation acknowledgment email (only if not already scheduled)
+          if (user.email && !alreadyScheduled) {
+            const daysRemaining = Math.ceil((cancelDate * 1000 - Date.now()) / (1000 * 60 * 60 * 24));
+
+            // Check if user exceeds 50MB to include warning
+            const userStorage = db.prepare('SELECT storage_used FROM users WHERE id = ?').get(user.id);
+            const storageUsedMB = (userStorage.storage_used || 0) / 1024 / 1024;
+            const exceedsLimit = storageUsedMB > 50;
+
+            const storageWarning = exceedsLimit
+              ? `\nnote: you're currently using ${storageUsedMB.toFixed(2)} MB. please export your slates to avoid losing files that exceed the 50 MB limit.`
+              : '';
+
+            const { strings } = require('./strings.cjs');
+            emailService.sendEmail({
+              to: user.email,
+              subject: strings.email.subscriptionCancellationScheduled.subject,
+              text: strings.email.subscriptionCancellationScheduled.body(user.username, daysRemaining, storageWarning)
+            }).then(() => {
+              console.log(`✓ Cancellation acknowledgment email sent to ${user.email}`);
+            }).catch(err => console.error('Failed to send cancellation scheduled email:', err));
+          }
+        } else if (event.type === 'customer.subscription.deleted' || subscription.status === 'canceled') {
+          // Subscription is immediately canceled or deleted - downgrade to one_time supporter
+          db.prepare(`
+            UPDATE users
+            SET supporter_tier = 'one_time',
+                storage_limit = 50000000,
+                stripe_subscription_id = NULL,
+                subscription_expires_at = NULL
+            WHERE id = ?
+          `).run(user.id);
+          console.log(`✓ User ${user.id} subscription cancelled, downgraded to one_time supporter`);
+
+          // Send cancellation email
+          if (user.email) {
+            // Check if user exceeds 50MB to include warning
+            const userStorage = db.prepare('SELECT storage_used FROM users WHERE id = ?').get(user.id);
+            const storageUsedMB = (userStorage.storage_used || 0) / 1024 / 1024;
+            const exceedsLimit = storageUsedMB > 50;
+
+            let emailBody = `hey ${user.username},
+
+we're sorry to see you go, but we understand!
+
+thank you for your previous support. it really helped keep justtype running.
+
+your account will remain as a one-time supporter with twice the storage of a free tier.`;
+
+            if (exceedsLimit) {
+              emailBody += `\n\nnote: you're currently using more storage than a one-time supporter allows. please export your slates from your account page to avoid losing files.`;
+            }
+
+            emailBody += `\n\nif you had any issues or feedback, we'd love to hear from you. just reply to this email.
+
+take care!
+
+- justtype`;
+
+            emailService.sendEmail({
+              to: user.email,
+              subject: 'sad to see you go',
+              text: emailBody
+            }).catch(err => console.error('Failed to send cancellation email:', err));
+          }
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const subscriptionId = invoice.subscription;
+
+        if (subscriptionId) {
+          const user = db.prepare('SELECT id, email FROM users WHERE stripe_subscription_id = ?').get(subscriptionId);
+          if (user) {
+            console.warn(`⚠ Payment failed for user ${user.id} (${user.email})`);
+            // Could send email notification here
+          }
+        }
+        break;
+      }
+
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
 app.use(express.json({ limit: '5mb' })); // Lower limit to prevent bandwidth abuse
+app.use(passport.initialize());
 
 // Handle payload too large errors
 app.use((err, req, res, next) => {
@@ -129,8 +341,23 @@ app.use((err, req, res, next) => {
 // Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
 app.set('trust proxy', true);
 
-// Serve static files from dist directory with cache control
+// Serve terms and privacy text files
 const path = require('path');
+const fs = require('fs');
+
+app.get('/terms.txt', (req, res) => {
+  const termsPath = path.join(__dirname, '..', 'terms.txt');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.sendFile(termsPath);
+});
+
+app.get('/privacy.txt', (req, res) => {
+  const privacyPath = path.join(__dirname, '..', 'privacy.txt');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.sendFile(privacyPath);
+});
+
+// Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
   etag: true,
@@ -201,6 +428,47 @@ const createSession = (userId, token, req) => {
   }
 };
 
+// Helper function to update user's storage usage
+const updateUserStorage = (userId) => {
+  try {
+    const result = db.prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM slates WHERE user_id = ?').get(userId);
+    db.prepare('UPDATE users SET storage_used = ? WHERE id = ?').run(result.total, userId);
+  } catch (err) {
+    console.error('Storage update error:', err);
+  }
+};
+
+// Helper function to check if user has exceeded storage limit
+const checkStorageLimit = (userId, newContentSize) => {
+  try {
+    const user = db.prepare('SELECT storage_used, storage_limit, supporter_tier FROM users WHERE id = ?').get(userId);
+
+    // Quarterly supporters have unlimited storage
+    if (user.supporter_tier === 'quarterly') {
+      return { allowed: true };
+    }
+
+    const currentUsage = user.storage_used || 0;
+    const limit = user.storage_limit || 25000000; // Default 25MB
+    const hardLimit = Math.floor(limit * 1.1); // 110% of limit
+    const projectedUsage = currentUsage + newContentSize;
+
+    if (projectedUsage > hardLimit) {
+      const usedMB = (currentUsage / 1024 / 1024).toFixed(2);
+      const limitMB = (limit / 1024 / 1024).toFixed(0);
+      return {
+        allowed: false,
+        error: `Storage limit exceeded. You're using ${usedMB} MB of ${limitMB} MB. Delete some slates or upgrade to continue.`
+      };
+    }
+
+    return { allowed: true };
+  } catch (err) {
+    console.error('Storage check error:', err);
+    return { allowed: true }; // Allow on error to not block users
+  }
+};
+
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -238,6 +506,25 @@ const authenticateToken = (req, res, next) => {
 // Middleware to check if encryption key exists in cache
 // If missing (e.g., after server restart), force user to re-login
 const requireEncryptionKey = (req, res, next) => {
+  // Check if user is a Google user with encrypted_key
+  const user = db.prepare('SELECT auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
+
+  if (user && (user.auth_provider === 'google' || user.auth_provider === 'both') && user.encrypted_key) {
+    // Decrypt the encryption key for Google users
+    try {
+      const encryptionKey = decryptEncryptionKey(user.encrypted_key);
+      req.encryptionKey = encryptionKey;
+      return next();
+    } catch (error) {
+      console.error('Failed to decrypt Google user encryption key:', error);
+      return res.status(500).json({
+        error: 'Failed to access encryption key',
+        code: 'ENCRYPTION_KEY_ERROR'
+      });
+    }
+  }
+
+  // For local users, use cached key from login
   const encryptionKey = getCachedEncryptionKey(req.user.id);
 
   if (!encryptionKey) {
@@ -255,10 +542,14 @@ const requireEncryptionKey = (req, res, next) => {
 
 // Register
 app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req, res) => {
-  const { username, password, email } = req.body;
+  const { username, password, email, termsAccepted } = req.body;
 
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
+  }
+
+  if (!termsAccepted) {
+    return res.status(400).json({ error: 'You must accept the Terms and Conditions' });
   }
 
   if (password.length < 6) {
@@ -277,9 +568,10 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
     // Generate 6-digit code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
+    const termsAcceptedAt = new Date().toISOString();
 
-    const stmt = db.prepare('INSERT INTO users (username, password, email, verification_token, verification_code_expires) VALUES (?, ?, ?, ?, ?)');
-    const result = stmt.run(username, hashedPassword, email.toLowerCase(), verificationCode, expiresAt);
+    const stmt = db.prepare('INSERT INTO users (username, password, email, verification_token, verification_code_expires, terms_accepted, terms_accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const result = stmt.run(username, hashedPassword, email.toLowerCase(), verificationCode, expiresAt, 1, termsAcceptedAt);
 
     // Send verification email
     const emailSent = await emailService.sendVerificationEmail(email, username, verificationCode);
@@ -420,7 +712,7 @@ app.post('/api/auth/verify-email', async (req, res) => {
 // Get current user info
 app.get('/api/auth/me', authenticateToken, (req, res) => {
   try {
-    const user = db.prepare('SELECT id, username, email, email_verified FROM users WHERE id = ?').get(req.user.id);
+    const user = db.prepare('SELECT id, username, email, email_verified, auth_provider FROM users WHERE id = ?').get(req.user.id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -430,7 +722,8 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
       id: user.id,
       username: user.username,
       email: user.email,
-      email_verified: user.email_verified
+      email_verified: user.email_verified,
+      auth_provider: user.auth_provider || 'local'
     });
   } catch (error) {
     console.error('Get user info error:', error);
@@ -541,6 +834,145 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
   }
 });
 
+// ============ GOOGLE OAUTH ROUTES ============
+
+// Initiate Google OAuth
+app.get('/auth/google',
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false
+  })
+);
+
+// Google OAuth callback
+app.get('/auth/google/callback',
+  passport.authenticate('google', { session: false, failureRedirect: '/?googleAuth=error' }),
+  (req, res) => {
+    try {
+      // Check if authentication failed due to existing account with password
+      if (!req.user) {
+        return res.redirect('/?googleAuth=account_exists');
+      }
+
+      // Check if this is a new user (just created)
+      const isNewUser = req.user.created_at && (Date.now() - new Date(req.user.created_at).getTime() < 5000);
+
+      // Generate JWT token
+      const token = jwt.sign(
+        {
+          id: req.user.id,
+          username: req.user.username,
+          email: req.user.email
+        },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      // Create session in database
+      createSession(req.user.id, token, req);
+
+      // Cache encryption key for Google users
+      if (req.user.encrypted_key) {
+        const encryptionKey = decryptEncryptionKey(req.user.encrypted_key);
+        cacheEncryptionKey(req.user.id, encryptionKey);
+      }
+
+      // Redirect to frontend with token and new user flag
+      res.redirect(`/?googleAuth=success&token=${token}&username=${encodeURIComponent(req.user.username)}&email=${encodeURIComponent(req.user.email)}&emailVerified=${req.user.email_verified ? 'true' : 'false'}&isNewUser=${isNewUser ? 'true' : 'false'}`);
+    } catch (error) {
+      console.error('Google OAuth callback error:', error);
+      res.redirect('/?googleAuth=error');
+    }
+  }
+);
+
+// Google OAuth for linking existing account
+app.get('/auth/google/link', (req, res, next) => {
+  const state = req.query.state;
+  if (!state) {
+    return res.redirect('/account?linkGoogle=error&reason=missing_state');
+  }
+
+  // Decode the state to get the user's email for login_hint
+  let loginHint = null;
+  try {
+    const decoded = jwt.verify(state, JWT_SECRET);
+    if (decoded.email) {
+      loginHint = decoded.email;
+    }
+  } catch (err) {
+    // If token is invalid, continue without login_hint
+  }
+
+  // Pass state and login_hint through passport authentication
+  const authOptions = {
+    scope: ['profile', 'email'],
+    session: false,
+    state: state
+  };
+
+  // Add login_hint to suggest the correct Google account
+  if (loginHint) {
+    authOptions.loginHint = loginHint;
+  }
+
+  passport.authenticate('google-link', authOptions)(req, res, next);
+});
+
+// Google OAuth linking callback
+app.get('/auth/google/link/callback',
+  passport.authenticate('google-link', { session: false, failureRedirect: '/account?linkGoogle=error' }),
+  (req, res) => {
+    try {
+      // Get linking token from state parameter
+      const linkingToken = req.query.state;
+
+      if (!linkingToken) {
+        return res.redirect('/account?linkGoogle=error&reason=missing_state');
+      }
+
+      // Verify linking token
+      let linkingData;
+      try {
+        linkingData = jwt.verify(linkingToken, JWT_SECRET);
+      } catch (err) {
+        return res.redirect('/account?linkGoogle=error&reason=invalid_token');
+      }
+
+      if (linkingData.purpose !== 'link_google') {
+        return res.redirect('/account?linkGoogle=error&reason=invalid_purpose');
+      }
+
+      const userId = linkingData.userId;
+      const googleId = req.user.id;
+      const googleEmail = req.user.emails[0].value;
+
+      // Check if user exists
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+      if (!user) {
+        return res.redirect('/account?linkGoogle=error&reason=user_not_found');
+      }
+
+      // Check if this Google account is already linked to another user
+      const existingGoogleUser = db.prepare('SELECT id FROM users WHERE google_id = ? AND id != ?').get(googleId, userId);
+      if (existingGoogleUser) {
+        return res.redirect('/account?linkGoogle=error&reason=google_already_linked');
+      }
+
+      // Link Google account
+      db.prepare('UPDATE users SET google_id = ?, auth_provider = ? WHERE id = ?')
+        .run(googleId, 'both', userId);
+
+      console.log(`Linked Google account (${googleEmail}) to user ID ${userId}`);
+
+      res.redirect('/account?linkGoogle=success');
+    } catch (error) {
+      console.error('Google linking callback error:', error);
+      res.redirect('/account?linkGoogle=error');
+    }
+  }
+);
+
 // ============ SLATE ROUTES ============
 
 // Get all slates for authenticated user
@@ -606,6 +1038,12 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     });
   }
 
+  // Check storage limit
+  const storageCheck = checkStorageLimit(req.user.id, contentSize);
+  if (!storageCheck.allowed) {
+    return res.status(413).json({ error: storageCheck.error });
+  }
+
   try {
     // Check slate limit (50 slates per user)
     const slateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
@@ -631,6 +1069,9 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(req.user.id, title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0);
+
+    // Update user's total storage usage
+    updateUserStorage(req.user.id);
 
     res.status(201).json({
       id: result.lastInsertRowid,
@@ -672,6 +1113,15 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
       return res.status(404).json({ error: 'Slate not found' });
     }
 
+    // Check storage limit (account for size difference)
+    const sizeDifference = contentSize - (slate.size_bytes || 0);
+    if (sizeDifference > 0) {
+      const storageCheck = checkStorageLimit(req.user.id, sizeDifference);
+      if (!storageCheck.allowed) {
+        return res.status(413).json({ error: storageCheck.error });
+      }
+    }
+
     // Use encryption key from middleware (already verified to exist)
     const encryptionKey = req.encryptionKey;
 
@@ -707,14 +1157,17 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
     const charCount = content.length;
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
-    // Update database - unpublish if it was published
+    // Update database - unpublish if it was published (but keep published_at for history)
     const stmt = db.prepare(`
       UPDATE slates
       SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
-          is_published = ?, b2_public_file_id = NULL, published_at = NULL, updated_at = CURRENT_TIMESTAMP
+          is_published = ?, b2_public_file_id = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `);
     stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0, 0, req.params.id, req.user.id);
+
+    // Update user's total storage usage
+    updateUserStorage(req.user.id);
 
     res.json({
       success: true,
@@ -774,7 +1227,9 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       publicFileId = null;
     }
 
-    const publishedAt = isPublished ? new Date().toISOString() : null;
+    // Only set published_at when publishing for the first time
+    // Keep existing published_at when unpublishing (to track that it was published before)
+    const publishedAt = isPublished && !slate.published_at ? new Date().toISOString() : slate.published_at;
 
     const stmt = db.prepare(`
       UPDATE slates
@@ -816,6 +1271,9 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
 
     // Delete from database
     db.prepare('DELETE FROM slates WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+
+    // Update user's total storage usage
+    updateUserStorage(req.user.id);
 
     res.json({ success: true });
   } catch (error) {
@@ -894,7 +1352,7 @@ app.get('/api/health', (req, res) => {
 // ============ ADMIN ROUTES ============
 
 // Admin authentication (rate-limited)
-app.post('/api/admin/auth', createRateLimitMiddleware('adminAuth'), async (req, res) => {
+app.post('/api/admin/auth', async (req, res) => {
   const { password } = req.body;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
@@ -961,6 +1419,7 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
         users.username,
         users.email,
         users.email_verified,
+        users.supporter_tier,
         users.created_at,
         COUNT(slates.id) as slate_count,
         COALESCE(SUM(slates.word_count), 0) as total_words,
@@ -1041,10 +1500,89 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
+// Update user plan (admin only)
+app.patch('/api/admin/users/:id/plan', authenticateAdmin, async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const { plan } = req.body; // 'free', 'one_time', or 'quarterly'
+
+    if (!['free', 'one_time', 'quarterly'].includes(plan)) {
+      return res.status(400).json({ error: 'Invalid plan' });
+    }
+
+    const user = db.prepare('SELECT username, email, supporter_tier FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const now = new Date().toISOString();
+    let storageLimit, supporterTier;
+
+    if (plan === 'free') {
+      storageLimit = 25000000; // 25 MB
+      supporterTier = null;
+    } else if (plan === 'one_time') {
+      storageLimit = 50000000; // 50 MB
+      supporterTier = 'one_time';
+    } else if (plan === 'quarterly') {
+      storageLimit = 999999999999; // Unlimited
+      supporterTier = 'quarterly';
+    }
+
+    // Update user plan
+    db.prepare(`
+      UPDATE users
+      SET supporter_tier = ?,
+          storage_limit = ?,
+          donated_at = ?
+      WHERE id = ?
+    `).run(supporterTier, storageLimit, supporterTier ? now : null, userId);
+
+    // Log the action
+    logAdminAction('update_user_plan', {
+      targetType: 'user',
+      targetId: userId,
+      ipAddress: req.adminIp,
+      details: {
+        username: user.username,
+        oldPlan: user.supporter_tier || 'free',
+        newPlan: plan
+      }
+    });
+
+    // Send email notification if plan changed
+    if (supporterTier && !user.supporter_tier && user.email) {
+      // Upgraded to supporter
+      const { strings } = require('./strings.cjs');
+      emailService.sendEmail({
+        to: user.email,
+        subject: strings.email.subscriptionStarted.subject,
+        text: strings.email.subscriptionStarted.body(user.username)
+      }).catch(err => console.error('Failed to send plan change email:', err));
+    } else if (!supporterTier && user.supporter_tier && user.email) {
+      // Downgraded to free
+      const { strings } = require('./strings.cjs');
+      emailService.sendEmail({
+        to: user.email,
+        subject: strings.email.subscriptionCancelled.subject,
+        text: strings.email.subscriptionCancelled.body(user.username)
+      }).catch(err => console.error('Failed to send plan change email:', err));
+    }
+
+    res.json({ message: 'User plan updated successfully', plan });
+  } catch (error) {
+    console.error('Admin update plan error:', error);
+    res.status(500).json({ error: 'Failed to update user plan' });
+  }
+});
+
 // Get B2 usage stats
 app.get('/api/admin/b2-stats', authenticateAdmin, (req, res) => {
   try {
     const stats = b2Monitor.getStats();
+    logAdminAction('view_b2_stats', {
+      ipAddress: req.adminIp || req.ip
+    });
     res.json(stats);
   } catch (error) {
     console.error('Admin get B2 stats error:', error);
@@ -1112,6 +1650,10 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
       FROM slates
     `).get().total;
 
+    logAdminAction('view_health', {
+      ipAddress: req.adminIp || req.ip
+    });
+
     res.json({
       system: {
         uptime: process.uptime(),
@@ -1159,10 +1701,225 @@ app.get('/api/admin/error-logs', authenticateAdmin, (req, res) => {
       timeout: 5000
     });
 
+    logAdminAction('view_error_logs', {
+      ipAddress: req.adminIp || req.ip
+    });
+
     res.json({ logs: errorLogs || 'No error logs found' });
   } catch (error) {
     console.error('Failed to fetch error logs:', error);
     res.status(500).json({ error: 'Failed to fetch error logs', logs: error.message });
+  }
+});
+
+// Get Stripe subscription data with health checks
+app.get('/api/admin/stripe-subscriptions', authenticateAdmin, (req, res) => {
+  try {
+    // Get all users with subscriptions
+    const subscriptions = db.prepare(`
+      SELECT
+        id as user_id,
+        username,
+        email,
+        supporter_tier,
+        stripe_customer_id,
+        stripe_subscription_id,
+        subscription_expires_at,
+        storage_used,
+        created_at
+      FROM users
+      WHERE supporter_tier IS NOT NULL
+      ORDER BY created_at DESC
+    `).all();
+
+    // Detect test data (fake stripe IDs)
+    const testData = subscriptions.filter(sub =>
+      sub.stripe_customer_id && sub.stripe_customer_id.startsWith('test_cus_')
+    );
+
+    // Calculate stats
+    const stats = {
+      totalSubscriptions: subscriptions.length,
+      activeSubscriptions: subscriptions.filter(s => !s.subscription_expires_at).length,
+      pendingCancellations: subscriptions.filter(s => s.subscription_expires_at).length,
+      totalRevenue: subscriptions.filter(s => s.supporter_tier === 'quarterly').length * 700 // 7 EUR per quarter
+    };
+
+    // Mark subscriptions with issues
+    const enrichedSubscriptions = subscriptions.map(sub => ({
+      ...sub,
+      is_test_data: sub.stripe_customer_id && sub.stripe_customer_id.startsWith('test_cus_')
+    }));
+
+    // Log admin action
+    logAdminAction('view_stripe_subscriptions', {
+      details: { count: subscriptions.length },
+      ipAddress: req.adminIp || req.ip
+    });
+
+    res.json({
+      stats,
+      subscriptions: enrichedSubscriptions,
+      mismatches: [], // Future: could check against Stripe API
+      testData
+    });
+  } catch (error) {
+    console.error('Failed to fetch stripe subscriptions:', error);
+    res.status(500).json({ error: 'Failed to fetch stripe subscriptions' });
+  }
+});
+
+// Perform Stripe management actions
+app.post('/api/admin/stripe-action', authenticateAdmin, async (req, res) => {
+  try {
+    const { action, userId } = req.body;
+
+    switch (action) {
+      case 'clear-test-data': {
+        if (userId) {
+          // Clear test data for specific user
+          const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+          db.prepare(`
+            UPDATE users
+            SET stripe_customer_id = NULL,
+                stripe_subscription_id = NULL
+            WHERE id = ? AND stripe_customer_id LIKE 'test_cus_%'
+          `).run(userId);
+          logAdminAction('stripe_clear_test_data', {
+            targetType: 'user',
+            targetId: userId,
+            details: { username: user?.username },
+            ipAddress: req.adminIp || req.ip
+          });
+          return res.json({ message: 'Test data cleared for user' });
+        }
+        break;
+      }
+
+      case 'clean-test-data':
+      case 'clean-all-test-data': {
+        // Remove all test stripe IDs (keeps supporter_tier intact)
+        const result = db.prepare(`
+          UPDATE users
+          SET stripe_customer_id = NULL,
+              stripe_subscription_id = NULL
+          WHERE stripe_customer_id LIKE 'test_cus_%'
+        `).run();
+        logAdminAction('stripe_clean_all_test_data', {
+          details: { count: result.changes },
+          ipAddress: req.adminIp || req.ip
+        });
+        return res.json({
+          message: `Cleaned test data from ${result.changes} users`
+        });
+      }
+
+      case 'clear-cancellation': {
+        if (!userId) {
+          return res.status(400).json({ error: 'userId required' });
+        }
+        // Clear cancellation date for specific user
+        const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+        db.prepare(`
+          UPDATE users
+          SET subscription_expires_at = NULL
+          WHERE id = ?
+        `).run(userId);
+        logAdminAction('stripe_clear_cancellation', {
+          targetType: 'user',
+          targetId: userId,
+          details: { username: user?.username },
+          ipAddress: req.adminIp || req.ip
+        });
+        return res.json({ message: 'Cancellation date cleared' });
+      }
+
+      case 'clear-all-cancellations': {
+        // Clear all cancellation dates
+        const result = db.prepare(`
+          UPDATE users
+          SET subscription_expires_at = NULL
+          WHERE subscription_expires_at IS NOT NULL
+        `).run();
+        logAdminAction('stripe_clear_all_cancellations', {
+          details: { count: result.changes },
+          ipAddress: req.adminIp || req.ip
+        });
+        return res.json({
+          message: `Cleared cancellation dates for ${result.changes} users`
+        });
+      }
+
+      case 'cancel-immediately': {
+        if (!userId) {
+          return res.status(400).json({ error: 'userId required' });
+        }
+
+        // Get user info including email and Stripe subscription ID
+        const user = db.prepare('SELECT username, email, supporter_tier, stripe_subscription_id FROM users WHERE id = ?').get(userId);
+
+        if (!user) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Cancel subscription in Stripe if it exists
+        if (user.stripe_subscription_id && stripeModule && stripeModule.stripe) {
+          try {
+            await stripeModule.stripe.subscriptions.cancel(user.stripe_subscription_id);
+            console.log(`✓ Cancelled Stripe subscription ${user.stripe_subscription_id} for user ${userId}`);
+          } catch (error) {
+            console.error('Failed to cancel subscription in Stripe:', error);
+            // Continue with database update even if Stripe cancellation fails
+          }
+        }
+
+        // Downgrade to one_time supporter (keeps increased storage)
+        db.prepare(`
+          UPDATE users
+          SET supporter_tier = 'one_time',
+              storage_limit = 50000000,
+              subscription_expires_at = NULL,
+              stripe_subscription_id = NULL
+          WHERE id = ?
+        `).run(userId);
+
+        // Send immediate cancellation email
+        if (user.email) {
+          const { strings } = require('./strings.cjs');
+          emailService.sendEmail({
+            to: user.email,
+            subject: strings.email.subscriptionCancelledImmediate.subject,
+            text: strings.email.subscriptionCancelledImmediate.body(user.username)
+          }).then(() => {
+            console.log(`✓ Immediate cancellation email sent to ${user.email}`);
+          }).catch(err => console.error('Failed to send immediate cancellation email:', err));
+        }
+
+        logAdminAction('stripe_cancel_immediately', {
+          targetType: 'user',
+          targetId: userId,
+          details: { username: user?.username, previous_tier: user?.supporter_tier },
+          ipAddress: req.adminIp || req.ip
+        });
+
+        return res.json({ message: 'Subscription cancelled immediately' });
+      }
+
+      case 'fix-mismatches': {
+        // Future: could sync with Stripe API
+        logAdminAction('stripe_fix_mismatches', {
+          details: { status: 'not_implemented' },
+          ipAddress: req.adminIp || req.ip
+        });
+        return res.json({ message: 'Mismatch fixing not yet implemented' });
+      }
+
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+  } catch (error) {
+    console.error('Stripe action error:', error);
+    res.status(500).json({ error: 'Action failed' });
   }
 });
 
@@ -1314,6 +2071,55 @@ app.get('/api/account/sessions', authenticateToken, async (req, res) => {
   }
 });
 
+// Get user storage info
+app.get('/api/account/storage', authenticateToken, async (req, res) => {
+  try {
+    const user = db.prepare('SELECT storage_used, storage_limit, supporter_tier, subscription_expires_at FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const storageUsedMB = (user.storage_used || 0) / 1024 / 1024;
+    const storageLimitMB = (user.storage_limit || 25000000) / 1024 / 1024;
+    const percentage = (storageUsedMB / storageLimitMB) * 100;
+
+    res.json({
+      storageUsedMB,
+      storageLimitMB,
+      percentage,
+      supporterTier: user.supporter_tier,
+      subscriptionExpiresAt: user.subscription_expires_at
+    });
+  } catch (error) {
+    console.error('Get storage error:', error);
+    res.status(500).json({ error: 'Failed to get storage info' });
+  }
+});
+
+// Track user visit
+app.post('/api/user/visit', authenticateToken, async (req, res) => {
+  try {
+    const user = db.prepare('SELECT visit_count, supporter_tier FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Increment visit count
+    const newVisitCount = (user.visit_count || 0) + 1;
+    db.prepare('UPDATE users SET visit_count = ? WHERE id = ?').run(newVisitCount, req.user.id);
+
+    res.json({
+      visitCount: newVisitCount,
+      supporterTier: user.supporter_tier
+    });
+  } catch (error) {
+    console.error('Track visit error:', error);
+    res.status(500).json({ error: 'Failed to track visit' });
+  }
+});
+
 // Logout from all sessions
 app.post('/api/account/logout-all', authenticateToken, async (req, res) => {
   try {
@@ -1324,6 +2130,129 @@ app.post('/api/account/logout-all', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Logout all error:', error);
     res.status(500).json({ error: 'Failed to logout from all sessions' });
+  }
+});
+
+// Export all slates as ZIP (sent via email)
+const exportSlatesLimiter = createRateLimitMiddleware(3, 60 * 60 * 1000); // 3 per hour
+app.post('/api/account/export-slates', authenticateToken, exportSlatesLimiter, async (req, res) => {
+  try {
+    const user = db.prepare('SELECT username, email FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user.email) {
+      return res.status(400).json({ error: 'Email required for export. Please add an email to your account first.' });
+    }
+
+    // Get all slates for the user
+    const slates = db.prepare(`
+      SELECT id, title, b2_file_id, created_at, updated_at
+      FROM slates
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+    `).all(req.user.id);
+
+    if (slates.length === 0) {
+      return res.status(400).json({ error: 'No slates to export' });
+    }
+
+    // Start export in background (don't make user wait)
+    res.json({ message: `Exporting ${slates.length} slate(s). You'll receive an email at ${user.email} with the download link shortly.` });
+
+    // Background processing
+    (async () => {
+      try {
+        const archiver = require('archiver');
+        const stream = require('stream');
+
+        // Create ZIP in memory
+        const buffers = [];
+        const bufferStream = new stream.PassThrough();
+        bufferStream.on('data', (chunk) => buffers.push(chunk));
+
+        const archive = archiver('zip', {
+          zlib: { level: 9 } // Maximum compression
+        });
+
+        archive.pipe(bufferStream);
+
+        // Get encryption key for this user
+        let encryptionKey = getCachedEncryptionKey(req.user.id);
+
+        // Add each slate to the ZIP
+        for (const slate of slates) {
+          try {
+            // Download and decrypt slate content
+            let content;
+            if (encryptionKey) {
+              content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
+            } else {
+              // If no cached key, try to decrypt with stored data (for Google users)
+              const userWithKey = db.prepare('SELECT encrypted_encryption_key FROM users WHERE id = ?').get(req.user.id);
+              if (userWithKey && userWithKey.encrypted_encryption_key) {
+                encryptionKey = decryptEncryptionKey(userWithKey.encrypted_encryption_key);
+                content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
+              } else {
+                console.error(`No encryption key for user ${req.user.id}, slate ${slate.id}`);
+                continue; // Skip this slate
+              }
+            }
+
+            // Sanitize filename (remove invalid characters)
+            const sanitizedTitle = (slate.title || `slate-${slate.id}`)
+              .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+              .substring(0, 200); // Limit length
+
+            const filename = `${sanitizedTitle}.txt`;
+
+            // Add metadata header to file
+            const fileContent = `Title: ${slate.title || 'Untitled'}\nCreated: ${new Date(slate.created_at).toLocaleString()}\nLast Updated: ${new Date(slate.updated_at).toLocaleString()}\n\n${content}`;
+
+            archive.append(fileContent, { name: filename });
+          } catch (err) {
+            console.error(`Failed to export slate ${slate.id}:`, err);
+            // Continue with other slates
+          }
+        }
+
+        await archive.finalize();
+
+        // Wait for all buffers to be written
+        await new Promise((resolve) => bufferStream.on('end', resolve));
+
+        const zipBuffer = Buffer.concat(buffers);
+        const zipBase64 = zipBuffer.toString('base64');
+
+        // Send email with ZIP attachment
+        await emailService.sendEmail({
+          to: user.email,
+          subject: 'your justtype slates export',
+          text: `hi ${user.username},\n\nattached is a ZIP file containing all ${slates.length} of your slates as text files.\n\neach slate includes its title, creation date, and last updated date at the top of the file.\n\nthanks for using justtype!\n\n- justtype`,
+          attachments: [{
+            filename: `justtype-export-${new Date().toISOString().split('T')[0]}.zip`,
+            content: zipBase64,
+            encoding: 'base64',
+            type: 'application/zip'
+          }]
+        });
+
+        console.log(`✓ Exported ${slates.length} slates for user ${req.user.id} (${user.email})`);
+      } catch (err) {
+        console.error('Export processing error:', err);
+        // Try to send error email
+        try {
+          await emailService.sendEmail({
+            to: user.email,
+            subject: 'export failed - justtype',
+            text: `hi ${user.username},\n\nsorry, we encountered an error while exporting your slates. please try again later or contact support.\n\nerror: ${err.message}\n\n- justtype`
+          });
+        } catch (emailErr) {
+          console.error('Failed to send error email:', emailErr);
+        }
+      }
+    })();
+  } catch (error) {
+    console.error('Export slates error:', error);
+    res.status(500).json({ error: 'Failed to start export. Please try again.' });
   }
 });
 
@@ -1355,6 +2284,304 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Delete account error:', error);
     res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+// =========================
+// STRIPE DONATION ENDPOINTS
+// =========================
+
+// Create Stripe checkout session
+app.post('/api/stripe/create-checkout', async (req, res) => {
+  if (!stripe || !stripePriceIds) {
+    return res.status(503).json({ error: 'Payment system not configured' });
+  }
+
+  const { tier, amount, email } = req.body; // 'one_time' or 'quarterly', amount in EUR (optional, for one_time), email (required if not authenticated)
+
+  if (!tier || !['one_time', 'quarterly'].includes(tier)) {
+    return res.status(400).json({ error: 'Invalid tier' });
+  }
+
+  // Check authentication
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  let user = null;
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      user = db.prepare('SELECT id, email, username FROM users WHERE id = ?').get(decoded.id);
+    } catch (err) {
+      // Invalid token, treat as unauthenticated
+    }
+  }
+
+  // Subscriptions require authentication
+  if (tier === 'quarterly' && !user) {
+    return res.status(401).json({ error: 'Authentication required for subscriptions' });
+  }
+
+  // For one-time, validate custom amount
+  if (tier === 'one_time') {
+    const amountNum = parseFloat(amount);
+    if (!amount || isNaN(amountNum) || amountNum < 1) {
+      return res.status(400).json({ error: 'Amount must be at least 1 EUR' });
+    }
+
+    // If not authenticated, require email
+    if (!user && !email) {
+      return res.status(400).json({ error: 'Email required for donations without account' });
+    }
+  }
+
+  try {
+    let sessionConfig = {
+      customer_email: user ? user.email : email,
+      success_url: `${process.env.PUBLIC_URL || 'https://justtype.io'}/?payment=success`,
+      cancel_url: `${process.env.PUBLIC_URL || 'https://justtype.io'}/?payment=cancelled`,
+      metadata: {
+        tier: tier
+      }
+    };
+
+    // Add user info to metadata if authenticated
+    if (user) {
+      sessionConfig.metadata.userId = user.id.toString();
+      sessionConfig.metadata.username = user.username;
+    }
+
+    if (tier === 'one_time') {
+      // Custom amount for one-time donation
+      const amountInCents = Math.round(parseFloat(amount) * 100);
+      sessionConfig.mode = 'payment';
+      sessionConfig.line_items = [
+        {
+          price_data: {
+            currency: 'eur',
+            product: stripePriceIds.oneTimeProductId,
+            unit_amount: amountInCents,
+          },
+          quantity: 1,
+        },
+      ];
+    } else {
+      // Fixed price for quarterly subscription
+      sessionConfig.mode = 'subscription';
+      sessionConfig.line_items = [
+        {
+          price: stripePriceIds.quarterlyPriceId,
+          quantity: 1,
+        },
+      ];
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionConfig);
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Create checkout error:', error);
+    res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+// Create Stripe customer portal session
+app.post('/api/stripe/create-portal-session', authenticateToken, async (req, res) => {
+  if (!stripe) {
+    return res.status(503).json({ error: 'Payment system not configured' });
+  }
+
+  try {
+    const user = db.prepare('SELECT stripe_customer_id, supporter_tier FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user || !user.stripe_customer_id) {
+      return res.status(400).json({ error: 'no subscription found. complete a purchase first to manage your subscription.' });
+    }
+
+    // Create portal session (works for both test and live mode)
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripe_customer_id,
+      return_url: `${process.env.PUBLIC_URL || 'https://justtype.io'}/account`,
+    });
+
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Create portal session error:', error);
+
+    // More helpful error message for portal not configured
+    if (error.code === 'account_invalid' || error.message?.includes('portal')) {
+      return res.status(400).json({ error: 'customer portal not configured. activate it in stripe dashboard: settings → customer portal' });
+    }
+
+    res.status(500).json({ error: 'failed to create portal session. please try again or contact support.' });
+  }
+});
+// Test endpoint to manually upgrade user (for Stripe test mode without webhooks)
+app.post('/api/stripe/test-upgrade', authenticateToken, async (req, res) => {
+  if (!stripe) {
+    return res.status(503).json({ error: 'Stripe not configured' });
+  }
+
+  const { tier } = req.body;
+
+  if (!tier || !['one_time', 'quarterly'].includes(tier)) {
+    return res.status(400).json({ error: 'Invalid tier' });
+  }
+
+  try {
+    // IMPORTANT: Prevent overwriting real Stripe customer IDs
+    const user = db.prepare('SELECT stripe_customer_id FROM users WHERE id = ?').get(req.user.id);
+    if (user && user.stripe_customer_id && !user.stripe_customer_id.startsWith('test_cus_')) {
+      return res.status(400).json({
+        error: 'Cannot use test upgrade - you have a real Stripe subscription. Use the Stripe portal to manage it.'
+      });
+    }
+
+    const now = new Date().toISOString();
+
+    if (tier === 'one_time') {
+      db.prepare(`
+        UPDATE users
+        SET supporter_tier = 'one_time',
+            storage_limit = 50000000,
+            donated_at = ?,
+            stripe_customer_id = ?
+        WHERE id = ?
+      `).run(now, `test_cus_${req.user.id}`, req.user.id);
+      console.log(`✓ User ${req.user.id} upgraded to one-time supporter (TEST)`);
+    } else if (tier === 'quarterly') {
+      db.prepare(`
+        UPDATE users
+        SET supporter_tier = 'quarterly',
+            storage_limit = 999999999999,
+            donated_at = ?,
+            stripe_customer_id = ?,
+            stripe_subscription_id = ?
+        WHERE id = ?
+      `).run(now, `test_cus_${req.user.id}`, `test_sub_${req.user.id}`, req.user.id);
+      console.log(`✓ User ${req.user.id} upgraded to quarterly supporter (TEST)`);
+    }
+
+    res.json({ success: true, message: 'User upgraded successfully (TEST MODE)' });
+  } catch (error) {
+    console.error('Test upgrade error:', error);
+    res.status(500).json({ error: 'Failed to upgrade user' });
+  }
+});
+
+// Generate linking token for Google account linking
+app.post('/api/account/generate-link-token', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT auth_provider, email FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Only allow linking if user has password auth (local)
+    if (user.auth_provider === 'google') {
+      return res.status(400).json({ error: 'Cannot link Google to Google-only account' });
+    }
+
+    if (user.auth_provider === 'both') {
+      return res.status(400).json({ error: 'Google account is already linked' });
+    }
+
+    // Create a temporary linking token valid for 5 minutes
+    const linkingToken = jwt.sign({ userId: req.user.id, email: user.email, purpose: 'link_google' }, JWT_SECRET, { expiresIn: '5m' });
+
+    res.json({ linkingToken });
+  } catch (error) {
+    console.error('Generate link token error:', error);
+    res.status(500).json({ error: 'Failed to generate linking token' });
+  }
+});
+
+// Request unlink Google account (send verification code)
+app.post('/api/account/request-unlink-google', authenticateToken, async (req, res) => {
+  try {
+    const user = db.prepare('SELECT auth_provider, email, password FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if user has Google auth linked
+    if (user.auth_provider !== 'google' && user.auth_provider !== 'both') {
+      return res.status(400).json({ error: 'Google account is not linked' });
+    }
+
+    // Ensure user has password auth before unlinking Google
+    if (user.auth_provider === 'google') {
+      return res.status(400).json({ error: 'Cannot unlink Google without setting up password authentication first' });
+    }
+
+    // Generate 6-digit verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+    // Store verification code
+    db.prepare('UPDATE users SET unlink_google_code = ?, unlink_google_code_expires = ? WHERE id = ?')
+      .run(verificationCode, expiresAt, req.user.id);
+
+    // Send verification email
+    const { strings } = require('./strings.cjs');
+    await emailService.sendEmail({
+      to: user.email,
+      subject: strings.email.unlinkGoogle.subject,
+      text: strings.email.unlinkGoogle.body(verificationCode)
+    });
+
+    res.json({ message: 'Verification code sent to your email' });
+  } catch (error) {
+    console.error('Request unlink Google error:', error);
+    res.status(500).json({ error: 'Failed to send verification code' });
+  }
+});
+
+// Verify and unlink Google account
+app.post('/api/account/unlink-google', authenticateToken, async (req, res) => {
+  try {
+    const { code } = req.body;
+
+    if (!code || code.length !== 6) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    const user = db.prepare('SELECT auth_provider, unlink_google_code, unlink_google_code_expires FROM users WHERE id = ?')
+      .get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if code exists and hasn't expired
+    if (!user.unlink_google_code || !user.unlink_google_code_expires) {
+      return res.status(400).json({ error: 'No unlink request found. Please request a new code.' });
+    }
+
+    if (new Date(user.unlink_google_code_expires) < new Date()) {
+      return res.status(400).json({ error: 'Verification code expired. Please request a new code.' });
+    }
+
+    if (user.unlink_google_code !== code) {
+      return res.status(400).json({ error: 'Invalid verification code' });
+    }
+
+    // Unlink Google account
+    db.prepare(`
+      UPDATE users
+      SET google_id = NULL,
+          auth_provider = 'local',
+          unlink_google_code = NULL,
+          unlink_google_code_expires = NULL
+      WHERE id = ?
+    `).run(req.user.id);
+
+    res.json({ message: 'Google account unlinked successfully' });
+  } catch (error) {
+    console.error('Unlink Google error:', error);
+    res.status(500).json({ error: 'Failed to unlink Google account' });
   }
 });
 
@@ -1398,6 +2625,14 @@ setInterval(runCleanup, 60 * 60 * 1000);
       timestamp: new Date().toISOString(),
       uptime: 0
     };
+
+    // Initialize Stripe products
+    if (stripeModule) {
+      stripePriceIds = await stripeModule.ensureStripeProducts();
+      if (stripePriceIds) {
+        console.log('✓ Stripe products initialized');
+      }
+    }
 
     app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);

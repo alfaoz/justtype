@@ -252,6 +252,78 @@ wasn't you? are you sure?? well someone's trying to get into your account.
 or they mistyped their email? either way, it's safe to ignore this email!
 
 - justtype`
+    },
+    unlinkGoogle: {
+      subject: 'unlink google account',
+      body: (verificationCode) => `you requested to unlink your google account from justtype.
+
+your verification code is: ${verificationCode}
+
+this code will expire in 10 minutes.
+
+if you didn't request this, please ignore this email.
+
+- justtype`
+    },
+    subscriptionStarted: {
+      subject: 'thank you for supporting justtype! ❤️',
+      body: (username) => `hey ${username},
+
+thank you so much for subscribing to justtype! your support means the world to us.
+
+you now have unlimited storage and can write to your heart's content.
+
+if you ever need help or have questions, just reply to this email.
+
+happy writing!
+
+- justtype`
+    },
+    subscriptionCancellationScheduled: {
+      subject: 'cancellation confirmed',
+      body: (username, daysRemaining, storageWarning) => `hey ${username},
+
+we've received your cancellation request. your subscription will remain active until the end of your current billing period (${daysRemaining} days remaining).
+
+you'll keep your unlimited storage until then. after that, your account will remain as a one-time supporter with 50 MB storage.
+${storageWarning}
+before your subscription ends, we recommend backing up your slates. you can export all your slates as a text file from your account page.
+
+if you change your mind, you can reactivate your subscription anytime from the manage subscription page.
+
+if you had any issues or feedback, we'd love to hear from you. just reply to this email.
+
+- justtype`
+    },
+    subscriptionCancelled: {
+      subject: 'sad to see you go',
+      body: (username) => `hey ${username},
+
+we're sorry to see you go, but we understand!
+
+thank you for your previous support. it really helped keep justtype running.
+
+your account will remain active with 25MB of free storage. you're always welcome back!
+
+if you had any issues or feedback, we'd love to hear from you. just reply to this email.
+
+take care!
+
+- justtype`
+    },
+    subscriptionCancelledImmediate: {
+      subject: 'sad to see you go',
+      body: (username) => `hey ${username},
+
+we're sorry to see you go, but we understand!
+
+thank you for your previous support. it really helped keep justtype running.
+
+your account will remain as a one-time supporter with increased storage.
+
+take care!
+
+- alfa from justtype.io`
     }
   },
 

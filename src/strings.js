@@ -88,7 +88,8 @@ const strings = {
       chars: (count) => `${count} chars`,
       updated: (date) => `updated: ${date}`,
       published: (date) => `published: ${date}`,
-      unpublished: 'private draft',
+      unpublished: 'unpublished',
+      privateDraft: 'private draft',
       pubShort: (date) => `pub: ${date}`
     },
     menu: {
@@ -227,6 +228,89 @@ const strings = {
         sendFailed: 'Failed to send verification code',
         verifyFailed: 'Failed to verify code'
       }
+    },
+    googleAuth: {
+      signInMethod: 'sign in method:',
+      methods: {
+        password: 'password',
+        google: 'google',
+        both: 'google + password'
+      },
+      link: {
+        button: '+ link google',
+        modal: {
+          title: 'link google account',
+          message: 'this will allow you to sign in with either your password or google account. you\'ll be redirected to google to authorize the connection.',
+          continue: 'continue to google',
+          cancel: 'cancel'
+        },
+        success: {
+          title: 'google account linked!',
+          message: 'you can now sign in with either your password or google account.',
+          button: 'okay'
+        },
+        errors: {
+          title: 'linking failed',
+          failed: 'failed to link google account.',
+          alreadyLinked: 'this google account is already linked to another user.',
+          sessionExpired: 'linking session expired. please try again.',
+          button: 'okay'
+        }
+      },
+      unlink: {
+        button: 'unlink google',
+        sendingCode: 'sending code...',
+        modal: {
+          title: 'unlink google account',
+          instructions: 'enter the 6-digit code sent to your email to confirm unlinking.',
+          codePlaceholder: '000000',
+          submit: 'unlink',
+          submitting: 'unlinking...',
+          cancel: 'cancel'
+        },
+        success: {
+          title: 'google account unlinked!',
+          message: 'you can now only sign in with your password.',
+          button: 'okay',
+          codeSent: 'verification code sent to your email'
+        },
+        errors: {
+          failed: 'failed to unlink google account'
+        }
+      }
+    }
+  },
+
+  // subscription management
+  subscription: {
+    manage: {
+      title: 'manage subscription',
+      loading: 'loading...',
+      currentPlan: 'current plan',
+      plan: 'plan:',
+      plans: {
+        quarterly: 'supporter + unlimited',
+        oneTime: 'supporter',
+        free: 'free'
+      },
+      quarterlyDescription: 'manage your subscription, update payment method, or cancel anytime through stripe.',
+      oneTimeDescription: 'thanks for your support! upgrade to quarterly for unlimited storage and recurring support.',
+      freeDescription: 'support justtype development and get more storage.',
+      manageButton: 'manage subscription',
+      upgradeButton: 'upgrade to quarterly',
+      supportButton: 'support justtype',
+      backButton: 'back to account',
+      manageDescription: 'opens stripe customer portal',
+      errors: {
+        loadFailed: 'failed to load subscription info',
+        portalFailed: 'failed to open subscription management'
+      }
+    },
+    alreadySubscribed: {
+      title: 'you\'re already subscribed!',
+      message: 'you already have an active subscription. manage it from your account page.',
+      manageButton: 'manage subscription',
+      closeButton: 'close'
     }
   },
 
@@ -342,7 +426,7 @@ your code is: ${code}
 
 it lasts for 10 minutes!
 
-if this wasn't you, lmao. probably a typo. 
+if this wasn't you, lmao. probably a typo.
 
 - justtype`
     },
@@ -356,6 +440,48 @@ it lasts for 10 minutes!
 
 wasn't you? are you sure?? well someone's trying to get into your account.
 or they mistyped their email? either way, it's safe to ignore this email!
+
+- justtype`
+    },
+    unlinkGoogle: {
+      subject: 'unlink google account',
+      body: (verificationCode) => `you requested to unlink your google account from justtype.
+
+your verification code is: ${verificationCode}
+
+this code will expire in 10 minutes.
+
+if you didn't request this, please ignore this email.
+
+- justtype`
+    },
+    subscriptionStarted: {
+      subject: 'thank you for supporting justtype! ❤️',
+      body: (username) => `hey ${username},
+
+thank you so much for subscribing to justtype! your support means the world to us.
+
+you now have unlimited storage and can write to your heart's content.
+
+if you ever need help or have questions, just reply to this email.
+
+happy writing!
+
+- justtype`
+    },
+    subscriptionCancelled: {
+      subject: 'sad to see you go',
+      body: (username) => `hey ${username},
+
+we're sorry to see you go, but we understand!
+
+thank you for your previous support. it really helped keep justtype running.
+
+your account will remain active with 25MB of free storage. you're always welcome back!
+
+if you had any issues or feedback, we'd love to hear from you. just reply to this email.
+
+take care!
 
 - justtype`
     }

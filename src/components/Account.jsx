@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 
-export function Account({ token, username, email, emailVerified, onLogout, onEmailUpdate }) {
+export function Account({ token, username, email, emailVerified, authProvider, onLogout, onEmailUpdate }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -26,13 +26,54 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loggingOutAll, setLoggingOutAll] = useState(false);
 
+  const [storageInfo, setStorageInfo] = useState(null);
+  const [loadingStorage, setLoadingStorage] = useState(true);
+
   // Modal states
   const [showLogoutAllModal, setShowLogoutAllModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [showLinkGoogleModal, setShowLinkGoogleModal] = useState(false);
+  const [showLinkSuccessModal, setShowLinkSuccessModal] = useState(false);
+  const [showLinkErrorModal, setShowLinkErrorModal] = useState(false);
+  const [linkErrorMessage, setLinkErrorMessage] = useState('');
+  const [showUnlinkGoogleModal, setShowUnlinkGoogleModal] = useState(false);
+  const [showUnlinkSuccessModal, setShowUnlinkSuccessModal] = useState(false);
+
+  // Google link/unlink states
+  const [unlinkCode, setUnlinkCode] = useState('');
+  const [unlinkError, setUnlinkError] = useState('');
+  const [unlinkSuccess, setUnlinkSuccess] = useState('');
+  const [unlinkingGoogle, setUnlinkingGoogle] = useState(false);
+  const [requestingUnlink, setRequestingUnlink] = useState(false);
+
+  // Export slates state
+  const [exportingSlates, setExportingSlates] = useState(false);
+  const [exportMessage, setExportMessage] = useState('');
 
   useEffect(() => {
     if (token) {
       loadSessions();
+      loadStorage();
+    }
+
+    // Check for Google link/unlink callback
+    const urlParams = new URLSearchParams(window.location.search);
+    const linkGoogle = urlParams.get('linkGoogle');
+
+    if (linkGoogle === 'success') {
+      setShowLinkSuccessModal(true);
+      window.history.replaceState({}, '', '/account');
+    } else if (linkGoogle === 'error') {
+      const reason = urlParams.get('reason');
+      let message = strings.account.googleAuth.link.errors.failed;
+      if (reason === 'google_already_linked') {
+        message = strings.account.googleAuth.link.errors.alreadyLinked;
+      } else if (reason === 'invalid_token') {
+        message = strings.account.googleAuth.link.errors.sessionExpired;
+      }
+      setLinkErrorMessage(message);
+      setShowLinkErrorModal(true);
+      window.history.replaceState({}, '', '/account');
     }
   }, [token]);
 
@@ -50,6 +91,48 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
       console.error('Failed to load sessions:', err);
     } finally {
       setLoadingSessions(false);
+    }
+  };
+
+  const loadStorage = async () => {
+    setLoadingStorage(true);
+    try {
+      const response = await fetch(`${API_URL}/account/storage`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setStorageInfo(data);
+      }
+    } catch (err) {
+      console.error('Failed to load storage:', err);
+    } finally {
+      setLoadingStorage(false);
+    }
+  };
+
+  const exportSlates = async () => {
+    setExportingSlates(true);
+    setExportMessage('');
+
+    try {
+      const response = await fetch(`${API_URL}/account/export-slates`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setExportMessage(data.message || 'export started! check your email shortly.');
+      } else {
+        setExportMessage(data.error || 'failed to export slates. please try again.');
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      setExportMessage('failed to export slates. please try again.');
+    } finally {
+      setExportingSlates(false);
     }
   };
 
@@ -281,12 +364,95 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
     }
   };
 
+  const handleLinkGoogle = async () => {
+    try {
+      // Get linking token from backend
+      const response = await fetch(`${API_URL}/account/generate-link-token`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Redirect to Google OAuth with linking token
+        window.location.href = `https://justtype.io/auth/google/link?state=${data.linkingToken}`;
+      } else {
+        alert(data.error || 'failed to initiate google linking');
+      }
+    } catch (err) {
+      alert('failed to initiate google linking');
+    }
+  };
+
+  const handleRequestUnlinkGoogle = async () => {
+    setUnlinkError('');
+    setRequestingUnlink(true);
+
+    try {
+      const response = await fetch(`${API_URL}/account/request-unlink-google`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setShowUnlinkGoogleModal(true);
+        setUnlinkSuccess(strings.account.googleAuth.unlink.success.codeSent);
+      } else {
+        alert(data.error || 'failed to send verification code');
+      }
+    } catch (err) {
+      alert('failed to send verification code');
+    } finally {
+      setRequestingUnlink(false);
+    }
+  };
+
+  const handleUnlinkGoogle = async (e) => {
+    e.preventDefault();
+    setUnlinkError('');
+    setUnlinkingGoogle(true);
+
+    try {
+      const response = await fetch(`${API_URL}/account/unlink-google`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ code: unlinkCode })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setShowUnlinkGoogleModal(false);
+        setUnlinkCode('');
+        setShowUnlinkSuccessModal(true);
+      } else {
+        setUnlinkError(data.error || strings.account.googleAuth.unlink.errors.failed);
+      }
+    } catch (err) {
+      setUnlinkError(strings.account.googleAuth.unlink.errors.failed);
+    } finally {
+      setUnlinkingGoogle(false);
+    }
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-2xl mx-auto p-4 md:p-8">
       <h1 className="text-xl md:text-2xl text-white mb-8">{strings.account.title}</h1>
 
-      {/* Account Info */}
+      {/* Account Info + Plan & Support (Merged) */}
       <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
         <h2 className="text-base md:text-lg text-white mb-4">{strings.account.info.title}</h2>
         <div className="space-y-3 text-sm">
@@ -300,61 +466,232 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
                 <span className="ml-2 text-yellow-400 text-xs">{strings.account.info.notVerified}</span>
               )}
             </p>
+            {authProvider === 'local' && (
+              <button
+                onClick={() => setShowEmailModal(true)}
+                className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+              >
+                {strings.account.info.change}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center justify-between">
+            <p>
+              <span className="text-[#666]">{strings.account.googleAuth.signInMethod} </span>
+              <span className="text-white">
+                {authProvider === 'google'
+                  ? strings.account.googleAuth.methods.google
+                  : authProvider === 'both'
+                  ? strings.account.googleAuth.methods.both
+                  : strings.account.googleAuth.methods.password}
+              </span>
+            </p>
+            {authProvider === 'local' && (
+              <button
+                onClick={() => setShowLinkGoogleModal(true)}
+                className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+              >
+                {strings.account.googleAuth.link.button}
+              </button>
+            )}
+            {authProvider === 'both' && (
+              <button
+                onClick={handleRequestUnlinkGoogle}
+                disabled={requestingUnlink}
+                className="text-red-400 hover:text-red-300 transition-colors text-xs disabled:opacity-50"
+              >
+                {requestingUnlink ? strings.account.googleAuth.unlink.sendingCode : strings.account.googleAuth.unlink.button}
+              </button>
+            )}
+          </div>
+          {!loadingStorage && storageInfo && (
+            <div className="flex items-center justify-between">
+              <p>
+                <span className="text-[#666]">current plan:</span> <span className="text-white">
+                  {storageInfo.supporterTier === 'quarterly' && strings.subscription.manage.plans.quarterly}
+                  {storageInfo.supporterTier === 'one_time' && strings.subscription.manage.plans.oneTime}
+                  {!storageInfo.supporterTier && strings.subscription.manage.plans.free}
+                </span>
+              </p>
+              {storageInfo.supporterTier === 'quarterly' && (
+                <button
+                  onClick={() => window.location.href = '/manage-subscription'}
+                  className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+                >
+                  manage
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Upgrade/Support Message */}
+        {!loadingStorage && storageInfo && !storageInfo.supporterTier && (
+          <div className="mt-4 pt-4 border-t border-[#333]">
+            <p className="text-xs text-[#666] mb-3">
+              support justtype development and get more storage
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => window.location.href = '/?donate=one_time'}
+                className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
+              >
+                donate once
+              </button>
+              <button
+                onClick={() => window.location.href = '/?donate=quarterly'}
+                className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
+              >
+                subscribe
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!loadingStorage && storageInfo && storageInfo.supporterTier === 'one_time' && (
+          <div className="mt-4 pt-4 border-t border-[#333]">
+            <p className="text-xs text-[#666] mb-3">
+              upgrade to quarterly for unlimited storage
+            </p>
             <button
-              onClick={() => setShowEmailModal(true)}
-              className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+              onClick={() => window.location.href = '/?donate=quarterly'}
+              className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
             >
-              {strings.account.info.change}
+              upgrade to quarterly (7 EUR / 3 months)
             </button>
           </div>
-        </div>
+        )}
+
+        {!loadingStorage && storageInfo && storageInfo.supporterTier === 'quarterly' && (
+          <div className="mt-4 pt-4 border-t border-[#333]">
+            {storageInfo.subscriptionExpiresAt ? (
+              storageInfo.storageUsedMB > 50 ? (
+                <>
+                  <p className="text-xs text-yellow-400 mb-3">
+                    cancellation successful. remaining: {Math.ceil((new Date(storageInfo.subscriptionExpiresAt) - new Date()) / (1000 * 60 * 60 * 24))} days
+                  </p>
+                  <p className="text-xs text-[#666] mb-3">
+                    you're currently using {storageInfo.storageUsedMB.toFixed(2)} MB. your account will remain as a one-time supporter. export your slates to avoid losing files that exceed this limit.
+                  </p>
+                  <button
+                    onClick={exportSlates}
+                    disabled={exportingSlates}
+                    className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
+                  </button>
+                  {exportMessage && (
+                    <p className={`text-xs mt-2 ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
+                      {exportMessage}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-green-400">
+                  cancellation successful. your account will remain as a one-time supporter.
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-green-400">
+                thank you for your continued support! you have unlimited storage.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Change Password */}
-      <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-        <h2 className="text-base md:text-lg text-white mb-4">{strings.account.password.title}</h2>
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder={strings.account.password.currentPlaceholder}
-              className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-              required
-            />
+      {/* Storage Usage - Only show if > 5MB and not quarterly supporter */}
+      {!loadingStorage && storageInfo && storageInfo.storageUsedMB > 5 && storageInfo.supporterTier !== 'quarterly' && (
+        <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
+          <h2 className="text-base md:text-lg text-white mb-4">storage</h2>
+          <div className="space-y-3">
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-[#666]">
+                {storageInfo.storageUsedMB.toFixed(2)} MB of {storageInfo.storageLimitMB} MB used
+              </span>
+              <span className={`${
+                storageInfo.percentage >= 100 ? 'text-red-400' :
+                storageInfo.percentage >= 80 ? 'text-orange-400' :
+                'text-green-400'
+              }`}>
+                {storageInfo.percentage.toFixed(0)}%
+              </span>
+            </div>
+
+            {/* Storage Bar */}
+            <div className="w-full bg-[#111111] rounded-full h-2 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  storageInfo.percentage >= 100 ? 'bg-red-500' :
+                  storageInfo.percentage >= 80 ? 'bg-orange-500' :
+                  'bg-green-500'
+                }`}
+                style={{ width: `${Math.min(storageInfo.percentage, 100)}%` }}
+              />
+            </div>
+
+            {/* Warning messages */}
+            {storageInfo.percentage >= 100 && (
+              <p className="text-red-400 text-xs mt-3">
+                you've reached your storage limit. delete some slates or upgrade to continue saving.
+              </p>
+            )}
+            {storageInfo.percentage >= 80 && storageInfo.percentage < 100 && (
+              <p className="text-orange-400 text-xs mt-3">
+                you're approaching your storage limit ({storageInfo.percentage.toFixed(0)}% used).
+              </p>
+            )}
           </div>
-          <div>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder={strings.account.password.newPlaceholder}
-              className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-              required
-            />
-          </div>
-          <div>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder={strings.account.password.confirmPlaceholder}
-              className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-              required
-            />
-          </div>
-          {passwordError && <p className="text-red-400 text-xs md:text-sm">{passwordError}</p>}
-          {passwordSuccess && <p className="text-green-400 text-xs md:text-sm">{passwordSuccess}</p>}
-          <button
-            type="submit"
-            disabled={changingPassword}
-            className="bg-white text-black px-6 py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
-          >
-            {changingPassword ? strings.account.password.submitting : strings.account.password.submit}
-          </button>
-        </form>
-      </div>
+        </div>
+      )}
+
+      {/* Change Password - Only show for local/both auth users */}
+      {(authProvider === 'local' || authProvider === 'both') && (
+        <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
+          <h2 className="text-base md:text-lg text-white mb-4">{strings.account.password.title}</h2>
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder={strings.account.password.currentPlaceholder}
+                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                required
+              />
+            </div>
+            <div>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder={strings.account.password.newPlaceholder}
+                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                required
+              />
+            </div>
+            <div>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder={strings.account.password.confirmPlaceholder}
+                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                required
+              />
+            </div>
+            {passwordError && <p className="text-red-400 text-xs md:text-sm">{passwordError}</p>}
+            {passwordSuccess && <p className="text-green-400 text-xs md:text-sm">{passwordSuccess}</p>}
+            <button
+              type="submit"
+              disabled={changingPassword}
+              className="bg-white text-black px-6 py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+            >
+              {changingPassword ? strings.account.password.submitting : strings.account.password.submit}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Sessions & Logout */}
       <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
@@ -569,6 +906,144 @@ export function Account({ token, username, email, emailVerified, onLogout, onEma
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link Google Confirmation Modal */}
+      {showLinkGoogleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.modal.title}</h2>
+            <p className="text-sm text-[#666] mb-6">
+              {strings.account.googleAuth.link.modal.message}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleLinkGoogle}
+                className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+              >
+                {strings.account.googleAuth.link.modal.continue}
+              </button>
+              <button
+                onClick={() => setShowLinkGoogleModal(false)}
+                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+              >
+                {strings.account.googleAuth.link.modal.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link Google Success Modal */}
+      {showLinkSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.success.title}</h2>
+            <p className="text-sm text-[#666] mb-6">
+              {strings.account.googleAuth.link.success.message}
+            </p>
+            <button
+              onClick={() => {
+                setShowLinkSuccessModal(false);
+                window.location.reload();
+              }}
+              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+            >
+              {strings.account.googleAuth.link.success.button}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Link Google Error Modal */}
+      {showLinkErrorModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.errors.title}</h2>
+            <p className="text-sm text-[#666] mb-6">
+              {linkErrorMessage}
+            </p>
+            <button
+              onClick={() => {
+                setShowLinkErrorModal(false);
+                setLinkErrorMessage('');
+              }}
+              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+            >
+              {strings.account.googleAuth.link.errors.button}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Unlink Google Verification Modal */}
+      {showUnlinkGoogleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.modal.title}</h2>
+            <p className="text-sm text-[#666] mb-4">
+              {strings.account.googleAuth.unlink.modal.instructions}
+            </p>
+            {unlinkSuccess && <p className="text-green-400 text-xs md:text-sm mb-4">{unlinkSuccess}</p>}
+            <form onSubmit={handleUnlinkGoogle} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  value={unlinkCode}
+                  onChange={(e) => setUnlinkCode(e.target.value)}
+                  placeholder={strings.account.googleAuth.unlink.modal.codePlaceholder}
+                  maxLength={6}
+                  className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm text-center tracking-widest"
+                  required
+                  autoFocus
+                />
+              </div>
+              {unlinkError && <p className="text-red-400 text-xs md:text-sm">{unlinkError}</p>}
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={unlinkingGoogle || unlinkCode.length !== 6}
+                  className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {unlinkingGoogle ? strings.account.googleAuth.unlink.modal.submitting : strings.account.googleAuth.unlink.modal.submit}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUnlinkGoogleModal(false);
+                    setUnlinkCode('');
+                    setUnlinkError('');
+                    setUnlinkSuccess('');
+                  }}
+                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                >
+                  {strings.account.googleAuth.unlink.modal.cancel}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Unlink Google Success Modal */}
+      {showUnlinkSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.success.title}</h2>
+            <p className="text-sm text-[#666] mb-6">
+              {strings.account.googleAuth.unlink.success.message}
+            </p>
+            <button
+              onClick={() => {
+                setShowUnlinkSuccessModal(false);
+                window.location.reload();
+              }}
+              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+            >
+              {strings.account.googleAuth.unlink.success.button}
+            </button>
           </div>
         </div>
       )}

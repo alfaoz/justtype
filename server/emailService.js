@@ -35,7 +35,30 @@ async function sendPasswordResetEmail(email, username, resetCode) {
   }
 }
 
+async function sendEmail({ to, subject, text, html }) {
+  try {
+    const emailData = {
+      from: FROM_EMAIL,
+      to,
+      subject
+    };
+
+    if (html) {
+      emailData.html = html;
+    } else if (text) {
+      emailData.text = text;
+    }
+
+    await resend.emails.send(emailData);
+    return true;
+  } catch (error) {
+    console.error('Failed to send email:', error);
+    return false;
+  }
+}
+
 module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
+  sendEmail,
 };
