@@ -61,7 +61,7 @@ found a bug? security issue? want to add a feature? need a friend?
 - **style guide:** see CONTRIBUTING.md
 - **friend:** alfa.ozaltin@gmail.com
 
-we're (i am) picky about ux but welcome thoughtful contributions.
+we welcome thoughtful contributions to the ux.
 
 ## license
 
