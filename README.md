@@ -1,6 +1,6 @@
 # justtype
 
-start typing, we'll handle the rewt.
+start typing, we'll handle the rest.
 
 live at **[justtype.io](https://justtype.io)**
 
