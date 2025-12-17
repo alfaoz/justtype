@@ -91,9 +91,20 @@ export function ManageSubscription({ token, onBack }) {
 
                 {subscriptionInfo.supporterTier === 'quarterly' && (
                   <div className="mt-4 pt-4 border-t border-[#333]">
-                    <p className="text-xs text-[#666] mb-4">
-                      {strings.subscription.manage.quarterlyDescription}
-                    </p>
+                    {subscriptionInfo.subscriptionExpiresAt ? (
+                      <>
+                        <p className="text-xs text-yellow-400 mb-3">
+                          cancellation successful. remaining: {Math.ceil((new Date(subscriptionInfo.subscriptionExpiresAt) - new Date()) / (1000 * 60 * 60 * 24))} days
+                        </p>
+                        <p className="text-xs text-[#666] mb-4">
+                          your subscription will end on {new Date(subscriptionInfo.subscriptionExpiresAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}. your account will remain as a one-time supporter.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-[#666] mb-4">
+                        {strings.subscription.manage.quarterlyDescription}
+                      </p>
+                    )}
                     <button
                       onClick={handleManageSubscription}
                       disabled={loading}

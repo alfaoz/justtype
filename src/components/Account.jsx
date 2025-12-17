@@ -505,23 +505,60 @@ export function Account({ token, username, email, emailVerified, authProvider, o
             )}
           </div>
           {!loadingStorage && storageInfo && (
-            <div className="flex items-center justify-between">
-              <p>
-                <span className="text-[#666]">current plan:</span> <span className="text-white">
-                  {storageInfo.supporterTier === 'quarterly' && strings.subscription.manage.plans.quarterly}
-                  {storageInfo.supporterTier === 'one_time' && strings.subscription.manage.plans.oneTime}
-                  {!storageInfo.supporterTier && strings.subscription.manage.plans.free}
-                </span>
-              </p>
-              {storageInfo.supporterTier === 'quarterly' && (
-                <button
-                  onClick={() => window.location.href = '/manage-subscription'}
-                  className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
-                >
-                  manage
-                </button>
+            <>
+              <div className="flex items-center justify-between">
+                <p>
+                  <span className="text-[#666]">current plan:</span> <span className="text-white">
+                    {storageInfo.supporterTier === 'quarterly' && strings.subscription.manage.plans.quarterly}
+                    {storageInfo.supporterTier === 'one_time' && strings.subscription.manage.plans.oneTime}
+                    {!storageInfo.supporterTier && strings.subscription.manage.plans.free}
+                  </span>
+                </p>
+                {storageInfo.supporterTier === 'quarterly' && (
+                  <button
+                    onClick={() => window.location.href = '/manage-subscription'}
+                    className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+                  >
+                    manage
+                  </button>
+                )}
+              </div>
+              {storageInfo.supporterTier && (
+                <div className="flex items-center justify-between">
+                  <p>
+                    <span className="text-[#666]">show supporter badge on published slates:</span>
+                  </p>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={storageInfo.supporterBadgeVisible}
+                      onChange={async (e) => {
+                        const newValue = e.target.checked;
+                        try {
+                          const response = await fetch(`${API_URL}/account/update-badge-visibility`, {
+                            method: 'POST',
+                            headers: {
+                              'Authorization': `Bearer ${token}`,
+                              'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ visible: newValue })
+                          });
+                          if (response.ok) {
+                            setStorageInfo({ ...storageInfo, supporterBadgeVisible: newValue });
+                          } else {
+                            console.error('Failed to update badge visibility');
+                          }
+                        } catch (err) {
+                          console.error('Badge visibility update error:', err);
+                        }
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-[#333] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                  </label>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
 
@@ -565,32 +602,34 @@ export function Account({ token, username, email, emailVerified, authProvider, o
         {!loadingStorage && storageInfo && storageInfo.supporterTier === 'quarterly' && (
           <div className="mt-4 pt-4 border-t border-[#333]">
             {storageInfo.subscriptionExpiresAt ? (
-              storageInfo.storageUsedMB > 50 ? (
-                <>
-                  <p className="text-xs text-yellow-400 mb-3">
-                    cancellation successful. remaining: {Math.ceil((new Date(storageInfo.subscriptionExpiresAt) - new Date()) / (1000 * 60 * 60 * 24))} days
-                  </p>
-                  <p className="text-xs text-[#666] mb-3">
-                    you're currently using {storageInfo.storageUsedMB.toFixed(2)} MB. your account will remain as a one-time supporter. export your slates to avoid losing files that exceed this limit.
-                  </p>
-                  <button
-                    onClick={exportSlates}
-                    disabled={exportingSlates}
-                    className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
-                  </button>
-                  {exportMessage && (
-                    <p className={`text-xs mt-2 ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
-                      {exportMessage}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-green-400">
-                  cancellation successful. your account will remain as a one-time supporter.
+              <>
+                <p className="text-xs text-yellow-400 mb-3">
+                  cancellation successful. remaining: {Math.ceil((new Date(storageInfo.subscriptionExpiresAt) - new Date()) / (1000 * 60 * 60 * 24))} days
                 </p>
-              )
+                {storageInfo.storageUsedMB > 50 ? (
+                  <>
+                    <p className="text-xs text-[#666] mb-3">
+                      you're currently using {storageInfo.storageUsedMB.toFixed(2)} MB. your account will remain as a one-time supporter. export your slates to avoid losing files that exceed this limit.
+                    </p>
+                    <button
+                      onClick={exportSlates}
+                      disabled={exportingSlates}
+                      className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
+                    </button>
+                    {exportMessage && (
+                      <p className={`text-xs mt-2 ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
+                        {exportMessage}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-[#666]">
+                    your account will remain as a one-time supporter.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="text-xs text-green-400">
                 thank you for your continued support! you have unlimited storage.
@@ -600,14 +639,53 @@ export function Account({ token, username, email, emailVerified, authProvider, o
         )}
       </div>
 
-      {/* Storage Usage - Only show if > 5MB and not quarterly supporter */}
-      {!loadingStorage && storageInfo && storageInfo.storageUsedMB > 5 && storageInfo.supporterTier !== 'quarterly' && (
+      {/* Grace Period Warning - Shows when user exceeds storage after downgrade */}
+      {!loadingStorage && storageInfo && storageInfo.inGracePeriod && (
+        <div className="mb-8 md:mb-12 bg-red-900/20 border border-red-500/50 rounded p-4 md:p-6">
+          <h2 className="text-base md:text-lg text-red-400 mb-4">⚠️ storage grace period active</h2>
+          <div className="space-y-3 text-sm text-[#d4d4d4]">
+            <p>
+              your storage exceeds your current tier's limit.
+            </p>
+            <p className="text-orange-400 font-medium">
+              you have {storageInfo.gracePeriodDaysRemaining} day{storageInfo.gracePeriodDaysRemaining !== 1 ? 's' : ''} remaining to reduce your storage.
+            </p>
+            <p className="text-xs text-[#a0a0a0]">
+              after the grace period expires, your <strong>latest slates will be automatically deleted</strong> until your storage is below the limit.
+            </p>
+            <div className="pt-3 space-y-2">
+              <p className="text-xs text-[#666] mb-2">recommended actions:</p>
+              <button
+                onClick={exportSlates}
+                disabled={exportingSlates}
+                className="w-full text-sm px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
+              </button>
+              {exportMessage && (
+                <p className={`text-xs ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
+                  {exportMessage}
+                </p>
+              )}
+              <a
+                href="/slates"
+                className="block w-full text-center text-sm px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
+              >
+                manage slates →
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Storage Usage - Only show if >= 80% and not quarterly supporter */}
+      {!loadingStorage && storageInfo && storageInfo.percentage >= 80 && storageInfo.supporterTier !== 'quarterly' && (
         <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
           <h2 className="text-base md:text-lg text-white mb-4">storage</h2>
           <div className="space-y-3">
             <div className="flex justify-between text-sm mb-2">
               <span className="text-[#666]">
-                {storageInfo.storageUsedMB.toFixed(2)} MB of {storageInfo.storageLimitMB} MB used
+                storage usage
               </span>
               <span className={`${
                 storageInfo.percentage >= 100 ? 'text-red-400' :

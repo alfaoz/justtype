@@ -16,6 +16,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishModalUrl, setPublishModalUrl] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [wasPublishedBeforeEdit, setWasPublishedBeforeEdit] = useState(false);
   const [nudgeShown, setNudgeShown] = useState(false);
@@ -30,7 +31,6 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const lastSavedContentRef = useRef('');
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
-  const visitTrackedRef = useRef(false);
 
   // Load current slate
   useEffect(() => {
@@ -55,6 +55,22 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       onZenModeChange(zenMode);
     }
   }, [zenMode, onZenModeChange]);
+
+  // Warn user before leaving with unsaved changes (only on actual page unload, not internal navigation)
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      // Only trigger for actual page navigation (close tab, refresh, external link)
+      // Never trigger for internal React navigation
+      if (hasUnsavedChanges && content.trim()) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges, content]);
 
   // Handle donate query parameter
   useEffect(() => {
@@ -100,80 +116,30 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     checkSubscriptionAndDonate();
   }, []);
 
-  // Track visit and show nudge
+  // Track supporter tier on mount
   useEffect(() => {
-    const trackVisit = async () => {
-      if (visitTrackedRef.current) return;
-      visitTrackedRef.current = true;
+    const fetchSupporterTier = async () => {
+      if (!token) return;
 
       try {
-        if (token) {
-          // Logged in: track in database
-          const response = await fetch(`${API_URL}/user/visit`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
+        const response = await fetch(`${API_URL}/user/visit`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-          if (response.ok) {
-            const data = await response.json();
-
-            // Store supporter tier for later use
-            if (data.supporterTier) {
-              setSupporterTier(data.supporterTier);
-            }
-
-            // Don't show nudge if user is a supporter
-            if (data.supporterTier) return;
-
-            // Show nudge every 3rd visit (3, 6, 9, 12, 15...)
-            if (data.visitCount > 0 && data.visitCount % 3 === 0) {
-              scheduleNudge();
-            }
-          }
-        } else {
-          // Not logged in: track in localStorage
-          const visits = parseInt(localStorage.getItem('justtype_visits') || '0') + 1;
-          localStorage.setItem('justtype_visits', visits.toString());
-
-          // Show nudge every 3rd visit (3, 6, 9, 12, 15...)
-          if (visits > 0 && visits % 3 === 0) {
-            scheduleNudge();
+        if (response.ok) {
+          const data = await response.json();
+          if (data.supporterTier) {
+            setSupporterTier(data.supporterTier);
           }
         }
       } catch (err) {
-        console.error('Visit tracking error:', err);
+        console.error('Failed to fetch supporter tier:', err);
       }
     };
 
-    trackVisit();
+    fetchSupporterTier();
   }, [token]);
-
-  // Schedule nudge after first keystroke
-  const scheduleNudge = () => {
-    // Listen for first keystroke
-    const handleFirstKeystroke = () => {
-      if (keystrokeDetectedRef.current) return;
-      keystrokeDetectedRef.current = true;
-
-      // Show nudge after 10 seconds
-      nudgeTimeoutRef.current = setTimeout(() => {
-        if (!nudgeShown) {
-          setStatus('⤴ enjoying justtype? support us →');
-          setNudgeShown(true);
-
-          // Hide after 20 seconds
-          setTimeout(() => {
-            setStatus('ready');
-          }, 20000);
-        }
-      }, 10000);
-
-      // Remove listener after first keystroke
-      document.removeEventListener('keydown', handleFirstKeystroke);
-    };
-
-    document.addEventListener('keydown', handleFirstKeystroke);
-  };
 
   // Track unsaved changes
   useEffect(() => {
@@ -199,8 +165,16 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     saveTimeoutRef.current = setTimeout(() => {
       if (hasUnsavedChanges && content) {
         if (!token) {
-          // Not logged in - show login modal
-          onLogin();
+          // Not logged in - trigger header nudge instead of modal
+          const wordCount = content.trim().split(/\s+/).length;
+          const charCount = content.length;
+
+          // Trigger nudge if user has written substantial content
+          if ((wordCount >= 50 || charCount >= 250)) {
+            if (window.triggerLoginNudge) {
+              window.triggerLoginNudge();
+            }
+          }
         } else if (currentSlate) {
           // Logged in with existing slate - auto-save
           saveSlate();
@@ -259,19 +233,6 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [content, title, token, currentSlate]);
 
-  // Warn before closing with unsaved changes
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (hasUnsavedChanges && content.trim()) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedChanges, content]);
-
   // Save before navigation (popstate/back/forward)
   useEffect(() => {
     const handlePopstate = async (e) => {
@@ -306,8 +267,9 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setContent(data.content);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
       // If slate was published before (has published_at) but is now unpublished, it's a draft
-      setWasPublishedBeforeEdit(data.published_at && !data.is_published);
-      lastSavedContentRef.current = JSON.stringify({ content: data.content, title: data.title });
+      const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
+      setWasPublishedBeforeEdit(isPreviouslyPublishedDraft);
+      lastSavedContentRef.current = JSON.stringify({ content: data.content });
       setHasUnsavedChanges(false);
       setIsLoading(false);
     } catch (err) {
@@ -412,7 +374,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     hasUnsavedChanges: () => hasUnsavedChanges,
     needsRepublish: () => wasPublishedBeforeEdit,
     getContent: () => content,
-    setContent: (newContent) => setContent(newContent)
+    setContent: (newContent) => setContent(newContent),
+    clearContent: () => {
+      setContent('');
+      setTitle('');
+      setHasUnsavedChanges(false);
+      lastSavedContentRef.current = '';
+    }
   }));
 
   const saveSlate = async () => {
@@ -460,8 +428,27 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         onSlateChange(data);
       }
 
-      lastSavedContentRef.current = JSON.stringify({ content, title });
+      lastSavedContentRef.current = JSON.stringify({ content });
       setHasUnsavedChanges(false);
+
+      // Check if we should show support nudge (slate count is 3, 6, or 9)
+      if (data.slateCount && (data.slateCount === 3 || data.slateCount === 6 || data.slateCount === 9)) {
+        const nudgeKey = `support_nudge_shown_${data.slateCount}`;
+
+        // Only show if we haven't shown this nudge before and user is not a supporter
+        if (!localStorage.getItem(nudgeKey) && !supporterTier) {
+          setTimeout(() => {
+            setStatus(strings.nudges.support);
+            setNudgeShown(true);
+            localStorage.setItem(nudgeKey, 'true');
+
+            // Hide after 20 seconds
+            setTimeout(() => {
+              setStatus('ready');
+            }, 20000);
+          }, 10000); // 10 seconds after save
+        }
+      }
 
       // Handle unpublishing due to edit
       if (data.was_unpublished) {
@@ -489,15 +476,34 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     }
 
     // If no current slate, save first
-    let slateToPublish = currentSlate;
-    if (!slateToPublish) {
+    // If there are unsaved changes, save first (but keep using currentSlate for the ID)
+    if (!currentSlate) {
       setStatus('saving...');
       const savedSlate = await saveSlate();
       if (!savedSlate) {
         // Error status already set by saveSlate
         return;
       }
-      slateToPublish = savedSlate;
+      // savedSlate has the full data including id when creating a new slate
+      // Now currentSlate will be set by onSlateChange, but we can't rely on it yet
+      // We need to wait for the next render, so just return and let user click again
+      // Actually, let's just proceed since onSlateChange was called
+      // But actually the issue is onSlateChange happens in saveSlate at line 469
+      // which updates the parent state, but we're still in this execution context
+      // So currentSlate is still null here. We should not try to publish yet.
+      setStatus('slate saved! click publish again to publish it.');
+      setTimeout(() => setStatus('ready'), 3000);
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      setStatus('saving...');
+      const savedSlate = await saveSlate();
+      if (!savedSlate) {
+        // Error status already set by saveSlate
+        return;
+      }
+      // Keep using currentSlate which has the id
     }
 
     // Detect if this is a first publish or republish
@@ -505,7 +511,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     const isRepublish = wasPublishedBeforeEdit && !shareUrl;
 
     try {
-      const response = await fetch(`${API_URL}/slates/${slateToPublish.id}/publish`, {
+      const response = await fetch(`${API_URL}/slates/${currentSlate.id}/publish`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -664,13 +670,24 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
           {/* Right Controls */}
           <div className="flex gap-6 items-center">
-            <span className={`transition-opacity duration-300 ${
-              status === 'ready' ? 'opacity-0' : 'opacity-100'
-            } ${
-              status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate ? 'text-orange-400' :
-              status === 'saved' ? 'text-green-500' :
-              'text-green-500'
-            }`}>
+            <span
+              className={`transition-opacity duration-300 ${
+                status === 'ready' ? 'opacity-0' : 'opacity-100'
+              } ${
+                status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate ? 'text-orange-400' :
+                status === 'saved' ? 'text-green-500' :
+                'text-green-500'
+              } ${
+                (status.includes('create account') || status.includes('support us')) ? 'cursor-pointer hover:text-white' : ''
+              }`}
+              onClick={() => {
+                if (status.includes('create account')) {
+                  onOpenAuthModal();
+                } else if (status.includes('support us')) {
+                  setShowDonateModal(true);
+                }
+              }}
+            >
               {status}
             </span>
 
@@ -732,7 +749,16 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               <button
                 onMouseEnter={handleSaveMenuEnter}
                 onMouseLeave={handleSaveMenuLeave}
-                onClick={() => token ? saveSlate() : null}
+                onClick={() => {
+                  if (!token) return;
+                  if (!hasUnsavedChanges && currentSlate) {
+                    // Already saved, just show status
+                    setStatus('saved');
+                    setTimeout(() => setStatus('ready'), 2000);
+                    return;
+                  }
+                  saveSlate();
+                }}
                 className="border border-[#333] px-6 py-2 rounded hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 active:scale-95 flex items-center gap-2"
               >
                 <span>{strings.writer.buttons.save}</span>
@@ -811,8 +837,17 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               {/* Save Button */}
               <button
                 onClick={() => {
-                  if (token) saveSlate();
-                  else onLogin();
+                  if (!token) {
+                    onLogin();
+                    return;
+                  }
+                  if (!hasUnsavedChanges && currentSlate) {
+                    // Already saved, just show status
+                    setStatus('saved');
+                    setTimeout(() => setStatus('ready'), 2000);
+                    return;
+                  }
+                  saveSlate();
                   // Keep menu open to show status
                 }}
                 className="p-4 bg-white text-black rounded-lg hover:bg-[#e5e5e5] transition-colors font-medium text-base"
@@ -915,7 +950,16 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               {/* Support Section - Subtle */}
               <div className="pt-4 border-t border-[#333]">
                 <p className="text-xs text-[#666] mb-3">
-                  justtype is free. if you'd like to support development:{' '}
+                  justtype is free to use, but unfortunately it's not free to run. if you'd like to support development and help keep justtype running, as well as increase your storage{' '}
+                  <a
+                    href="/limits"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-white hover:underline transition-colors"
+                  >
+                    limits
+                  </a>
+                  , you can{' '}
                   <button
                     onClick={() => {
                       setShowAboutModal(false);
@@ -925,7 +969,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   >
                     donate once
                   </button>
-                  {' '}or{' '}
+                  {' '}(any amount) or{' '}
                   <button
                     onClick={async () => {
                       if (!token) {
@@ -954,7 +998,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   >
                     subscribe
                   </button>
-                  {' '}(7 eur / 3 months)
+                  {' '}(7 eur / 3 months).
                 </p>
               </div>
 
@@ -974,7 +1018,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       {/* PUBLISH MODAL */}
       {showPublishModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowPublishModal(false)}>
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+          setShowPublishModal(false);
+          setLinkCopied(false);
+        }}>
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
             <p className="text-sm text-[#a0a0a0] mb-4">anyone with this link can view your slate:</p>
@@ -986,14 +1033,24 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 onClick={() => {
                   navigator.clipboard.writeText(publishModalUrl);
                   setStatus(strings.writer.status.linkCopied);
+                  setLinkCopied(true);
                   setTimeout(() => setStatus('ready'), 2000);
+                  setTimeout(() => setLinkCopied(false), 2000);
                 }}
-                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium relative overflow-hidden"
               >
-                copy link
+                <span className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${linkCopied ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'}`}>
+                  copied!
+                </span>
+                <span className={`transition-all duration-300 ${linkCopied ? 'opacity-0 translate-y-full' : 'opacity-100 translate-y-0'}`}>
+                  copy link
+                </span>
               </button>
               <button
-                onClick={() => setShowPublishModal(false)}
+                onClick={() => {
+                  setShowPublishModal(false);
+                  setLinkCopied(false);
+                }}
                 className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
               >
                 okay

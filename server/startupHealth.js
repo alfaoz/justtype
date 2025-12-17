@@ -26,7 +26,7 @@ const healthChecks = async () => {
   // 2. Optional environment variables
   const optional = {
     'RESEND_API_KEY': process.env.RESEND_API_KEY,
-    'ADMIN_PASSWORD': process.env.ADMIN_PASSWORD,
+    'ADMIN_SECRET': process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD,
     'PORT': process.env.PORT,
   };
 

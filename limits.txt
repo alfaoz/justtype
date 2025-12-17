@@ -1,0 +1,28 @@
+storage limits on justtype
+
+WHAT ARE STORAGE LIMITS?
+justtype stores your slates encrypted in the cloud. each account has a storage limit based on your support tier.
+
+CURRENT LIMITS
+free tier: around 70 thousand slates
+supporter (one-time): around 140 thousand slates
+supporter (quarterly): unlimited storage
+
+WHY STORAGE LIMITS?
+cloud storage and encryption aren't free. limits help keep justtype sustainable while remaining free for most users.
+
+HOW TO CHECK YOUR USAGE
+a usage bar will appear in your account page once you've used 80% of your storage. your storage increases each time you save a slate.
+
+WHAT HAPPENS WHEN I HIT MY LIMIT?
+you won't be able to save new slates or update existing ones until you either:
+- delete some slates to free up space
+- support justtype to increase your limit
+
+DOWNGRADING YOUR TIER
+if you cancel your subscription and your storage exceeds the new tier's limit, you'll have a 14-day grace period to download your data and delete slates to get below the limit. after 14 days, your latest slates will be automatically deleted until your storage is below the limit.
+
+HOW TO INCREASE YOUR LIMITS
+support development by making a one-time donation (any amount) to double your storage, or subscribe quarterly (7 eur / 3 months) for unlimited storage.
+
+visit justtype.io to learn more or support the project.

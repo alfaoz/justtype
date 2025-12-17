@@ -14,6 +14,65 @@ export function PublicViewer() {
     }
   }, []);
 
+  // Update meta tags when slate loads
+  useEffect(() => {
+    if (slate) {
+      const maxOgTitleLength = 70;
+
+      const ogTitle = slate.title.length > maxOgTitleLength
+        ? `${slate.title.substring(0, maxOgTitleLength)}...`
+        : slate.title;
+
+      const description = `slate by ${slate.author}`;
+      const pageTitle = description; // Use "slate by [user]" as page title
+      const url = window.location.href;
+
+      // Update page title
+      document.title = pageTitle;
+
+      // Helper to set meta tag
+      const setMetaTag = (property, content, isProperty = false) => {
+        const attribute = isProperty ? 'property' : 'name';
+        let tag = document.querySelector(`meta[${attribute}="${property}"]`);
+        if (!tag) {
+          tag = document.createElement('meta');
+          tag.setAttribute(attribute, property);
+          document.head.appendChild(tag);
+        }
+        tag.setAttribute('content', content);
+      };
+
+      // Basic meta tags
+      setMetaTag('description', description);
+
+      // Open Graph tags
+      setMetaTag('og:title', ogTitle, true);
+      setMetaTag('og:description', description, true);
+      setMetaTag('og:type', 'article', true);
+      setMetaTag('og:url', url, true);
+      setMetaTag('og:site_name', 'just type', true);
+
+      // Twitter Card tags
+      setMetaTag('twitter:card', 'summary');
+      setMetaTag('twitter:title', ogTitle);
+      setMetaTag('twitter:description', description);
+    }
+
+    // Cleanup: reset to default when component unmounts
+    return () => {
+      document.title = 'just type';
+      const metaTags = ['description', 'og:title', 'og:description', 'og:type', 'og:url', 'twitter:card', 'twitter:title', 'twitter:description'];
+      metaTags.forEach(tag => {
+        const isOg = tag.startsWith('og:');
+        const attribute = isOg ? 'property' : 'name';
+        const element = document.querySelector(`meta[${attribute}="${tag}"]`);
+        if (element) {
+          element.remove();
+        }
+      });
+    };
+  }, [slate]);
+
   const loadPublicSlate = async (shareId) => {
     try {
       const response = await fetch(`${API_URL}/public/slates/${shareId}`);
@@ -59,6 +118,7 @@ export function PublicViewer() {
     <div className="min-h-screen bg-[#111111] text-[#a0a0a0] font-mono">
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+        html, body { background-color: #111111; margin: 0; padding: 0; }
         body { font-family: 'JetBrains Mono', monospace; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #111111; }
@@ -77,12 +137,28 @@ export function PublicViewer() {
       <main className="max-w-3xl mx-auto p-8">
         <div className="mb-8">
           <h1 className="text-3xl text-white mb-4">{slate.title}</h1>
-          <div className="text-sm text-[#666] flex gap-4">
-            <span>{strings.public.byAuthor(slate.author)}</span>
+          <div className="text-sm text-[#666] flex gap-2 flex-wrap items-center">
+            <span>
+              {strings.public.byAuthor(slate.author)}
+              {slate.supporter_badge_visible && slate.supporter_tier && (
+                <span className="text-purple-400 font-medium ml-1.5">
+                  [{slate.supporter_tier === 'quarterly' ? 'supporter +' : 'supporter'}]
+                </span>
+              )}
+            </span>
             <span>|</span>
             <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
             <span>|</span>
             <span>{strings.public.stats.words(slate.word_count)}</span>
+            <span>|</span>
+            <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
+            <span>|</span>
+            <a
+              href={`mailto:hi@alfaoz.dev?subject=Report slate: ${encodeURIComponent(slate.title)}&body=Share ID: ${window.location.pathname.split('/s/')[1]}%0A%0AReason for report:%0A`}
+              className="text-[#666] hover:text-white transition-colors"
+            >
+              {strings.public.report}
+            </a>
           </div>
         </div>
 

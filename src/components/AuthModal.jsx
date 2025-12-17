@@ -401,6 +401,13 @@ export function AuthModal({ onClose, onAuth }) {
               type="text"
               name="username"
               required
+              minLength={3}
+              maxLength={20}
+              pattern="[a-z0-9_]+"
+              title="username can only contain lowercase letters (a-z), numbers (0-9), and underscores (_)"
+              onChange={(e) => {
+                e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+              }}
               className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
             />

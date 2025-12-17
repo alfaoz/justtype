@@ -254,22 +254,45 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           }
         } else if (event.type === 'customer.subscription.deleted' || subscription.status === 'canceled') {
           // Subscription is immediately canceled or deleted - downgrade to one_time supporter
-          db.prepare(`
-            UPDATE users
-            SET supporter_tier = 'one_time',
-                storage_limit = 50000000,
-                stripe_subscription_id = NULL,
-                subscription_expires_at = NULL
-            WHERE id = ?
-          `).run(user.id);
-          console.log(`✓ User ${user.id} subscription cancelled, downgraded to one_time supporter`);
+
+          // Check if user exceeds one_time limit and needs grace period
+          const userStorage = db.prepare('SELECT storage_used FROM users WHERE id = ?').get(user.id);
+          const storageUsedBytes = userStorage.storage_used || 0;
+          const oneTimeLimitBytes = 50000000; // 50MB
+          const needsGracePeriod = storageUsedBytes > oneTimeLimitBytes;
+
+          if (needsGracePeriod) {
+            // Set 14-day grace period
+            const gracePeriodExpires = new Date();
+            gracePeriodExpires.setDate(gracePeriodExpires.getDate() + 14);
+
+            db.prepare(`
+              UPDATE users
+              SET supporter_tier = 'one_time',
+                  storage_limit = 50000000,
+                  stripe_subscription_id = NULL,
+                  subscription_expires_at = NULL,
+                  grace_period_expires = ?,
+                  grace_period_target_tier = 'one_time'
+              WHERE id = ?
+            `).run(gracePeriodExpires.toISOString(), user.id);
+            console.log(`✓ User ${user.id} subscription cancelled, downgraded to one_time supporter with 14-day grace period (exceeds limit)`);
+          } else {
+            // No grace period needed, normal downgrade
+            db.prepare(`
+              UPDATE users
+              SET supporter_tier = 'one_time',
+                  storage_limit = 50000000,
+                  stripe_subscription_id = NULL,
+                  subscription_expires_at = NULL
+              WHERE id = ?
+            `).run(user.id);
+            console.log(`✓ User ${user.id} subscription cancelled, downgraded to one_time supporter`);
+          }
 
           // Send cancellation email
           if (user.email) {
-            // Check if user exceeds 50MB to include warning
-            const userStorage = db.prepare('SELECT storage_used FROM users WHERE id = ?').get(user.id);
-            const storageUsedMB = (userStorage.storage_used || 0) / 1024 / 1024;
-            const exceedsLimit = storageUsedMB > 50;
+            const storageUsedMB = storageUsedBytes / 1024 / 1024;
 
             let emailBody = `hey ${user.username},
 
@@ -279,8 +302,14 @@ thank you for your previous support. it really helped keep justtype running.
 
 your account will remain as a one-time supporter with twice the storage of a free tier.`;
 
-            if (exceedsLimit) {
-              emailBody += `\n\nnote: you're currently using more storage than a one-time supporter allows. please export your slates from your account page to avoid losing files.`;
+            if (needsGracePeriod) {
+              emailBody += `\n\nimportant: you're currently using ${storageUsedMB.toFixed(2)} MB, which exceeds the one-time supporter limit of 50 MB.
+
+you have a 14-day grace period to:
+- download your slates from your account page
+- delete slates to get below 50 MB
+
+after 14 days, your latest slates will be automatically deleted until you're below the limit.`;
             }
 
             emailBody += `\n\nif you had any issues or feedback, we'd love to hear from you. just reply to this email.
@@ -355,6 +384,12 @@ app.get('/privacy.txt', (req, res) => {
   const privacyPath = path.join(__dirname, '..', 'privacy.txt');
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.sendFile(privacyPath);
+});
+
+app.get('/limits.txt', (req, res) => {
+  const limitsPath = path.join(__dirname, '..', 'limits.txt');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.sendFile(limitsPath);
 });
 
 // Serve static files from dist directory with cache control
@@ -542,7 +577,7 @@ const requireEncryptionKey = (req, res, next) => {
 
 // Register
 app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req, res) => {
-  const { username, password, email, termsAccepted } = req.body;
+  let { username, password, email, termsAccepted } = req.body;
 
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
@@ -550,6 +585,16 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
 
   if (!termsAccepted) {
     return res.status(400).json({ error: 'You must accept the Terms and Conditions' });
+  }
+
+  // Validate username: only lowercase a-z, 0-9, underscore
+  username = username.toLowerCase().trim();
+  if (!/^[a-z0-9_]+$/.test(username)) {
+    return res.status(400).json({ error: 'Username can only contain lowercase letters (a-z), numbers (0-9), and underscores (_)' });
+  }
+
+  if (username.length < 3 || username.length > 20) {
+    return res.status(400).json({ error: 'Username must be between 3 and 20 characters' });
   }
 
   if (password.length < 6) {
@@ -614,11 +659,14 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
 
 // Login
 app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res) => {
-  const { username, password } = req.body;
+  let { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password required' });
   }
+
+  // Normalize username to lowercase
+  username = username.toLowerCase().trim();
 
   try {
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
@@ -1073,13 +1121,17 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     // Update user's total storage usage
     updateUserStorage(req.user.id);
 
+    // Get updated slate count
+    const updatedSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
+
     res.status(201).json({
       id: result.lastInsertRowid,
       title,
       word_count: wordCount,
       char_count: charCount,
       is_published: 0,
-      share_id: null
+      share_id: null,
+      slateCount: updatedSlateCount.count
     });
   } catch (error) {
     console.error('Create slate error:', error);
@@ -1169,11 +1221,15 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
     // Update user's total storage usage
     updateUserStorage(req.user.id);
 
+    // Get current slate count
+    const currentSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
+
     res.json({
       success: true,
       word_count: wordCount,
       char_count: charCount,
-      was_unpublished: wasUnpublished
+      was_unpublished: wasUnpublished,
+      slateCount: currentSlateCount.count
     });
   } catch (error) {
     console.error('Update slate error:', error);
@@ -1291,10 +1347,10 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
 // ============ PUBLIC ROUTES ============
 
 // Get published slate (no auth required)
-app.get('/api/public/slates/:shareId', async (req, res) => {
+app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlate'), async (req, res) => {
   try {
     const slate = db.prepare(`
-      SELECT slates.*, users.username
+      SELECT slates.*, users.username, users.supporter_tier, users.supporter_badge_visible
       FROM slates
       JOIN users ON slates.user_id = users.id
       WHERE slates.share_id = ? AND slates.is_published = 1
@@ -1312,6 +1368,11 @@ app.get('/api/public/slates/:shareId', async (req, res) => {
       return res.status(304).end(); // Not Modified - no B2 download needed!
     }
 
+    // Increment view count (only for non-cached requests)
+    db.prepare(`
+      UPDATE slates SET view_count = view_count + 1 WHERE id = ?
+    `).run(slate.id);
+
     // Set cache headers BEFORE fetching from B2
     res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600'); // 5min browser, 10min nginx
     res.setHeader('ETag', etag);
@@ -1327,8 +1388,11 @@ app.get('/api/public/slates/:shareId', async (req, res) => {
       title: slate.title,
       content,
       author: slate.username,
+      supporter_tier: slate.supporter_tier,
+      supporter_badge_visible: slate.supporter_badge_visible === 1,
       word_count: slate.word_count,
       char_count: slate.char_count,
+      view_count: slate.view_count + 1, // Return updated count
       created_at: slate.created_at,
       updated_at: slate.updated_at
     });
@@ -1354,18 +1418,19 @@ app.get('/api/health', (req, res) => {
 // Admin authentication (rate-limited)
 app.post('/api/admin/auth', async (req, res) => {
   const { password } = req.body;
-  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminSecret = process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD;
 
-  if (!adminPassword) {
+  if (!adminSecret) {
     return res.status(503).json({ error: 'Admin access not configured' });
   }
 
-  // Use bcrypt comparison for security
-  const isValid = await bcrypt.compare(password, adminPassword);
+  // Direct string comparison for simplicity and reliability
+  // (ADMIN_SECRET should be a long random string in .env)
+  const isValid = password === adminSecret;
 
   if (isValid) {
-    // Shorter token expiry (1 hour instead of 24)
-    const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '1h' });
+    // No expiry - token lasts forever
+    const adminToken = jwt.sign({ admin: true }, JWT_SECRET);
 
     // Log admin login
     logAdminAction('admin_login', null, null, 'Admin logged in', req.adminIp || req.ip);
@@ -2074,7 +2139,7 @@ app.get('/api/account/sessions', authenticateToken, async (req, res) => {
 // Get user storage info
 app.get('/api/account/storage', authenticateToken, async (req, res) => {
   try {
-    const user = db.prepare('SELECT storage_used, storage_limit, supporter_tier, subscription_expires_at FROM users WHERE id = ?').get(req.user.id);
+    const user = db.prepare('SELECT storage_used, storage_limit, supporter_tier, subscription_expires_at, supporter_badge_visible, grace_period_expires, grace_period_target_tier FROM users WHERE id = ?').get(req.user.id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -2084,16 +2149,45 @@ app.get('/api/account/storage', authenticateToken, async (req, res) => {
     const storageLimitMB = (user.storage_limit || 25000000) / 1024 / 1024;
     const percentage = (storageUsedMB / storageLimitMB) * 100;
 
+    // Check if in grace period
+    const inGracePeriod = user.grace_period_expires && new Date(user.grace_period_expires) > new Date();
+    const gracePeriodDaysRemaining = inGracePeriod
+      ? Math.ceil((new Date(user.grace_period_expires) - new Date()) / (1000 * 60 * 60 * 24))
+      : 0;
+
     res.json({
       storageUsedMB,
       storageLimitMB,
       percentage,
       supporterTier: user.supporter_tier,
-      subscriptionExpiresAt: user.subscription_expires_at
+      subscriptionExpiresAt: user.subscription_expires_at,
+      supporterBadgeVisible: user.supporter_badge_visible === 1,
+      gracePeriodExpires: user.grace_period_expires,
+      gracePeriodTargetTier: user.grace_period_target_tier,
+      inGracePeriod,
+      gracePeriodDaysRemaining
     });
   } catch (error) {
     console.error('Get storage error:', error);
     res.status(500).json({ error: 'Failed to get storage info' });
+  }
+});
+
+// Update supporter badge visibility
+app.post('/api/account/update-badge-visibility', authenticateToken, async (req, res) => {
+  try {
+    const { visible } = req.body;
+
+    if (typeof visible !== 'boolean') {
+      return res.status(400).json({ error: 'Invalid visibility value' });
+    }
+
+    db.prepare('UPDATE users SET supporter_badge_visible = ? WHERE id = ?').run(visible ? 1 : 0, req.user.id);
+
+    res.json({ message: 'Badge visibility updated successfully', visible });
+  } catch (error) {
+    console.error('Update badge visibility error:', error);
+    res.status(500).json({ error: 'Failed to update badge visibility' });
   }
 });
 
@@ -2110,8 +2204,12 @@ app.post('/api/user/visit', authenticateToken, async (req, res) => {
     const newVisitCount = (user.visit_count || 0) + 1;
     db.prepare('UPDATE users SET visit_count = ? WHERE id = ?').run(newVisitCount, req.user.id);
 
+    // Get slate count
+    const slateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
+
     res.json({
       visitCount: newVisitCount,
+      slateCount: slateCount.count,
       supporterTier: user.supporter_tier
     });
   } catch (error) {
@@ -2585,6 +2683,86 @@ app.post('/api/account/unlink-google', authenticateToken, async (req, res) => {
   }
 });
 
+// Server-side rendering for published slates (for proper OpenGraph meta tags)
+app.get('/s/:shareId', async (req, res) => {
+  try {
+    // Fetch slate data
+    const slate = db.prepare(`
+      SELECT slates.*, users.username
+      FROM slates
+      JOIN users ON slates.user_id = users.id
+      WHERE slates.share_id = ? AND slates.is_published = 1
+    `).get(req.params.shareId);
+
+    // If slate not found, serve regular index.html (React will show error)
+    if (!slate) {
+      return res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    }
+
+    // HTML escape helper
+    const escapeHtml = (text) => {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
+    // Prepare meta tag values
+    const maxOgTitleLength = 70;
+    const ogTitle = slate.title.length > maxOgTitleLength
+      ? `${slate.title.substring(0, maxOgTitleLength)}...`
+      : slate.title;
+    const description = `slate by ${slate.username}`;
+    const pageTitle = description; // Use "slate by [user]" as page title
+    const url = `${process.env.PUBLIC_URL}/s/${slate.share_id}`;
+
+    // Escape all values for HTML
+    const escapedPageTitle = escapeHtml(pageTitle);
+    const escapedOgTitle = escapeHtml(ogTitle);
+    const escapedDescription = escapeHtml(description);
+
+    // Read the built index.html
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+    const fs = require('fs');
+    let html = fs.readFileSync(indexPath, 'utf8');
+
+    // Inject meta tags (replace the default ones)
+    html = html.replace(
+      '<title>just type</title>',
+      `<title>${escapedPageTitle}</title>`
+    );
+    html = html.replace(
+      '<meta name="description" content="need to jot something down real quick? just start typing." />',
+      `<meta name="description" content="${escapedDescription}" />`
+    );
+
+    // Add OpenGraph and Twitter meta tags after the description tag
+    const additionalMetaTags = `
+    <meta property="og:title" content="${escapedOgTitle}" />
+    <meta property="og:description" content="${escapedDescription}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="${url}" />
+    <meta property="og:site_name" content="just type" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="${escapedOgTitle}" />
+    <meta name="twitter:description" content="${escapedDescription}" />`;
+
+    html = html.replace(
+      '</head>',
+      `${additionalMetaTags}\n  </head>`
+    );
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (error) {
+    console.error('Error rendering slate page:', error);
+    // Fallback to regular index.html
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
+});
+
 // Serve index.html for all non-API routes (SPA routing)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
@@ -2592,7 +2770,7 @@ app.get('*', (req, res) => {
 
 // ============ PERIODIC CLEANUP ============
 
-const runCleanup = () => {
+const runCleanup = async () => {
   try {
     // Clean up expired verification codes
     const expiredCodes = db.prepare('UPDATE users SET verification_token = NULL, verification_code_expires = NULL WHERE verification_code_expires < datetime(\'now\')').run();
@@ -2602,6 +2780,77 @@ const runCleanup = () => {
 
     if (expiredCodes.changes > 0 || oldSessions.changes > 0) {
       console.log(`✓ Cleanup: Removed ${expiredCodes.changes} expired codes and ${oldSessions.changes} old sessions`);
+    }
+
+    // Handle expired grace periods - delete latest slates until storage is below limit
+    const usersWithExpiredGrace = db.prepare(`
+      SELECT id, username, storage_used, storage_limit, grace_period_target_tier
+      FROM users
+      WHERE grace_period_expires IS NOT NULL
+      AND datetime(grace_period_expires) < datetime('now')
+    `).all();
+
+    for (const user of usersWithExpiredGrace) {
+      if (user.storage_used > user.storage_limit) {
+        console.log(`⚠️  Grace period expired for user ${user.username} (${user.id}). Deleting latest slates...`);
+
+        let currentStorage = user.storage_used;
+        let deletedCount = 0;
+
+        // Get user's slates ordered by created_at DESC (latest first)
+        const userSlates = db.prepare(`
+          SELECT id, title, size_bytes, b2_file_id, b2_public_file_id, is_published
+          FROM slates
+          WHERE user_id = ?
+          ORDER BY created_at DESC
+        `).all(user.id);
+
+        // Delete latest slates until below limit
+        for (const slate of userSlates) {
+          if (currentStorage <= user.storage_limit) {
+            break; // Storage is now below limit
+          }
+
+          try {
+            // Delete from B2
+            if (slate.b2_file_id) {
+              await b2Storage.deleteSlate(slate.b2_file_id);
+            }
+            if (slate.b2_public_file_id && slate.is_published === 1) {
+              await b2Storage.deleteSlate(slate.b2_public_file_id);
+            }
+
+            // Delete from database
+            db.prepare('DELETE FROM slates WHERE id = ?').run(slate.id);
+
+            currentStorage -= slate.size_bytes;
+            deletedCount++;
+            console.log(`  Deleted slate "${slate.title}" (${slate.size_bytes} bytes)`);
+          } catch (err) {
+            console.error(`  Failed to delete slate ${slate.id}:`, err);
+          }
+        }
+
+        // Update user's storage and clear grace period
+        db.prepare(`
+          UPDATE users
+          SET storage_used = ?,
+              grace_period_expires = NULL,
+              grace_period_target_tier = NULL
+          WHERE id = ?
+        `).run(currentStorage, user.id);
+
+        console.log(`✓ User ${user.username}: Deleted ${deletedCount} slates, storage now ${(currentStorage / 1024 / 1024).toFixed(2)} MB`);
+      } else {
+        // User is already below limit, just clear grace period
+        db.prepare(`
+          UPDATE users
+          SET grace_period_expires = NULL,
+              grace_period_target_tier = NULL
+          WHERE id = ?
+        `).run(user.id);
+        console.log(`✓ User ${user.username}: Already below limit, grace period cleared`);
+      }
     }
   } catch (err) {
     console.error('Cleanup job failed:', err);

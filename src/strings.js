@@ -413,6 +413,36 @@ const strings = {
       words: (count) => `${count} words`,
       chars: (count) => `${count} chars`,
       updated: (date) => `updated: ${date}`
+    },
+    report: 'report'
+  },
+
+  // 404 not found
+  notFound: {
+    messages: [
+      (path) => `i think ${path} doesn't exist`,
+      (path) => `typo much? or is ${path} an imaginary place?`,
+      (path) => `it'd be funny if ${path} existed, right?`,
+      (path) => `what do you mean ${path}? does that even exist?`,
+      (path) => `four o four. i don't exist. -${path}`,
+      (path) => `${path}? whats that?? is that edible???`
+    ],
+    button: 'back to writing'
+  },
+
+  // nudges
+  nudges: {
+    loginHeader: 'save your work →',
+    support: 'enjoy justtype? support development →'
+  },
+
+  // modals
+  modals: {
+    unsavedChanges: {
+      title: 'unsaved changes',
+      message: 'you have unsaved changes. create a new slate anyway?',
+      discard: 'discard & create new',
+      cancel: 'cancel'
     }
   },
 

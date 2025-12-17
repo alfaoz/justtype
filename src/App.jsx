@@ -7,11 +7,12 @@ import { AdminConsole } from './components/AdminConsole';
 import { Account } from './components/Account';
 import { ManageSubscription } from './components/ManageSubscription';
 import { TextViewer } from './components/TextViewer';
+import { NotFound } from './components/NotFound';
 import { API_URL } from './config';
 import { strings } from './strings';
 
 export default function App() {
-  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'terms' | 'privacy'
+  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'terms' | 'privacy' | 'limits' | 'notfound'
   const [token, setToken] = useState(localStorage.getItem('justtype-token'));
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
@@ -26,9 +27,26 @@ export default function App() {
   const [authProvider, setAuthProvider] = useState(localStorage.getItem('justtype-auth-provider') || 'local');
   const [currentSlate, setCurrentSlate] = useState(null);
   const [zenMode, setZenMode] = useState(false);
+  const [showLoginNudge, setShowLoginNudge] = useState(false);
+  const [loginNudgeDismissed, setLoginNudgeDismissed] = useState(false);
   const writerRef = useRef(null);
   const lastSlateRef = useRef(null); // Track last working slate when switching views
   const blankSlateContentRef = useRef(''); // Preserve blank slate content when navigating
+
+  // Setup global login nudge trigger for Writer component
+  useEffect(() => {
+    const triggerNudge = () => {
+      if (!showLoginNudge && !loginNudgeDismissed && !token) {
+        setShowLoginNudge(true);
+      }
+    };
+
+    window.triggerLoginNudge = triggerNudge;
+
+    return () => {
+      delete window.triggerLoginNudge;
+    };
+  }, [token, showLoginNudge, loginNudgeDismissed]);
 
   // Fetch current user data on mount to ensure email_verified is up to date
   useEffect(() => {
@@ -81,6 +99,8 @@ export default function App() {
         setView('terms');
       } else if (path === '/privacy') {
         setView('privacy');
+      } else if (path === '/limits') {
+        setView('limits');
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
@@ -96,6 +116,9 @@ export default function App() {
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
+      } else {
+        // Unknown route - show 404
+        setView('notfound');
       }
     };
 
@@ -131,8 +154,6 @@ export default function App() {
 
     // Handle payment success/cancelled
     if (payment === 'success') {
-      console.log('Payment success detected!');
-      console.log('Current URL:', window.location.href);
       setShowPaymentSuccessModal(true);
 
       // Clean URL first
@@ -140,11 +161,8 @@ export default function App() {
 
       // In test mode, trigger upgrade via test endpoint
       const tier = localStorage.getItem('justtype-pending-tier');
-      console.log('Pending tier from localStorage:', tier);
-      console.log('Token exists:', !!token);
 
       if (tier && token) {
-        console.log('Calling test upgrade endpoint...');
         fetch(`${API_URL}/stripe/test-upgrade`, {
           method: 'POST',
           headers: {
@@ -153,28 +171,20 @@ export default function App() {
           },
           body: JSON.stringify({ tier })
         }).then(response => {
-          console.log('Test upgrade response:', response.status);
           return response.json();
         }).then(data => {
-          console.log('Test upgrade data:', data);
           localStorage.removeItem('justtype-pending-tier');
           // Refresh user data to get updated storage info
           fetchUserData();
         }).catch(err => console.error('Test upgrade failed:', err));
-      } else {
-        console.log('Skipping test upgrade - tier or token missing');
-        if (!tier) console.log('No tier in localStorage');
-        if (!token) console.log('No token available');
       }
     } else if (payment === 'cancelled') {
-      console.log('Payment cancelled');
       // Just clean URL, no modal needed
       localStorage.removeItem('justtype-pending-tier');
       window.history.replaceState({}, '', '/');
     }
 
     if (googleAuth === 'success' && tokenFromOAuth) {
-      console.log('Google OAuth success, setting user data...');
       setToken(tokenFromOAuth);
       setUsername(usernameFromOAuth);
       setEmail(emailFromOAuth);
@@ -259,11 +269,24 @@ export default function App() {
       return;
     }
 
-    // Save current slate if it has unsaved changes
+    // Check if there's content - if yes, simulate reload to trigger beforeunload
     if (writerRef.current) {
-      await writerRef.current.saveBeforeNavigate();
+      const content = writerRef.current.getContent();
+      if (content && content.trim()) {
+        window.location.reload();
+        return;
+      }
     }
+
+    // No content - clear normally
+    if (writerRef.current && writerRef.current.clearContent) {
+      writerRef.current.clearContent();
+    }
+
+    // Create new slate and reset nudge states
     setCurrentSlate(null);
+    setShowLoginNudge(false);
+    setLoginNudgeDismissed(false);
     setView('writer');
     window.history.pushState({}, '', '/');
   };
@@ -369,6 +392,11 @@ export default function App() {
     return <AdminConsole />;
   }
 
+  // 404 Not Found
+  if (view === 'notfound') {
+    return <NotFound />;
+  }
+
   return (
     <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
 
@@ -389,12 +417,19 @@ export default function App() {
         ::-webkit-scrollbar-track { background: #111111; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #555; }
+        @keyframes fade-in {
+          from { opacity: 0; transform: translateX(-10px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        .animate-fade-in {
+          animation: fade-in 0.5s ease-out;
+        }
       `}</style>
 
       {/* HEADER */}
       <header className={`p-4 md:p-8 flex justify-between items-center border-b border-[#222] transition-opacity duration-500 ${zenMode ? 'opacity-0 pointer-events-none h-0 overflow-hidden' : 'opacity-100'}`}>
         <div className="flex items-center select-none">
-          <button onClick={handleNewSlate} className="text-lg md:text-xl font-medium text-[#808080] hover:text-white transition-colors">
+          <button type="button" onClick={handleNewSlate} className="text-lg md:text-xl font-medium text-[#808080] hover:text-white transition-colors">
             {strings.app.logo}
           </button>
         </div>
@@ -433,12 +468,29 @@ export default function App() {
               </button>
             </>
           ) : (
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="hover:text-white transition-colors duration-200"
-            >
-              {strings.app.tabs.login}
-            </button>
+            <div className="flex items-center gap-3 md:gap-4">
+              {showLoginNudge && (
+                <span className="text-xs md:text-sm text-[#666] animate-fade-in flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setShowLoginNudge(false);
+                      setLoginNudgeDismissed(true);
+                    }}
+                    className="text-[#444] hover:text-[#666] transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    ✕
+                  </button>
+                  {strings.nudges.loginHeader}
+                </span>
+              )}
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="hover:text-white transition-colors duration-200"
+              >
+                {strings.app.tabs.login}
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -493,6 +545,9 @@ export default function App() {
         )}
         {view === 'privacy' && (
           <TextViewer file="privacy.txt" title="privacy policy" />
+        )}
+        {view === 'limits' && (
+          <TextViewer file="limits.txt" title="storage limits" />
         )}
       </main>
 

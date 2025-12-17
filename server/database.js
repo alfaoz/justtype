@@ -257,6 +257,28 @@ try {
     db.exec(`ALTER TABLE users ADD COLUMN terms_accepted_at DATETIME;`);
     console.log('✓ Database migrated: Added terms_accepted_at column');
   }
+
+  // Add grace period columns for storage downgrade management
+  const hasGracePeriodExpires = userColumns.some(col => col.name === 'grace_period_expires');
+  const hasGracePeriodTargetTier = userColumns.some(col => col.name === 'grace_period_target_tier');
+
+  if (!hasGracePeriodExpires) {
+    db.exec(`ALTER TABLE users ADD COLUMN grace_period_expires DATETIME;`);
+    console.log('✓ Database migrated: Added grace_period_expires column');
+  }
+
+  if (!hasGracePeriodTargetTier) {
+    db.exec(`ALTER TABLE users ADD COLUMN grace_period_target_tier TEXT;`); // 'free' or 'one_time'
+    console.log('✓ Database migrated: Added grace_period_target_tier column');
+  }
+
+  // Add view_count column to slates if it doesn't exist
+  const hasViewCount = slateColumnsCheck.some(col => col.name === 'view_count');
+
+  if (!hasViewCount) {
+    db.exec(`ALTER TABLE slates ADD COLUMN view_count INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added view_count column to slates');
+  }
 } catch (err) {
   console.error('Database migration error:', err);
 }
