@@ -6,6 +6,9 @@ export function PublicViewer() {
   const [slate, setSlate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
+  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const shareId = window.location.pathname.split('/s/')[1];
@@ -72,6 +75,56 @@ export function PublicViewer() {
       });
     };
   }, [slate]);
+
+  // Apply theme to body
+  useEffect(() => {
+    if (theme === 'light') {
+      document.body.classList.add('light-mode');
+    } else {
+      document.body.classList.remove('light-mode');
+    }
+    localStorage.setItem('justtype-theme', theme);
+
+    // Cleanup on unmount
+    return () => {
+      document.body.classList.remove('light-mode');
+    };
+  }, [theme]);
+
+  // Save punto to localStorage
+  useEffect(() => {
+    localStorage.setItem('justtype-punto', punto);
+  }, [punto]);
+
+  const toggleTheme = () => {
+    setTheme(theme === 'dark' ? 'light' : 'dark');
+  };
+
+  const cyclePunto = () => {
+    const sizes = ['small', 'base', 'large'];
+    const currentIndex = sizes.indexOf(punto);
+    const nextIndex = (currentIndex + 1) % sizes.length;
+    setPunto(sizes[nextIndex]);
+  };
+
+  const getPuntoLabel = () => {
+    switch (punto) {
+      case 'small': return 'Aa−';
+      case 'large': return 'Aa+';
+      default: return 'Aa';
+    }
+  };
+
+  const copyContent = async () => {
+    if (!slate?.content) return;
+    try {
+      await navigator.clipboard.writeText(slate.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   const loadPublicSlate = async (shareId) => {
     try {
@@ -162,7 +215,7 @@ export function PublicViewer() {
           </div>
         </div>
 
-        <div className="text-lg leading-relaxed text-[#d4d4d4] whitespace-pre-wrap">
+        <div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>
           {slate.content}
         </div>
       </main>
@@ -173,6 +226,30 @@ export function PublicViewer() {
           created with <a href="/" className="hover:text-white transition-colors">just type</a>
         </div>
       </footer>
+
+      {/* FIXED SETTINGS CONTROLS - bottom left */}
+      <div className="fixed bottom-6 left-6 md:bottom-8 md:left-8 text-sm flex items-center gap-3 z-50">
+        <button
+          onClick={toggleTheme}
+          className="opacity-50 hover:opacity-100 transition-opacity"
+        >
+          {theme}
+        </button>
+        <span className="opacity-30">·</span>
+        <button
+          onClick={cyclePunto}
+          className="opacity-50 hover:opacity-100 transition-opacity"
+        >
+          {getPuntoLabel()}
+        </button>
+        <span className="opacity-30">·</span>
+        <button
+          onClick={copyContent}
+          className="opacity-50 hover:opacity-100 transition-opacity"
+        >
+          {copied ? strings.public.copied : strings.public.copy}
+        </button>
+      </div>
     </div>
   );
 }

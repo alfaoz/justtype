@@ -19,7 +19,7 @@ export function ManageSubscription({ token, onBack }) {
     setError('');
     try {
       const response = await fetch(`${API_URL}/account/storage`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
       const data = await response.json();
       if (response.ok) {
@@ -42,10 +42,8 @@ export function ManageSubscription({ token, onBack }) {
     try {
       const response = await fetch(`${API_URL}/stripe/create-portal-session`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
 
       const data = await response.json();

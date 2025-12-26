@@ -1,0 +1,91 @@
+the justtype project
+
+WHAT IS JUSTTYPE?
+justtype is a minimalist writing app that puts your privacy first. write, save, and share your work—all while keeping your content encrypted and under your control.
+
+THE ORIGIN STORY
+hi, i'm alfa. justtype exists because i got tired of compromising.
+
+it started with blankslate.io. simple, clean, perfect for writing. i used it for years. then it fell apart—undermaintained, increasingly unreliable, closed source (it used to be open), and hopelessly outdated. the developer stopped caring. my writing was stuck in a tool that was slowly dying.
+
+so i looked for alternatives. i tried everything:
+
+google docs reads everything you write, training AI on your content. notion made me spend more time organizing than writing—feature bloat disguised as productivity. apple notes locked me into their ecosystem and can read everything (basically google docs with better fonts). lunette was beautiful but limited, still someone else's closed box. i even tried git + vim with synced text files—the paranoid option. syncing was a nightmare. no mobile. lost an hour of writing once to a merge conflict.
+
+every option was a trade-off: privacy OR convenience. features OR simplicity. open source OR reliable.
+
+i wanted something that didn't make me choose. something that gets out of the way like blankslate used to, actually encrypts your content (not just "encrypted in transit" marketing speak), stays open source so you can verify it, works reliably without depending on one person's spare time, and lets you write anywhere without friction.
+
+nothing existed. so i built justtype.
+
+WHAT MAKES JUSTTYPE DIFFERENT?
+
+END-TO-END ENCRYPTION WITH YOUR PASSWORD
+your password isn't just for login—it's your encryption key. here's how it works:
+
+your password → pbkdf2 (100k iterations) → encryption key
+your slates → aes-256-gcm → encrypted storage
+
+the server never sees your plaintext content. ever. your encryption key never leaves your browser. if you forget your password, we can't recover your slates—because we genuinely can't decrypt them. this isn't marketing. it's cryptography. you can inspect the implementation in server/index.js, lines 23-64.
+
+OPEN SOURCE & TRANSPARENT
+every line of code is public on github. you can inspect the encryption, verify we're doing what we say, run your own instance, or contribute improvements. we're not asking you to trust us. we're giving you the ability to verify.
+
+PRIVACY BY DESIGN
+private slates are encrypted at rest—only you can decrypt them. published slates are stored unencrypted for public sharing (you choose when to publish). no tracking scripts. no analytics following you around. no selling your data. no training AI models on your writing.
+
+SIMPLICITY & FOCUS
+no formatting toolbar. no distraction-free mode toggle (it's always distraction-free). no "organize your thoughts" features that interrupt your thinking. just a text box, auto-save, and the ability to share when you're ready.
+
+SELF-HOSTING SUPPORTED
+want to run your own instance? go ahead. the code is yours to use (MIT license). we don't optimize for self-hosting, but we don't prevent it either. requires node 20+, backblaze b2 storage, resend for emails. instructions in the README.
+
+LEARNING FROM BLANKSLATE
+blankslate taught me what happens when a project depends on one person. it becomes undermaintained when life gets busy. users lose trust when reliability drops. closed source means no one can fix it or fork it. simplicity gets lost in attempts to monetize.
+
+justtype is designed differently. open source from day one (MIT license). documented architecture so others can contribute. sustainable funding model that doesn't require compromising the product. public roadmap and transparent development.
+
+i loved what blankslate was. justtype is what it should have stayed.
+
+HOW WE STAY SUSTAINABLE
+open source doesn't mean free to run. storage and bandwidth cost money. we support justtype through optional storage upgrades for heavy users and donations from supporters who value privacy. most users never need to pay—the free tier is generous (around 70,000 slates). limits exist to keep the project sustainable, not to extract money.
+
+OUR PRINCIPLES
+privacy is not negotiable. your writing is yours. we can't read it, we won't sell it, we don't want access to it.
+
+simplicity over features. every feature added is a feature you have to ignore. we say no to most requests.
+
+open source over trust. you shouldn't have to trust us. inspect the code. run it yourself. verify our claims.
+
+writing first, everything else second. justtype is for writing. if a feature doesn't directly serve that goal, it doesn't belong here.
+
+WHO JUSTTYPE IS FOR
+writers who value privacy over features. people tired of bloated writing apps (i was you). anyone who loved blankslate.io and wants something reliable. developers who want to verify the encryption (please do). users who appreciate focused, minimal tools. anyone who's tried notion and thought "i just want to write."
+
+who it's not for: people who need rich formatting, collaboration features, or ai writing assistants. there are plenty of apps for that. justtype is deliberately not one of them.
+
+THE TECHNICAL REALITY
+zero-knowledge encryption means trade-offs. forgot your password? your slates are gone forever. server breach? attackers get encrypted blobs they can't read. we can't recover your account or reset your password. you're responsible for your security.
+
+this is by design. inconvenient? sometimes. secure? absolutely.
+
+CONTRIBUTING TO JUSTTYPE
+found a bug? want to improve the UX? pull requests welcome. we're particularly interested in security improvements, performance optimizations, accessibility enhancements, and thoughtful UX refinements.
+
+not interested in feature bloat, tracking or analytics, breaking the encryption model, or "growth hacks." see CONTRIBUTING.md for guidelines.
+
+THE BOTTOM LINE
+i built justtype because i needed it. a writing app that respects privacy, stays simple, and doesn't die when one person gets busy.
+
+your privacy isn't a premium feature—it's the foundation. the code is open for inspection. the design is intentionally minimal. you can verify every claim i'm making.
+
+if you loved blankslate, you'll feel at home here. if you're tired of notion's complexity or google's surveillance, this is the alternative. if you just want to write without compromise, welcome.
+
+if you need rich text formatting or collaboration or ai features, this isn't your tool. and that's okay—there are plenty of apps for that. justtype does one thing and does it well.
+
+- alfa
+
+start typing at justtype.io
+inspect the code at github.com/alfaoz/justtype
+questions or security issues: security@justtype.io
+reach out: alfa.ozaltin@gmail.com

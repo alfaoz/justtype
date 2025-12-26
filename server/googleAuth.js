@@ -39,7 +39,7 @@ passport.use(new GoogleStrategy({
       db.prepare('UPDATE users SET google_id = ?, auth_provider = ?, email_verified = 1 WHERE id = ?')
         .run(googleId, user.auth_provider === 'local' ? 'both' : 'google', user.id);
 
-      console.log(`Linked Google account to existing user: ${email}`);
+      console.log(`Linked Google account to existing user #${user.id}`);
 
       // Fetch updated user
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
@@ -89,7 +89,7 @@ passport.use(new GoogleStrategy({
       encrypted_key: storedEncryptedKey
     };
 
-    console.log(`Created new Google user: ${email}`);
+    console.log(`Created new Google user #${result.lastInsertRowid}`);
     return done(null, user);
 
   } catch (error) {

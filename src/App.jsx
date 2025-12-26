@@ -6,14 +6,15 @@ import { AuthModal } from './components/AuthModal';
 import { AdminConsole } from './components/AdminConsole';
 import { Account } from './components/Account';
 import { ManageSubscription } from './components/ManageSubscription';
-import { TextViewer } from './components/TextViewer';
 import { NotFound } from './components/NotFound';
 import { API_URL } from './config';
 import { strings } from './strings';
 
 export default function App() {
-  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'terms' | 'privacy' | 'limits' | 'notfound'
-  const [token, setToken] = useState(localStorage.getItem('justtype-token'));
+  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'notfound'
+  // Token state is now just a marker - actual auth is via HttpOnly cookie
+  // We check if user might be logged in based on stored username
+  const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
@@ -48,18 +49,19 @@ export default function App() {
     };
   }, [token, showLoginNudge, loginNudgeDismissed]);
 
-  // Fetch current user data on mount to ensure email_verified is up to date
+  // Fetch current user data on mount to verify session and update user info
   useEffect(() => {
     const fetchUserData = async () => {
       if (!token) return;
 
       try {
         const response = await fetch(`${API_URL}/auth/me`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include' // Use HttpOnly cookie for auth
         });
 
         if (response.ok) {
           const userData = await response.json();
+          setToken('authenticated'); // Confirm we're authenticated
           setUsername(userData.username);
           setEmail(userData.email);
           setEmailVerified(userData.email_verified);
@@ -69,15 +71,15 @@ export default function App() {
           localStorage.setItem('justtype-email', userData.email);
           localStorage.setItem('justtype-email-verified', userData.email_verified);
         } else if (response.status === 401 || response.status === 403) {
-          // Token is invalid, clear everything
+          // Session is invalid, clear everything
           setToken(null);
           setUsername(null);
           setEmail(null);
           setEmailVerified(false);
-          localStorage.removeItem('justtype-token');
           localStorage.removeItem('justtype-username');
           localStorage.removeItem('justtype-email');
           localStorage.removeItem('justtype-email-verified');
+          localStorage.removeItem('justtype-auth-provider');
         }
       } catch (err) {
         console.error('Failed to fetch user data:', err);
@@ -85,7 +87,7 @@ export default function App() {
     };
 
     fetchUserData();
-  }, [token]);
+  }, []);
 
   // Check if viewing public slate or admin console or specific slate
   useEffect(() => {
@@ -96,11 +98,21 @@ export default function App() {
       } else if (path.startsWith('/holyfuckwhereami')) {
         setView('admin');
       } else if (path === '/terms') {
-        setView('terms');
+        // Redirect to published system slate
+        window.location.href = '/s/terms';
+        return;
       } else if (path === '/privacy') {
-        setView('privacy');
+        // Redirect to published system slate
+        window.location.href = '/s/privacy';
+        return;
       } else if (path === '/limits') {
-        setView('limits');
+        // Redirect to published system slate
+        window.location.href = '/s/limits';
+        return;
+      } else if (path === '/project') {
+        // Redirect to published system slate
+        window.location.href = '/s/project';
+        return;
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
@@ -110,7 +122,14 @@ export default function App() {
       } else if (path === '/slates') {
         setView('slates');
       } else if (path === '/account') {
-        setView('account');
+        if (!token) {
+          // Redirect to home and show login modal if not authenticated
+          setView('writer');
+          setShowAuthModal(true);
+          window.history.pushState({}, '', '/');
+        } else {
+          setView('account');
+        }
       } else if (path === '/manage-subscription') {
         setView('manage-subscription');
       } else if (path === '/') {
@@ -165,10 +184,8 @@ export default function App() {
       if (tier && token) {
         fetch(`${API_URL}/stripe/test-upgrade`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ tier })
         }).then(response => {
           return response.json();
@@ -184,24 +201,42 @@ export default function App() {
       window.history.replaceState({}, '', '/');
     }
 
-    if (googleAuth === 'success' && tokenFromOAuth) {
-      setToken(tokenFromOAuth);
-      setUsername(usernameFromOAuth);
-      setEmail(emailFromOAuth);
-      setEmailVerified(emailVerifiedFromOAuth === 'true');
-      setAuthProvider('google');
-      localStorage.setItem('justtype-token', tokenFromOAuth);
-      localStorage.setItem('justtype-username', usernameFromOAuth);
-      localStorage.setItem('justtype-email', emailFromOAuth);
-      localStorage.setItem('justtype-email-verified', emailVerifiedFromOAuth);
-      localStorage.setItem('justtype-auth-provider', 'google');
-      setShowAuthModal(false);
+    if (googleAuth === 'success') {
+      const authCode = urlParams.get('code');
+      if (authCode) {
+        // Exchange one-time code for session (cookie set by server)
+        fetch(`${API_URL}/auth/exchange-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ code: authCode })
+        })
+          .then(response => response.json())
+          .then(data => {
+            if (data.user) {
+              setToken('authenticated'); // Marker only, actual auth is via cookie
+              setUsername(data.user.username);
+              setEmail(data.user.email);
+              setEmailVerified(data.user.email_verified);
+              setAuthProvider('google');
+              localStorage.setItem('justtype-username', data.user.username);
+              localStorage.setItem('justtype-email', data.user.email);
+              localStorage.setItem('justtype-email-verified', data.user.email_verified);
+              localStorage.setItem('justtype-auth-provider', 'google');
+              setShowAuthModal(false);
 
-      // Show welcome modal for new users
-      if (isNewUser === 'true') {
-        setShowGoogleSuccessModal(true);
+              // Show welcome modal for new users
+              if (data.isNewUser) {
+                setShowGoogleSuccessModal(true);
+              }
+            }
+          })
+          .catch(err => {
+            console.error('Code exchange failed:', err);
+            setGoogleErrorType('generic');
+            setShowGoogleErrorModal(true);
+          });
       }
-
       // Clean URL parameters
       window.history.replaceState({}, '', '/');
     } else if (googleAuth === 'account_exists') {
@@ -218,26 +253,41 @@ export default function App() {
   }, []); // Run once on mount, will detect URL params
 
   const handleAuth = (authData) => {
-    setToken(authData.token);
+    // Token is now in HttpOnly cookie, we just track auth state
+    setToken('authenticated');
     setUsername(authData.user.username);
     setEmail(authData.user.email);
     setEmailVerified(authData.user.email_verified);
-    localStorage.setItem('justtype-token', authData.token);
+    // Only store non-sensitive user info in localStorage for display
     localStorage.setItem('justtype-username', authData.user.username);
     localStorage.setItem('justtype-email', authData.user.email);
     localStorage.setItem('justtype-email-verified', authData.user.email_verified);
     setShowAuthModal(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Delete session from database (cookie sent automatically)
+    if (token) {
+      try {
+        await fetch(`${API_URL}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include'
+        });
+      } catch (err) {
+        console.error('Logout error:', err);
+        // Continue with local logout even if API call fails
+      }
+    }
+
+    // Clear local state and storage
     setToken(null);
     setUsername(null);
     setEmail(null);
     setEmailVerified(false);
-    localStorage.removeItem('justtype-token');
     localStorage.removeItem('justtype-username');
     localStorage.removeItem('justtype-email');
     localStorage.removeItem('justtype-email-verified');
+    localStorage.removeItem('justtype-auth-provider');
     setCurrentSlate(null);
     setView('writer');
     window.history.pushState({}, '', '/');
@@ -539,15 +589,6 @@ export default function App() {
               window.history.pushState({}, '', '/account');
             }}
           />
-        )}
-        {view === 'terms' && (
-          <TextViewer file="terms.txt" title="terms & conditions" />
-        )}
-        {view === 'privacy' && (
-          <TextViewer file="privacy.txt" title="privacy policy" />
-        )}
-        {view === 'limits' && (
-          <TextViewer file="limits.txt" title="storage limits" />
         )}
       </main>
 

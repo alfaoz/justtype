@@ -272,12 +272,44 @@ try {
     console.log('✓ Database migrated: Added grace_period_target_tier column');
   }
 
+  // Add IP tracking preference column
+  const hasTrackIpAddress = userColumns.some(col => col.name === 'track_ip_address');
+
+  if (!hasTrackIpAddress) {
+    db.exec(`ALTER TABLE users ADD COLUMN track_ip_address BOOLEAN DEFAULT 1;`);
+    console.log('✓ Database migrated: Added track_ip_address column');
+  }
+
+  // Add theme preference column
+  const hasTheme = userColumns.some(col => col.name === 'theme');
+
+  if (!hasTheme) {
+    db.exec(`ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark';`);
+    console.log('✓ Database migrated: Added theme column');
+  }
+
   // Add view_count column to slates if it doesn't exist
   const hasViewCount = slateColumnsCheck.some(col => col.name === 'view_count');
 
   if (!hasViewCount) {
     db.exec(`ALTER TABLE slates ADD COLUMN view_count INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added view_count column to slates');
+  }
+
+  // Add is_system_user column to users if it doesn't exist
+  const hasIsSystemUser = userColumns.some(col => col.name === 'is_system_user');
+
+  if (!hasIsSystemUser) {
+    db.exec(`ALTER TABLE users ADD COLUMN is_system_user BOOLEAN DEFAULT 0;`);
+    console.log('✓ Database migrated: Added is_system_user column to users');
+  }
+
+  // Add is_system_slate column to slates if it doesn't exist
+  const hasIsSystemSlate = slateColumnsCheck.some(col => col.name === 'is_system_slate');
+
+  if (!hasIsSystemSlate) {
+    db.exec(`ALTER TABLE slates ADD COLUMN is_system_slate BOOLEAN DEFAULT 0;`);
+    console.log('✓ Database migrated: Added is_system_slate column to slates');
   }
 } catch (err) {
   console.error('Database migration error:', err);

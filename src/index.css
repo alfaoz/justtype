@@ -1,1 +1,308 @@
 @import "tailwindcss";
+
+/* Font size (punto) variants - explicit color to prevent cache issues */
+.punto-small { font-size: 14px !important; line-height: 1.7 !important; color: #d4d4d4; }
+.punto-base { font-size: 15px !important; line-height: 1.7 !important; color: #d4d4d4; }
+.punto-large { font-size: 18px !important; line-height: 1.6 !important; color: #d4d4d4; }
+
+/* Punto light mode overrides */
+body.light-mode .punto-small,
+body.light-mode .punto-base,
+body.light-mode .punto-large { color: #2a2a2a; }
+
+/* Animations */
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@keyframes fadeInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeOutToLeft {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+}
+
+/* Light mode styles */
+body.light-mode {
+  background: #faf9f7;
+  color: #1a1a1a;
+}
+
+body.light-mode #root {
+  background: #faf9f7;
+}
+
+/* Override dark backgrounds in light mode */
+body.light-mode .bg-black {
+  background: #faf9f7 !important;
+}
+
+body.light-mode .bg-\[\#0a0a0a\] {
+  background: #faf9f7 !important;
+}
+
+body.light-mode .bg-\[\#1a1a1a\] {
+  background: #ffffff !important;
+}
+
+body.light-mode .bg-\[\#111111\] {
+  background: #faf9f7 !important;
+}
+
+body.light-mode .bg-\[\#222\] {
+  background: #f0efed !important;
+}
+
+/* Override text colors in light mode */
+body.light-mode .text-white {
+  color: #1a1a1a !important;
+}
+
+body.light-mode .text-\[\#999\] {
+  color: #555 !important;
+}
+
+body.light-mode .text-\[\#666\] {
+  color: #888 !important;
+}
+
+body.light-mode .text-\[\#d4d4d4\] {
+  color: #2a2a2a !important;
+}
+
+body.light-mode .text-\[\#a0a0a0\] {
+  color: #4a4a4a !important;
+}
+
+/* Override borders in light mode */
+body.light-mode .border-\[\#222\] {
+  border-color: #d4d2cf !important;
+}
+
+body.light-mode .border-\[\#333\] {
+  border-color: #d4d2cf !important;
+}
+
+body.light-mode .border-\[\#666\] {
+  border-color: #b8b6b3 !important;
+}
+
+body.light-mode .border-\[\#999\] {
+  border-color: #999 !important;
+}
+
+/* Override input/textarea backgrounds */
+body.light-mode input,
+body.light-mode textarea {
+  background: #ffffff !important;
+  color: #1a1a1a !important;
+  border-color: #d4d2cf !important;
+}
+
+body.light-mode input:focus,
+body.light-mode textarea:focus {
+  border-color: #888 !important;
+}
+
+body.light-mode textarea::placeholder {
+  color: #a8a6a3 !important;
+}
+
+/* Hover states */
+body.light-mode .hover\:bg-\[\#333\]:hover {
+  background: #e8e7e5 !important;
+}
+
+body.light-mode .hover\:bg-\[\#1a1a1a\]:hover {
+  background: #f0efed !important;
+}
+
+body.light-mode .hover\:bg-\[\#e5e5e5\]:hover {
+  background: #e0dfdd !important;
+}
+
+/* Button backgrounds */
+body.light-mode .bg-white {
+  background: #1a1a1a !important;
+  color: #faf9f7 !important;
+}
+
+body.light-mode .hover\:bg-\[\#e5e5e5\]:hover {
+  background: #2a2a2a !important;
+}
+
+/* Adjust accent colors for light mode */
+body.light-mode .text-blue-400 {
+  color: #0066cc !important;
+}
+
+body.light-mode .text-orange-400 {
+  color: #b85c00 !important;
+}
+
+body.light-mode .text-red-400 {
+  color: #b33000 !important;
+}
+
+body.light-mode .text-red-600 {
+  color: #991100 !important;
+}
+
+body.light-mode .text-green-400 {
+  color: #006600 !important;
+}
+
+body.light-mode .text-green-500 {
+  color: #008800 !important;
+}
+
+body.light-mode .hover\:text-red-300:hover {
+  color: #c44000 !important;
+}
+
+body.light-mode .bg-blue-500 {
+  background: #0066cc !important;
+}
+
+body.light-mode .bg-red-500 {
+  background: #cc3300 !important;
+}
+
+body.light-mode .bg-red-600 {
+  background: #b33000 !important;
+}
+
+body.light-mode .hover\:bg-red-700:hover {
+  background: #991100 !important;
+}
+
+body.light-mode .bg-orange-500 {
+  background: #cc6600 !important;
+}
+
+body.light-mode .bg-green-500 {
+  background: #008800 !important;
+}
+
+body.light-mode .border-blue-500 {
+  border-color: #0066cc !important;
+}
+
+body.light-mode .border-red-500\/50 {
+  border-color: rgba(179, 48, 0, 0.4) !important;
+}
+
+body.light-mode .border-red-600 {
+  border-color: #b33000 !important;
+}
+
+body.light-mode .border-red-600\/50 {
+  border-color: rgba(179, 48, 0, 0.4) !important;
+}
+
+body.light-mode .bg-red-900\/20 {
+  background: rgba(179, 48, 0, 0.08) !important;
+}
+
+body.light-mode .hover\:bg-red-900\/20:hover {
+  background: rgba(179, 48, 0, 0.12) !important;
+}
+
+body.light-mode .bg-green-900\/20 {
+  background: rgba(0, 136, 0, 0.1) !important;
+}
+
+body.light-mode .border-green-700\/50 {
+  border-color: rgba(0, 136, 0, 0.3) !important;
+}
+
+body.light-mode .bg-orange-900\/20 {
+  background: rgba(204, 102, 0, 0.1) !important;
+}
+
+body.light-mode .border-orange-700\/50 {
+  border-color: rgba(204, 102, 0, 0.3) !important;
+}
+
+/* Fix hover states in light mode - don't turn text white */
+body.light-mode .hover\:text-white:hover {
+  color: #1a1a1a !important;
+}
+
+body.light-mode .hover\:text-\[\#666\]:hover {
+  color: #1a1a1a !important;
+}
+
+/* Text colors for header elements */
+body.light-mode .text-\[\#808080\] {
+  color: #666 !important;
+}
+
+body.light-mode .text-\[\#333\] {
+  color: #ccc !important;
+}
+
+/* Ensure menu text is visible in light mode */
+body.light-mode footer .text-white {
+  color: #1a1a1a !important;
+}
+
+/* Dropdown menu styling for light mode */
+body.light-mode .bg-\[\#1a1a1a\] {
+  background: #ffffff !important;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+}
+
+body.light-mode .hover\:bg-\[\#333\]:hover {
+  background: #f0efed !important;
+}
+
+/* Fix scrollbar in light mode */
+body.light-mode ::-webkit-scrollbar {
+  width: 12px;
+}
+
+body.light-mode ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+body.light-mode ::-webkit-scrollbar-thumb {
+  background: #d4d2cf;
+  border-radius: 6px;
+}
+
+body.light-mode ::-webkit-scrollbar-thumb:hover {
+  background: #b8b6b3;
+}
+
+/* Firefox scrollbar for light mode */
+body.light-mode * {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d2cf transparent;
+}

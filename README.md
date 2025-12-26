@@ -52,6 +52,23 @@ npm run server
 
 requires: node 20+, backblaze b2 account, resend api key (for emails)
 
+## system documentation
+
+the `/terms`, `/privacy`, `/limits`, and `/project` pages are hosted as published slates by a system user. this dogfoods justtype's own publishing feature for our documentation.
+
+to set up system documentation (optional for self-hosting):
+
+```bash
+node setup-system-docs.js
+```
+
+this creates:
+- a `systemalfaoz` system user (displays as "alfaoz")
+- 4 published slates with share_ids: `terms`, `privacy`, `limits`, `project`
+- redirects from `/terms` → `/s/terms`, etc.
+
+the system slates are protected from deletion but can be edited by logging in as the system user. you can also keep the documentation as plain text files—both approaches work.
+
 ## contributing
 
 found a bug? security issue? want to add a feature? need a friend?

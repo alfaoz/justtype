@@ -25,12 +25,14 @@ export function Account({ token, username, email, emailVerified, authProvider, o
   const [sessions, setSessions] = useState([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loggingOutAll, setLoggingOutAll] = useState(false);
+  const [trackIpAddress, setTrackIpAddress] = useState(true);
+  const [togglingIpTracking, setTogglingIpTracking] = useState(false);
 
   const [storageInfo, setStorageInfo] = useState(null);
   const [loadingStorage, setLoadingStorage] = useState(true);
 
   // Modal states
-  const [showLogoutAllModal, setShowLogoutAllModal] = useState(false);
+  const [showLogoutEverywhereModal, setShowLogoutEverywhereModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [showLinkGoogleModal, setShowLinkGoogleModal] = useState(false);
   const [showLinkSuccessModal, setShowLinkSuccessModal] = useState(false);
@@ -81,11 +83,12 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     setLoadingSessions(true);
     try {
       const response = await fetch(`${API_URL}/account/sessions`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
       const data = await response.json();
       if (response.ok) {
         setSessions(data.sessions || []);
+        setTrackIpAddress(data.track_ip_address !== false);
       }
     } catch (err) {
       console.error('Failed to load sessions:', err);
@@ -94,11 +97,33 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     }
   };
 
+  const toggleIpTracking = async () => {
+    setTogglingIpTracking(true);
+    try {
+      const response = await fetch(`${API_URL}/account/toggle-ip-tracking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ enabled: !trackIpAddress }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setTrackIpAddress(data.track_ip_address);
+        // Reload sessions to reflect change
+        loadSessions();
+      }
+    } catch (err) {
+      console.error('Failed to toggle IP tracking:', err);
+    } finally {
+      setTogglingIpTracking(false);
+    }
+  };
+
   const loadStorage = async () => {
     setLoadingStorage(true);
     try {
       const response = await fetch(`${API_URL}/account/storage`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
       const data = await response.json();
       if (response.ok) {
@@ -118,7 +143,7 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/export-slates`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -136,27 +161,27 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     }
   };
 
-  const showLogoutAllConfirmation = () => {
-    setShowLogoutAllModal(true);
+  const showLogoutEverywhereConfirmation = () => {
+    setShowLogoutEverywhereModal(true);
   };
 
-  const cancelLogoutAll = () => {
-    setShowLogoutAllModal(false);
+  const cancelLogoutEverywhere = () => {
+    setShowLogoutEverywhereModal(false);
   };
 
-  const confirmLogoutAll = async () => {
+  const confirmLogoutEverywhere = async () => {
     // Close modal immediately
-    setShowLogoutAllModal(false);
+    setShowLogoutEverywhereModal(false);
     setLoggingOutAll(true);
 
     try {
       const response = await fetch(`${API_URL}/account/logout-all`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
 
       if (response.ok) {
-        // Immediately logout - don't wait for alert
+        // Immediately logout - this logs out everywhere including current device
         onLogout();
       } else {
         const data = await response.json();
@@ -164,14 +189,20 @@ export function Account({ token, username, email, emailVerified, authProvider, o
         setLoggingOutAll(false);
       }
     } catch (err) {
-      console.error('Failed to logout from all sessions:', err);
+      console.error('Failed to logout everywhere:', err);
       alert(strings.account.sessions.errors.logoutAllFailed);
       setLoggingOutAll(false);
     }
   };
 
   const formatSessionDate = (dateString) => {
-    const date = new Date(dateString);
+    if (!dateString) return '';
+
+    // SQLite stores timestamps as UTC strings without timezone info
+    // Parse as UTC explicitly by adding 'Z' suffix
+    const date = new Date(dateString + 'Z');
+    if (isNaN(date.getTime())) return '';
+
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);
@@ -179,10 +210,21 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     const diffDays = Math.floor(diffMs / 86400000);
 
     if (diffMins < 1) return strings.account.sessions.time.justNow;
+    if (diffMins === 1) return '1m ago';
     if (diffMins < 60) return strings.account.sessions.time.minutesAgo(diffMins);
+    if (diffHours === 1) return '1h ago';
     if (diffHours < 24) return strings.account.sessions.time.hoursAgo(diffHours);
+    if (diffDays === 1) return '1d ago';
     if (diffDays < 7) return strings.account.sessions.time.daysAgo(diffDays);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    const year = date.getFullYear();
+    const currentYear = now.getFullYear();
+
+    if (year === currentYear) {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
   };
 
   const formatIpAddress = (ip) => {
@@ -222,10 +264,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/change-password`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           currentPassword,
           newPassword
@@ -257,10 +297,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/change-email`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ newEmail })
       });
 
@@ -287,10 +325,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/verify-email-change`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ code: verificationCode })
       });
 
@@ -340,10 +376,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/delete`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -369,10 +403,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
       // Get linking token from backend
       const response = await fetch(`${API_URL}/account/generate-link-token`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -395,10 +427,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/request-unlink-google`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -424,10 +454,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     try {
       const response = await fetch(`${API_URL}/account/unlink-google`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ code: unlinkCode })
       });
 
@@ -537,10 +565,8 @@ export function Account({ token, username, email, emailVerified, authProvider, o
                         try {
                           const response = await fetch(`${API_URL}/account/update-badge-visibility`, {
                             method: 'POST',
-                            headers: {
-                              'Authorization': `Bearer ${token}`,
-                              'Content-Type': 'application/json'
-                            },
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
                             body: JSON.stringify({ visible: newValue })
                           });
                           if (response.ok) {
@@ -773,50 +799,94 @@ export function Account({ token, username, email, emailVerified, authProvider, o
 
       {/* Sessions & Logout */}
       <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-        <h2 className="text-base md:text-lg text-white mb-4">{strings.account.sessions.title}</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base md:text-lg text-white">{strings.account.sessions.title}</h2>
+          {!loadingSessions && sessions.length > 0 && (
+            <span className="text-xs text-[#666]">{strings.account.sessions.count(sessions.length)}</span>
+          )}
+        </div>
 
         {loadingSessions ? (
           <p className="text-[#666] text-sm mb-4">{strings.account.sessions.loading}</p>
         ) : (
           <>
             {sessions.length > 0 && (
-              <div className="mb-6 space-y-2">
-                <p className="text-xs text-[#666] mb-3">{strings.account.sessions.count(sessions.length)}</p>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {sessions.map((session, idx) => (
-                    <div key={idx} className="bg-[#111111] border border-[#333] rounded p-3 text-xs">
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="text-white">{session.device || strings.account.sessions.unknownDevice}</span>
-                        {session.is_current && (
-                          <span className="text-green-400 text-xs">{strings.account.sessions.currentBadge}</span>
-                        )}
-                      </div>
-                      <div className="text-[#666] space-y-0.5">
-                        <div>{formatIpAddress(session.ip_address)}</div>
-                        <div>{strings.account.sessions.lastActive(formatSessionDate(session.last_activity))}</div>
-                        <div>{strings.account.sessions.created(formatSessionDate(session.created_at))}</div>
+              <div className="mb-6 space-y-3">
+                {sessions.map((session, idx) => (
+                  <div
+                    key={idx}
+                    className={`bg-[#111111] border rounded p-4 ${
+                      session.is_current === 1 ? 'border-blue-500/50 bg-blue-950/10' : 'border-[#333]'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-white text-sm font-medium truncate">
+                            {session.device || strings.account.sessions.unknownDevice}
+                          </span>
+                          {session.is_current === 1 && (
+                            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full whitespace-nowrap">
+                              {strings.account.sessions.currentBadge}
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {(() => {
+                            const formattedDate = formatSessionDate(session.last_activity);
+                            return formattedDate && (
+                              <p className="text-xs text-[#666]">
+                                {strings.account.sessions.lastActive(formattedDate)}
+                              </p>
+                            );
+                          })()}
+                          {session.ip_address && (
+                            <p className="text-xs text-[#666]">
+                              {formatIpAddress(session.ip_address)}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
             )}
+
+            <div className="mb-6 pb-6 border-b border-[#333]">
+              <label className="flex items-start gap-3 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={trackIpAddress}
+                  onChange={toggleIpTracking}
+                  disabled={togglingIpTracking}
+                  className="mt-0.5 w-4 h-4 rounded border-[#666] bg-[#111111] text-blue-500 focus:ring-0 focus:ring-offset-0 disabled:opacity-50"
+                />
+                <div>
+                  <span className="text-[#d4d4d4] block mb-1">
+                    {strings.account.sessions.trackIp}
+                  </span>
+                  <p className="text-xs text-[#666]">
+                    {strings.account.sessions.trackIpDescription}
+                  </p>
+                </div>
+              </label>
+            </div>
+
             <div className="flex gap-3 flex-wrap">
               <button
                 onClick={onLogout}
-                className="border border-[#333] text-white px-6 py-2 md:py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                className="border border-[#666] text-[#d4d4d4] px-4 py-2 rounded hover:bg-[#333] hover:border-[#999] transition-colors text-sm"
               >
-                {strings.account.sessions.logout}
+                {strings.account.sessions.signOutThisDevice}
               </button>
-              {sessions.length > 1 && (
-                <button
-                  onClick={showLogoutAllConfirmation}
-                  disabled={loggingOutAll}
-                  className="border border-red-600 text-red-400 px-6 py-2 md:py-3 rounded hover:bg-red-900 hover:bg-opacity-20 transition-colors text-sm disabled:opacity-50"
-                >
-                  {loggingOutAll ? strings.account.sessions.loggingOut : strings.account.sessions.logoutAll}
-                </button>
-              )}
+              <button
+                onClick={showLogoutEverywhereConfirmation}
+                disabled={loggingOutAll}
+                className="border border-red-600/50 text-red-400 px-4 py-2 rounded hover:bg-red-900/20 hover:border-red-600 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loggingOutAll ? strings.account.sessions.loggingOut : strings.account.sessions.logoutEverywhere}
+              </button>
             </div>
           </>
         )}
@@ -921,26 +991,26 @@ export function Account({ token, username, email, emailVerified, authProvider, o
         </div>
       )}
 
-      {/* Logout All Sessions Confirmation Modal */}
-      {showLogoutAllModal && (
+      {/* Logout Everywhere Confirmation Modal */}
+      {showLogoutEverywhereModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.sessions.modal.title}</h2>
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.sessions.everywhereModal.title}</h2>
             <p className="text-sm text-[#666] mb-6">
-              {strings.account.sessions.modal.message}
+              {strings.account.sessions.everywhereModal.message}
             </p>
             <div className="flex gap-3">
               <button
-                onClick={confirmLogoutAll}
+                onClick={confirmLogoutEverywhere}
                 className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
               >
-                {strings.account.sessions.modal.confirm}
+                {strings.account.sessions.everywhereModal.confirm}
               </button>
               <button
-                onClick={cancelLogoutAll}
+                onClick={cancelLogoutEverywhere}
                 className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
               >
-                {strings.account.sessions.modal.cancel}
+                {strings.account.sessions.everywhereModal.cancel}
               </button>
             </div>
           </div>

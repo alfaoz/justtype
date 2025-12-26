@@ -1,5 +1,30 @@
 const db = require('./database');
 
+// Helper function to mask email addresses for privacy
+function maskEmail(email) {
+  if (!email) return null;
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  if (local.length <= 2) {
+    return `${local[0]}***@${domain}`;
+  }
+  return `${local[0]}${'*'.repeat(Math.min(local.length - 1, 3))}@${domain}`;
+}
+
+// Recursively mask email fields in an object
+function maskEmailsInObject(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const masked = { ...obj };
+  for (const key of Object.keys(masked)) {
+    if (key === 'email' && typeof masked[key] === 'string') {
+      masked[key] = maskEmail(masked[key]);
+    } else if (typeof masked[key] === 'object') {
+      masked[key] = maskEmailsInObject(masked[key]);
+    }
+  }
+  return masked;
+}
+
 /**
  * Log admin actions for audit trail
  * @param {string} action - Action performed (e.g., 'delete_user', 'view_users')
@@ -62,10 +87,10 @@ function getAdminLogs(limit = 100, offset = 0, actionFilter = null) {
 
     const logs = db.prepare(query).all(...params);
 
-    // Parse JSON details
+    // Parse JSON details and mask any email fields for privacy
     return logs.map(log => ({
       ...log,
-      details: log.details ? JSON.parse(log.details) : null
+      details: log.details ? maskEmailsInObject(JSON.parse(log.details)) : null
     }));
   } catch (error) {
     console.error('Failed to get admin logs:', error);

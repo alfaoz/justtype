@@ -25,12 +25,27 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [donateEmail, setDonateEmail] = useState('');
   const [showAlreadySubscribedModal, setShowAlreadySubscribedModal] = useState(false);
   const [supporterTier, setSupporterTier] = useState(null);
+  const [showEditingOptions, setShowEditingOptions] = useState(false);
+  const [viMode, setViMode] = useState(false);
+  const [showViQuizModal, setShowViQuizModal] = useState(false);
+  const [viQuizAnswer, setViQuizAnswer] = useState('');
+  const [viQuizError, setViQuizError] = useState('');
+  const [viModeState, setViModeState] = useState('normal'); // 'normal', 'insert'
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [isMenuClosing, setIsMenuClosing] = useState(false);
+  const [showMenuButton, setShowMenuButton] = useState(false);
+  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
+  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
   const lastSavedContentRef = useRef('');
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
+  const settingsMenuRef = useRef(null);
+  const editingOptionsTimeoutRef = useRef(null);
+  const threeDotsRef = useRef(null);
 
   // Load current slate
   useEffect(() => {
@@ -55,6 +70,72 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       onZenModeChange(zenMode);
     }
   }, [zenMode, onZenModeChange]);
+
+  // Apply theme to body
+  useEffect(() => {
+    if (theme === 'light') {
+      document.body.classList.add('light-mode');
+    } else {
+      document.body.classList.remove('light-mode');
+    }
+    localStorage.setItem('justtype-theme', theme);
+  }, [theme]);
+
+  // Save punto to localStorage
+  useEffect(() => {
+    localStorage.setItem('justtype-punto', punto);
+  }, [punto]);
+
+  // Handle menu close with animation
+  const handleCloseMenu = () => {
+    if (!showSettingsMenu) return;
+    setIsMenuClosing(true);
+    // Wait for animation to complete before hiding
+    setTimeout(() => {
+      setShowSettingsMenu(false);
+      setIsMenuClosing(false);
+    }, 500); // Match the animation duration
+  };
+
+  const handleToggleMenu = () => {
+    if (showSettingsMenu) {
+      handleCloseMenu();
+      setShowMenuButton(false);
+    } else {
+      // Calculate distance to align with zen mode button's left edge
+      if (threeDotsRef.current) {
+        const rect = threeDotsRef.current.getBoundingClientRect();
+        // Subtract a bit to align with "z" in zen mode, not absolute edge
+        setThreeDotsTransform(rect.left - 32); // 32px offset to align with zen mode text
+      }
+      setShowSettingsMenu(true);
+      setIsMenuClosing(false);
+      // Show menu button after animation completes
+      setTimeout(() => {
+        setShowMenuButton(true);
+      }, 500);
+    }
+  };
+
+  // Close settings menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target)) {
+        if (showSettingsMenu && !isMenuClosing) {
+          setIsMenuClosing(true);
+          setTimeout(() => {
+            setShowSettingsMenu(false);
+            setIsMenuClosing(false);
+          }, 500);
+        }
+      }
+    };
+
+    if (showSettingsMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showSettingsMenu, isMenuClosing]);
 
   // Warn user before leaving with unsaved changes (only on actual page unload, not internal navigation)
   useEffect(() => {
@@ -88,7 +169,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           // Check if user is already subscribed
           try {
             const response = await fetch(`${API_URL}/account/storage`, {
-              headers: { 'Authorization': `Bearer ${token}` },
+              credentials: 'include'
             });
             const data = await response.json();
             if (response.ok) {
@@ -124,7 +205,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       try {
         const response = await fetch(`${API_URL}/user/visit`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
+          credentials: 'include'
         });
 
         if (response.ok) {
@@ -249,7 +330,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const loadSlate = async (id) => {
     try {
       const response = await fetch(`${API_URL}/slates/${id}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
 
       // Check if encryption key is missing (server restarted)
@@ -289,18 +370,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         body.email = email;
       }
 
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth header if token exists
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
       const response = await fetch(`${API_URL}/stripe/create-checkout`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
       });
 
@@ -336,10 +409,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       const response = await fetch(`${API_URL}/slates/${currentSlate.id}`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ title: titleToSave, content }),
       });
 
@@ -400,10 +471,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       const response = await fetch(url, {
         method,
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ title: titleToSave, content }),
       });
 
@@ -456,6 +525,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         setWasPublishedBeforeEdit(true);
         setStatus(strings.writer.status.savedAsPrivate);
         setTimeout(() => setStatus(strings.writer.status.privateDraft), 3000);
+      } else if (data.is_published && data.share_id) {
+        // System slates that stay published
+        setShareUrl(`${window.location.origin}/s/${data.share_id}`);
+        setStatus('saved');
+        setTimeout(() => setStatus(strings.writer.status.published), 2000);
       } else {
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);
@@ -513,10 +587,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     try {
       const response = await fetch(`${API_URL}/slates/${currentSlate.id}/publish`, {
         method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ isPublished: !shareUrl }),
       });
 
@@ -628,6 +700,27 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     }, 300);
   };
 
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    // Don't close menu when clicking theme button
+  };
+
+  const cyclePunto = () => {
+    const sizes = ['small', 'base', 'large'];
+    const currentIndex = sizes.indexOf(punto);
+    const nextIndex = (currentIndex + 1) % sizes.length;
+    setPunto(sizes[nextIndex]);
+  };
+
+  const getPuntoLabel = () => {
+    switch (punto) {
+      case 'small': return 'Aa−';
+      case 'large': return 'Aa+';
+      default: return 'Aa';
+    }
+  };
+
   return (
     <div className="relative flex flex-col bg-[#111111] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
@@ -645,27 +738,73 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           onChange={(e) => setContent(e.target.value)}
           placeholder={strings.writer.contentPlaceholder}
           spellCheck={false}
-          className="w-full max-w-3xl bg-[#111111] border-none text-lg leading-relaxed resize-none p-8 focus:ring-0 placeholder-[#333333] text-[#d4d4d4]"
+          className={`w-full max-w-3xl bg-[#111111] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[#333333] text-[#d4d4d4] punto-${punto}`}
         />
       </main>
 
       {/* DESKTOP FOOTER */}
-      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[#111111] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
+      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[#111111] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
-          <div className="flex gap-6 items-center">
-            <button
-              onClick={() => setZenMode(!zenMode)}
-              className={`transition-colors duration-200 ${zenMode ? 'text-white' : 'hover:text-white'}`}
-            >
-              {zenMode ? strings.writer.zenMode.on : strings.writer.zenMode.off}
-            </button>
-            <span className="opacity-30">|</span>
-            <div className="opacity-50 flex gap-4">
-              <span>{strings.writer.stats.words(wordCount)}</span>
-              <span>{strings.writer.stats.chars(charCount)}</span>
+          <div className="flex items-center gap-6 min-h-[32px] relative" ref={settingsMenuRef}>
+            {/* Zen mode and counter - fade out when menu expands */}
+            <div className={`flex gap-6 items-center transition-opacity duration-500 ${showSettingsMenu && !isMenuClosing ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              <button
+                onClick={() => setZenMode(!zenMode)}
+                className={`transition-colors duration-200 ${zenMode ? 'text-white' : 'hover:text-white'}`}
+              >
+                {zenMode ? strings.writer.zenMode.on : strings.writer.zenMode.off}
+              </button>
+              <span className="opacity-30">|</span>
+              <div className="opacity-50 flex gap-4">
+                <span>{strings.writer.stats.words(wordCount)}</span>
+                <span>{strings.writer.stats.chars(charCount)}</span>
+              </div>
+              <span className="opacity-30">|</span>
             </div>
+
+            {/* Three dots button - animates with JS-calculated transform */}
+            <button
+              ref={threeDotsRef}
+              onClick={handleToggleMenu}
+              className="opacity-50 hover:opacity-100 flex items-center justify-center w-8 h-8 rounded hover:bg-[#1a1a1a] relative transition-transform duration-500 ease-in-out"
+              style={{
+                zIndex: 100,
+                transform: showSettingsMenu && !isMenuClosing ? `translateX(-${threeDotsTransform}px)` : 'translateX(0)'
+              }}
+              aria-label="Settings menu"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="2"/>
+                <circle cx="12" cy="12" r="2"/>
+                <circle cx="19" cy="12" r="2"/>
+              </svg>
+            </button>
+
+            {/* Menu buttons - appear after animation, slide in from three dots position */}
+            {showMenuButton && (
+              <div
+                className="absolute left-12 flex items-center gap-2 animate-[fadeInFromLeft_0.4s_ease-out_both]"
+                style={{ zIndex: 150 }}
+              >
+                <button
+                  onClick={toggleTheme}
+                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                >
+                  {theme === 'dark' ? 'light mode' : 'dark mode'}
+                </button>
+                <span className="opacity-30">·</span>
+                <button
+                  onClick={cyclePunto}
+                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                >
+                  {getPuntoLabel()}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right Controls */}
@@ -823,6 +962,22 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 </div>
               </div>
 
+              {/* Settings */}
+              <div className="flex gap-4 text-sm">
+                <button
+                  onClick={toggleTheme}
+                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
+                >
+                  {theme === 'dark' ? 'light mode' : 'dark mode'}
+                </button>
+                <button
+                  onClick={cyclePunto}
+                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
+                >
+                  font: {getPuntoLabel()}
+                </button>
+              </div>
+
               {/* Status */}
               {status !== 'ready' && (
                 <div className={`p-3 rounded-lg text-center text-sm ${
@@ -944,7 +1099,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               <p>{strings.writer.about.description}</p>
               <p className="text-xs">{strings.writer.about.encryption}</p>
               <p className="text-xs">
-                open-source at <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">github</a> · by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">alfaoz</a>
+                read our <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.terms}</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.privacy}</a>, or learn more about the <a href="/project" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.project}</a> on <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">github</a>.
+              </p>
+              <p className="text-xs">
+                by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">alfaoz</a>
               </p>
 
               {/* Support Section - Subtle */}
@@ -979,7 +1137,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                         // Check if already subscribed
                         try {
                           const response = await fetch(`${API_URL}/account/storage`, {
-                            headers: { 'Authorization': `Bearer ${token}` },
+                            credentials: 'include'
                           });
                           const data = await response.json();
                           if (response.ok && data.supporterTier === 'quarterly') {

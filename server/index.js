@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -44,6 +45,74 @@ if (!process.env.RESEND_API_KEY) {
 
 // Generate short share IDs (e.g., "a3bK9qL")
 const generateShareId = customAlphabet('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 8);
+
+// Helper function to mask email addresses for privacy
+// Used in admin endpoints to prevent full email exposure
+// Masks both local part and domain for maximum privacy
+function maskEmail(email) {
+  if (!email) return null;
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+
+  // Mask local part
+  const maskedLocal = local.length <= 2
+    ? `${local[0]}***`
+    : `${local[0]}${'*'.repeat(Math.min(local.length - 1, 3))}`;
+
+  // Mask domain (keep first char and TLD)
+  const domainParts = domain.split('.');
+  if (domainParts.length >= 2) {
+    const tld = domainParts[domainParts.length - 1];
+    const domainName = domainParts.slice(0, -1).join('.');
+    const maskedDomain = domainName.length <= 2
+      ? `${domainName[0]}***`
+      : `${domainName[0]}${'*'.repeat(Math.min(domainName.length - 1, 3))}`;
+    return `${maskedLocal}@${maskedDomain}.${tld}`;
+  }
+
+  return `${maskedLocal}@${domain}`;
+}
+
+// In-memory store for one-time auth codes (for OAuth security)
+// Codes expire after 30 seconds and are deleted after use
+const authCodeStore = new Map();
+
+// Generate and store one-time auth code
+function generateAuthCode(userData) {
+  const code = crypto.randomBytes(32).toString('hex');
+  authCodeStore.set(code, {
+    ...userData,
+    expiresAt: Date.now() + 30000 // 30 seconds
+  });
+
+  // Auto-cleanup after 35 seconds
+  setTimeout(() => authCodeStore.delete(code), 35000);
+
+  return code;
+}
+
+// Exchange and consume one-time auth code
+function consumeAuthCode(code) {
+  const data = authCodeStore.get(code);
+  if (!data) return null;
+
+  // Delete immediately (one-time use)
+  authCodeStore.delete(code);
+
+  // Check expiration
+  if (Date.now() > data.expiresAt) return null;
+
+  return data;
+}
+
+// Cookie options for auth token
+const getAuthCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  path: '/'
+});
 
 // Generate unique share ID with collision checking
 const generateUniqueShareId = () => {
@@ -109,9 +178,12 @@ const getCachedEncryptionKey = (userId) => {
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
     ? ['https://justtype.io', 'https://www.justtype.io']
-    : true // Allow all in development
-  // Note: credentials not needed since we use Bearer tokens, not cookies
+    : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'],
+  credentials: true // Required for HttpOnly cookies
 }));
+
+// Cookie parser for HttpOnly auth cookies
+app.use(cookieParser());
 
 // Security headers with helmet.js
 app.use(helmet({
@@ -249,7 +321,7 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
               subject: strings.email.subscriptionCancellationScheduled.subject,
               text: strings.email.subscriptionCancellationScheduled.body(user.username, daysRemaining, storageWarning)
             }).then(() => {
-              console.log(`✓ Cancellation acknowledgment email sent to ${user.email}`);
+              console.log(`✓ Cancellation acknowledgment email sent to user #${user.id}`);
             }).catch(err => console.error('Failed to send cancellation scheduled email:', err));
           }
         } else if (event.type === 'customer.subscription.deleted' || subscription.status === 'canceled') {
@@ -335,7 +407,7 @@ take care!
         if (subscriptionId) {
           const user = db.prepare('SELECT id, email FROM users WHERE stripe_subscription_id = ?').get(subscriptionId);
           if (user) {
-            console.warn(`⚠ Payment failed for user ${user.id} (${user.email})`);
+            console.warn(`⚠ Payment failed for user #${user.id}`);
             // Could send email notification here
           }
         }
@@ -392,6 +464,65 @@ app.get('/limits.txt', (req, res) => {
   res.sendFile(limitsPath);
 });
 
+app.get('/project.txt', (req, res) => {
+  const projectPath = path.join(__dirname, '..', 'project.txt');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.sendFile(projectPath);
+});
+
+// System slate routes with custom meta descriptions
+const systemSlatesMeta = {
+  '/terms': {
+    title: 'terms of service',
+    description: 'terms of service for justtype.io',
+    redirect: '/s/terms'
+  },
+  '/privacy': {
+    title: 'privacy policy',
+    description: 'privacy policy for justtype.io',
+    redirect: '/s/privacy'
+  },
+  '/limits': {
+    title: 'storage limits',
+    description: 'storage limits and supporter tiers for justtype.io',
+    redirect: '/s/limits'
+  },
+  '/project': {
+    title: 'about the project',
+    description: 'about justtype - a minimal, encrypted writing app',
+    redirect: '/s/project'
+  }
+};
+
+Object.entries(systemSlatesMeta).forEach(([route, meta]) => {
+  app.get(route, (req, res) => {
+    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
+    let html = fs.readFileSync(indexPath, 'utf8');
+
+    // Replace default meta tags
+    html = html.replace(
+      '<title>just type</title>',
+      `<title>${meta.title} - just type</title>`
+    );
+    html = html.replace(
+      '<meta name="description" content="need to jot something down real quick? just start typing." />',
+      `<meta name="description" content="${meta.description}" />`
+    );
+
+    // Add redirect meta tag for immediate redirect
+    html = html.replace(
+      '</head>',
+      `  <meta http-equiv="refresh" content="0;url=${meta.redirect}" />\n  </head>`
+    );
+
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.send(html);
+  });
+});
+
 // Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
@@ -436,28 +567,49 @@ const createSession = (userId, token, req) => {
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const device = parseDevice(req.headers['user-agent']);
 
-  // Get IP address - prioritize x-forwarded-for for proxy/load balancer setups
-  let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.connection.remoteAddress || req.ip || '';
+  // Check if user has IP tracking enabled
+  const user = db.prepare('SELECT track_ip_address FROM users WHERE id = ?').get(userId);
+  const trackIp = user && user.track_ip_address !== 0;
 
-  // If x-forwarded-for has multiple IPs (proxy chain), use the first one (client IP)
-  if (ipAddress.includes(',')) {
-    ipAddress = ipAddress.split(',')[0].trim();
-  }
+  let ipAddress = null;
 
-  // Clean up IPv6-mapped IPv4 addresses (::ffff:127.0.0.1 -> 127.0.0.1)
-  if (ipAddress && ipAddress.startsWith('::ffff:')) {
-    ipAddress = ipAddress.substring(7);
-  }
+  if (trackIp) {
+    // Get IP address - prioritize x-forwarded-for for proxy/load balancer setups
+    ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || req.connection.remoteAddress || req.ip || '';
 
-  // Normalize localhost variations to a consistent format
-  if (ipAddress === '::1' || ipAddress === '127.0.0.1') {
-    ipAddress = 'localhost';
+    // If x-forwarded-for has multiple IPs (proxy chain), use the first one (client IP)
+    if (ipAddress.includes(',')) {
+      ipAddress = ipAddress.split(',')[0].trim();
+    }
+
+    // Clean up IPv6-mapped IPv4 addresses (::ffff:127.0.0.1 -> 127.0.0.1)
+    if (ipAddress && ipAddress.startsWith('::ffff:')) {
+      ipAddress = ipAddress.substring(7);
+    }
+
+    // Normalize localhost variations to a consistent format
+    if (ipAddress === '::1' || ipAddress === '127.0.0.1') {
+      ipAddress = 'localhost';
+    }
   }
 
   try {
-    // Create new session (cleanup handled by hourly cron)
-    db.prepare('INSERT INTO sessions (user_id, token_hash, device, ip_address, user_agent) VALUES (?, ?, ?, ?, ?)')
-      .run(userId, tokenHash, device, ipAddress, req.headers['user-agent']);
+    // Delete old session with same token_hash if it exists (prevents duplicates)
+    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+
+    // Create the new session (only store parsed device type, not full user-agent for privacy)
+    db.prepare('INSERT INTO sessions (user_id, token_hash, device, ip_address) VALUES (?, ?, ?, ?)')
+      .run(userId, tokenHash, device, ipAddress);
+
+    // Keep only the 5 most recent sessions per user
+    const allSessions = db.prepare('SELECT id FROM sessions WHERE user_id = ? ORDER BY last_activity DESC').all(userId);
+    if (allSessions.length > 5) {
+      const sessionsToDelete = allSessions.slice(5); // Keep first 5, delete rest
+      const deleteStmt = db.prepare('DELETE FROM sessions WHERE id = ?');
+      for (const session of sessionsToDelete) {
+        deleteStmt.run(session.id);
+      }
+    }
   } catch (err) {
     console.error('Session creation error:', err);
   }
@@ -504,10 +656,15 @@ const checkStorageLimit = (userId, newContentSize) => {
   }
 };
 
-// Middleware to verify JWT token
+// Middleware to verify JWT token (checks HttpOnly cookie first, then Authorization header)
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  // Check HttpOnly cookie first (more secure), then fall back to Authorization header
+  let token = req.cookies?.justtype_token;
+
+  if (!token) {
+    const authHeader = req.headers['authorization'];
+    token = authHeader && authHeader.split(' ')[1];
+  }
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
@@ -515,6 +672,8 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) {
+      // Clear invalid cookie if present
+      res.clearCookie('justtype_token', { path: '/' });
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
 
@@ -525,6 +684,7 @@ const authenticateToken = (req, res, next) => {
 
       // If no rows were updated, the session doesn't exist (was deleted)
       if (result.changes === 0) {
+        res.clearCookie('justtype_token', { path: '/' });
         return res.status(401).json({ error: 'Session expired or logged out' });
       }
     } catch (err) {
@@ -621,7 +781,7 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
     // Send verification email
     const emailSent = await emailService.sendVerificationEmail(email, username, verificationCode);
     if (!emailSent) {
-      console.error(`⚠️  Failed to send verification email to ${email}`);
+      console.error(`⚠️  Failed to send verification email to user #${result.lastInsertRowid}`);
       // Continue anyway - user can resend later
     }
 
@@ -635,8 +795,10 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
     const encryptionKey = deriveEncryptionKey(password, salt);
     cacheEncryptionKey(result.lastInsertRowid, encryptionKey);
 
+    // Set HttpOnly cookie for secure auth
+    res.cookie('justtype_token', token, getAuthCookieOptions());
+
     res.status(201).json({
-      token,
       user: {
         id: result.lastInsertRowid,
         username,
@@ -692,8 +854,10 @@ app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res)
       // Create session
       createSession(user.id, token, req);
 
+      // Set HttpOnly cookie
+      res.cookie('justtype_token', token, getAuthCookieOptions());
+
       return res.json({
-        token,
         user: {
           id: user.id,
           username: user.username,
@@ -709,8 +873,10 @@ app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res)
     // Create session
     createSession(user.id, token, req);
 
+    // Set HttpOnly cookie
+    res.cookie('justtype_token', token, getAuthCookieOptions());
+
     res.json({
-      token,
       user: {
         id: user.id,
         username: user.username,
@@ -720,6 +886,24 @@ app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res)
     });
   } catch (error) {
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Logout (delete current session)
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+  try {
+    const tokenHash = crypto.createHash('sha256').update(req.token).digest('hex');
+
+    // Delete the current session from database
+    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+
+    // Clear HttpOnly cookie
+    res.clearCookie('justtype_token', { path: '/' });
+
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
   }
 });
 
@@ -909,8 +1093,7 @@ app.get('/auth/google/callback',
       const token = jwt.sign(
         {
           id: req.user.id,
-          username: req.user.username,
-          email: req.user.email
+          username: req.user.username
         },
         JWT_SECRET,
         { expiresIn: '30d' }
@@ -925,14 +1108,52 @@ app.get('/auth/google/callback',
         cacheEncryptionKey(req.user.id, encryptionKey);
       }
 
-      // Redirect to frontend with token and new user flag
-      res.redirect(`/?googleAuth=success&token=${token}&username=${encodeURIComponent(req.user.username)}&email=${encodeURIComponent(req.user.email)}&emailVerified=${req.user.email_verified ? 'true' : 'false'}&isNewUser=${isNewUser ? 'true' : 'false'}`);
+      // Generate one-time auth code (prevents token/email exposure in URL)
+      const authCode = generateAuthCode({
+        token,
+        userId: req.user.id,
+        username: req.user.username,
+        email: req.user.email,
+        emailVerified: req.user.email_verified,
+        isNewUser
+      });
+
+      // Redirect with only the one-time code (no sensitive data in URL)
+      res.redirect(`/?googleAuth=success&code=${authCode}`);
     } catch (error) {
       console.error('Google OAuth callback error:', error);
       res.redirect('/?googleAuth=error');
     }
   }
 );
+
+// Exchange one-time auth code for session (sets HttpOnly cookie)
+app.post('/api/auth/exchange-code', async (req, res) => {
+  const { code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ error: 'Auth code required' });
+  }
+
+  const authData = consumeAuthCode(code);
+
+  if (!authData) {
+    return res.status(401).json({ error: 'Invalid or expired auth code' });
+  }
+
+  // Set HttpOnly cookie with the token
+  res.cookie('justtype_token', authData.token, getAuthCookieOptions());
+
+  res.json({
+    user: {
+      id: authData.userId,
+      username: authData.username,
+      email: authData.email,
+      email_verified: authData.emailVerified
+    },
+    isNewUser: authData.isNewUser
+  });
+});
 
 // Google OAuth for linking existing account
 app.get('/auth/google/link', (req, res, next) => {
@@ -1146,7 +1367,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 });
 
 // Update slate
-app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('updateSlate'), async (req, res) => {
+app.put('/api/slates/:id', authenticateToken, async (req, res) => {
   const { title, content } = req.body;
 
   // Check content size (5 MB limit)
@@ -1158,11 +1379,53 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
     });
   }
 
+  // Apply rate limiting
+  const rateLimitMiddleware = createRateLimitMiddleware('updateSlate');
+  await new Promise((resolve, reject) => {
+    rateLimitMiddleware(req, res, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  }).catch(err => {
+    return res.status(429).json({ error: 'Too many requests' });
+  });
+
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // Get encryption key - handle based on slate type and user auth method
+    let encryptionKey = null;
+
+    if (!slate.is_system_slate) {
+      // Normal slates need encryption
+      // Check if user is a Google user with encrypted_key
+      const user = db.prepare('SELECT auth_provider, encrypted_key, encryption_salt FROM users WHERE id = ?').get(req.user.id);
+
+      if (user && (user.auth_provider === 'google' || user.auth_provider === 'both') && user.encrypted_key) {
+        // Decrypt the encryption key for Google users
+        try {
+          encryptionKey = decryptEncryptionKey(user.encrypted_key);
+        } catch (error) {
+          console.error('Failed to decrypt Google user encryption key:', error);
+          return res.status(500).json({
+            error: 'Failed to access encryption key',
+            code: 'ENCRYPTION_KEY_ERROR'
+          });
+        }
+      } else {
+        // Password-based users: check cache
+        encryptionKey = getCachedEncryptionKey(req.user.id);
+        if (!encryptionKey) {
+          return res.status(401).json({
+            error: 'Encryption key missing. Please re-login to continue.',
+            code: 'ENCRYPTION_KEY_MISSING'
+          });
+        }
+      }
     }
 
     // Check storage limit (account for size difference)
@@ -1174,13 +1437,12 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
       }
     }
 
-    // Use encryption key from middleware (already verified to exist)
-    const encryptionKey = req.encryptionKey;
-
-    // Auto-unpublish if slate is currently published
+    // Auto-unpublish if slate is currently published (unless it's a system slate)
     // This prevents accidentally publishing work-in-progress changes
     let wasUnpublished = false;
-    if (slate.is_published) {
+    let newPublicFileId = slate.b2_public_file_id;
+
+    if (slate.is_published && !slate.is_system_slate) {
       wasUnpublished = true;
 
       // Delete public B2 copy if it exists
@@ -1191,11 +1453,22 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
           console.warn('Failed to delete public B2 file:', err);
         }
       }
+      newPublicFileId = null;
     }
 
-    // Upload new version to B2 (encrypted)
-    const slateId = `${req.user.id}-${Date.now()}`;
-    const b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
+    // Upload new version to B2
+    let b2FileId;
+
+    if (slate.is_system_slate) {
+      // System slates: upload once unencrypted, use same file for both private and public
+      const slateId = `system-${slate.share_id}-${Date.now()}`;
+      b2FileId = await b2Storage.uploadSlate(slateId, content, null);
+      newPublicFileId = b2FileId; // Same file for both
+    } else {
+      // Normal slates: upload encrypted
+      const slateId = `${req.user.id}-${Date.now()}`;
+      b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
+    }
 
     // Delete old version from B2
     try {
@@ -1204,19 +1477,30 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
       console.warn('Failed to delete old B2 file:', err);
     }
 
+    // Delete old public file if it's different from the main file
+    if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) {
+      try {
+        await b2Storage.deleteSlate(slate.b2_public_file_id);
+      } catch (err) {
+        console.warn('Failed to delete old public B2 file:', err);
+      }
+    }
+
     // Calculate stats
     const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
     const charCount = content.length;
     const sizeBytes = Buffer.byteLength(content, 'utf8');
 
-    // Update database - unpublish if it was published (but keep published_at for history)
+    // Update database - keep system slates published, unpublish normal slates
+    const newPublishedState = slate.is_system_slate ? slate.is_published : 0;
+    const encryptionVersion = slate.is_system_slate ? 0 : (encryptionKey ? 1 : 0);
     const stmt = db.prepare(`
       UPDATE slates
       SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
-          is_published = ?, b2_public_file_id = NULL, updated_at = CURRENT_TIMESTAMP
+          is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `);
-    stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0, 0, req.params.id, req.user.id);
+    stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -1229,6 +1513,8 @@ app.put('/api/slates/:id', authenticateToken, requireEncryptionKey, createRateLi
       word_count: wordCount,
       char_count: charCount,
       was_unpublished: wasUnpublished,
+      is_published: newPublishedState === 1,
+      share_id: slate.share_id,
       slateCount: currentSlateCount.count
     });
   } catch (error) {
@@ -1318,6 +1604,11 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       return res.status(404).json({ error: 'Slate not found' });
     }
 
+    // Protect system slates from deletion
+    if (slate.is_system_slate) {
+      return res.status(403).json({ error: 'System slates cannot be deleted' });
+    }
+
     // Delete from B2
     try {
       await b2Storage.deleteSlate(slate.b2_file_id);
@@ -1350,7 +1641,7 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
 app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlate'), async (req, res) => {
   try {
     const slate = db.prepare(`
-      SELECT slates.*, users.username, users.supporter_tier, users.supporter_badge_visible
+      SELECT slates.*, users.username, users.supporter_tier, users.supporter_badge_visible, users.is_system_user
       FROM slates
       JOIN users ON slates.user_id = users.id
       WHERE slates.share_id = ? AND slates.is_published = 1
@@ -1374,7 +1665,9 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
     `).run(slate.id);
 
     // Set cache headers BEFORE fetching from B2
-    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600'); // 5min browser, 10min nginx
+    // Use no-cache to force revalidation on every request (checks ETag)
+    // This prevents stale content after edits while still allowing 304 responses
+    res.setHeader('Cache-Control', 'public, no-cache, must-revalidate');
     res.setHeader('ETag', etag);
     res.setHeader('Last-Modified', new Date(slate.updated_at).toUTCString());
 
@@ -1384,10 +1677,13 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
     // Fetch content from B2 (public slates are always unencrypted)
     const content = await b2Storage.getSlate(fileIdToFetch, null);
 
+    // Display "alfaoz" for system users
+    const displayUsername = slate.is_system_user ? 'alfaoz' : slate.username;
+
     res.json({
       title: slate.title,
       content,
-      author: slate.username,
+      author: displayUsername,
       supporter_tier: slate.supporter_tier,
       supporter_badge_visible: slate.supporter_badge_visible === 1,
       word_count: slate.word_count,
@@ -1502,8 +1798,14 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
       details: { page, limit, total }
     });
 
+    // Mask emails for privacy - admins don't need to see full emails
+    const maskedUsers = users.map(user => ({
+      ...user,
+      email: maskEmail(user.email)
+    }));
+
     res.json({
-      users,
+      users: maskedUsers,
       pagination: {
         page,
         limit,
@@ -1553,7 +1855,7 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
       ipAddress: req.adminIp,
       details: {
         username: user.username,
-        email: user.email,
+        email: maskEmail(user.email),
         slatesDeleted: slates.length
       }
     });
@@ -1810,9 +2112,10 @@ app.get('/api/admin/stripe-subscriptions', authenticateAdmin, (req, res) => {
       totalRevenue: subscriptions.filter(s => s.supporter_tier === 'quarterly').length * 700 // 7 EUR per quarter
     };
 
-    // Mark subscriptions with issues
+    // Mark subscriptions with issues and mask emails for privacy
     const enrichedSubscriptions = subscriptions.map(sub => ({
       ...sub,
+      email: maskEmail(sub.email),
       is_test_data: sub.stripe_customer_id && sub.stripe_customer_id.startsWith('test_cus_')
     }));
 
@@ -1956,7 +2259,7 @@ app.post('/api/admin/stripe-action', authenticateAdmin, async (req, res) => {
             subject: strings.email.subscriptionCancelledImmediate.subject,
             text: strings.email.subscriptionCancelledImmediate.body(user.username)
           }).then(() => {
-            console.log(`✓ Immediate cancellation email sent to ${user.email}`);
+            console.log(`✓ Immediate cancellation email sent to user #${userId}`);
           }).catch(err => console.error('Failed to send immediate cancellation email:', err));
         }
 
@@ -2110,6 +2413,9 @@ app.post('/api/account/verify-email-change', authenticateToken, async (req, res)
 // Get active sessions
 app.get('/api/account/sessions', authenticateToken, async (req, res) => {
   try {
+    // Get user's IP tracking preference
+    const user = db.prepare('SELECT track_ip_address FROM users WHERE id = ?').get(req.user.id);
+
     const sessions = db.prepare(`
       SELECT
         device,
@@ -2129,10 +2435,37 @@ app.get('/api/account/sessions', authenticateToken, async (req, res) => {
       req.user.id
     );
 
-    res.json({ sessions });
+    res.json({
+      sessions,
+      track_ip_address: user ? user.track_ip_address === 1 : true
+    });
   } catch (error) {
     console.error('Get sessions error:', error);
     res.status(500).json({ error: 'Failed to get sessions' });
+  }
+});
+
+// Toggle IP address tracking
+app.post('/api/account/toggle-ip-tracking', authenticateToken, async (req, res) => {
+  try {
+    const { enabled } = req.body;
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'Invalid value for enabled' });
+    }
+
+    // Update user preference
+    db.prepare('UPDATE users SET track_ip_address = ? WHERE id = ?').run(enabled ? 1 : 0, req.user.id);
+
+    // If disabling, clear IP addresses from existing sessions
+    if (!enabled) {
+      db.prepare('UPDATE sessions SET ip_address = NULL WHERE user_id = ?').run(req.user.id);
+    }
+
+    res.json({ success: true, track_ip_address: enabled });
+  } catch (error) {
+    console.error('Toggle IP tracking error:', error);
+    res.status(500).json({ error: 'Failed to update IP tracking preference' });
   }
 });
 
@@ -2215,6 +2548,30 @@ app.post('/api/user/visit', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Track visit error:', error);
     res.status(500).json({ error: 'Failed to track visit' });
+  }
+});
+
+// Logout from a specific session
+app.post('/api/account/logout-session', authenticateToken, async (req, res) => {
+  try {
+    const { token_hash } = req.body;
+
+    if (!token_hash) {
+      return res.status(400).json({ error: 'Session token hash required' });
+    }
+
+    // Delete the specific session (must belong to the user)
+    const result = db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash = ?')
+      .run(req.user.id, token_hash);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    res.json({ message: 'Session logged out successfully' });
+  } catch (error) {
+    console.error('Logout session error:', error);
+    res.status(500).json({ error: 'Failed to logout session' });
   }
 });
 
@@ -2333,7 +2690,7 @@ app.post('/api/account/export-slates', authenticateToken, exportSlatesLimiter, a
           }]
         });
 
-        console.log(`✓ Exported ${slates.length} slates for user ${req.user.id} (${user.email})`);
+        console.log(`✓ Exported ${slates.length} slates for user #${req.user.id}`);
       } catch (err) {
         console.error('Export processing error:', err);
         // Try to send error email
@@ -2688,7 +3045,7 @@ app.get('/s/:shareId', async (req, res) => {
   try {
     // Fetch slate data
     const slate = db.prepare(`
-      SELECT slates.*, users.username
+      SELECT slates.*, users.username, users.is_system_user
       FROM slates
       JOIN users ON slates.user_id = users.id
       WHERE slates.share_id = ? AND slates.is_published = 1
@@ -2696,6 +3053,9 @@ app.get('/s/:shareId', async (req, res) => {
 
     // If slate not found, serve regular index.html (React will show error)
     if (!slate) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       return res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
     }
 
@@ -2714,7 +3074,9 @@ app.get('/s/:shareId', async (req, res) => {
     const ogTitle = slate.title.length > maxOgTitleLength
       ? `${slate.title.substring(0, maxOgTitleLength)}...`
       : slate.title;
-    const description = `slate by ${slate.username}`;
+    // Display "alfaoz" for system users
+    const displayUsername = slate.is_system_user ? 'alfaoz' : slate.username;
+    const description = `slate by ${displayUsername}`;
     const pageTitle = description; // Use "slate by [user]" as page title
     const url = `${process.env.PUBLIC_URL}/s/${slate.share_id}`;
 
@@ -2754,18 +3116,34 @@ app.get('/s/:shareId', async (req, res) => {
       `${additionalMetaTags}\n  </head>`
     );
 
+    // Set cache headers to prevent caching entirely
+    // This ensures users always get fresh HTML with correct JS/CSS hashes
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.send(html);
   } catch (error) {
     console.error('Error rendering slate page:', error);
     // Fallback to regular index.html
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 });
 
+// Helper to serve index.html with no-cache headers
+const serveIndexHtml = (res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+};
+
 // Serve index.html for all non-API routes (SPA routing)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  serveIndexHtml(res);
 });
 
 // ============ PERIODIC CLEANUP ============

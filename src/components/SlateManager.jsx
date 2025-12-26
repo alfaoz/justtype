@@ -32,7 +32,7 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
     setLoading(true);
     try {
       const response = await fetch(`${API_URL}/slates`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
       const data = await response.json();
       setSlates(data);
@@ -62,7 +62,7 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
     try {
       const response = await fetch(`${API_URL}/slates/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include'
       });
 
       if (response.ok) {
@@ -85,10 +85,8 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
     try {
       const response = await fetch(`${API_URL}/slates/${id}/publish`, {
         method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ isPublished: !currentlyPublished }),
       });
 

@@ -35,6 +35,7 @@ export function AuthModal({ onClose, onAuth }) {
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // Required for HttpOnly cookie auth
         body: JSON.stringify(body),
       });
 
@@ -439,25 +440,28 @@ export function AuthModal({ onClose, onAuth }) {
           </div>
 
           {!isLogin && (
-            <div className="flex items-start gap-2 pt-2">
-              <input
-                type="checkbox"
-                name="terms"
-                id="terms"
-                required
-                className="mt-1"
-              />
-              <label htmlFor="terms" className="text-xs opacity-70">
-                i agree to the{' '}
-                <a href="/terms" target="_blank" className="text-white hover:underline">
-                  terms
-                </a>
-                {' '}&{' '}
-                <a href="/privacy" target="_blank" className="text-white hover:underline">
-                  privacy policy
-                </a>
-              </label>
-            </div>
+            <>
+              <div className="flex items-start gap-2 pt-2">
+                <input
+                  type="checkbox"
+                  name="terms"
+                  id="terms"
+                  required
+                  className="mt-1"
+                />
+                <label htmlFor="terms" className="text-xs opacity-70">
+                  i agree to the{' '}
+                  <a href="/terms" target="_blank" className="text-white hover:underline">
+                    terms
+                  </a>
+                  {' '}&{' '}
+                  <a href="/privacy" target="_blank" className="text-white hover:underline">
+                    privacy policy
+                  </a>
+                </label>
+              </div>
+              <p className="text-xs opacity-50 mt-2">{strings.auth.signup.privacyNote}</p>
+            </>
           )}
 
           {success && (

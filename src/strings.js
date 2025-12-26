@@ -25,9 +25,32 @@ const strings = {
       on: 'zen mode on',
       off: 'zen mode off'
     },
+    menu: {
+      theme: 'theme',
+      lightMode: 'light mode',
+      darkMode: 'dark mode'
+    },
     stats: {
       words: (count) => `${count} words`,
       chars: (count) => `${count} chars`
+    },
+    editingOptions: {
+      title: 'editing',
+      viMode: {
+        label: 'vi mode',
+        enabled: 'vi mode enabled',
+        disabled: 'vi mode disabled',
+        quiz: {
+          title: 'enable vi mode?',
+          question: 'what command quits vi?',
+          placeholder: 'enter command',
+          hint: 'hint: starts with :',
+          correct: 'correct! vi mode enabled',
+          incorrect: 'not quite. try again!',
+          confirm: 'enable',
+          cancel: 'cancel'
+        }
+      }
     },
     buttons: {
       about: 'about',
@@ -67,6 +90,11 @@ const strings = {
       title: 'about justtype',
       description: 'minimalist writing app with cloud storage and sharing.',
       encryption: 'your slates are encrypted with AES-256-GCM. private slates stay encrypted, published ones are public.',
+      links: {
+        terms: 'terms',
+        privacy: 'privacy',
+        project: 'project'
+      },
       version: (v) => `version ${v}`,
       close: 'close'
     }
@@ -129,7 +157,8 @@ const strings = {
       confirmPasswordPlaceholder: 'confirm password',
       submit: 'create account',
       haveAccount: 'already have an account?',
-      loginLink: 'login'
+      loginLink: 'login',
+      privacyNote: 'we store your IP for session security. you can disable this in account settings.'
     },
     verify: {
       title: 'verify your email',
@@ -170,15 +199,21 @@ const strings = {
     sessions: {
       title: 'sessions',
       loading: 'loading sessions...',
-      count: (count) => `active sessions: ${count}`,
-      unknownDevice: 'Unknown Device',
-      unknownIp: 'Unknown IP',
+      count: (count) => `${count} active ${count === 1 ? 'session' : 'sessions'}`,
+      unknownDevice: 'unknown device',
+      unknownIp: 'unknown ip',
       localhost: 'localhost',
-      currentBadge: 'current',
-      lastActive: (time) => `last active: ${time}`,
-      created: (time) => `created: ${time}`,
+      currentBadge: 'this device',
+      trackIp: 'track ip addresses',
+      trackIpDescription: 'store ip addresses for sessions. when disabled, only device info is shown.',
+      lastActive: (time) => `last active ${time}`,
+      created: (time) => `created ${time}`,
       logout: 'logout',
-      logoutAll: 'logout all sessions',
+      signOut: 'sign out',
+      signOutThisDevice: 'sign out this device',
+      signingOut: 'signing out...',
+      logoutAll: 'sign out all other sessions',
+      logoutEverywhere: 'sign out everywhere',
       loggingOut: 'logging out...',
       time: {
         justNow: 'just now',
@@ -187,13 +222,20 @@ const strings = {
         daysAgo: (days) => `${days}d ago`
       },
       modal: {
-        title: 'logout from all devices?',
-        message: 'you will need to login again on all devices, including this one.',
-        confirm: 'logout all',
+        title: 'sign out all other sessions?',
+        message: 'this will sign you out from all devices except this one.',
+        confirm: 'sign out all',
+        cancel: 'cancel'
+      },
+      everywhereModal: {
+        title: 'sign out everywhere?',
+        message: 'this will sign you out from all devices including this one. you will need to login again.',
+        confirm: 'sign out everywhere',
         cancel: 'cancel'
       },
       errors: {
-        logoutAllFailed: 'Failed to logout from all sessions'
+        logoutAllFailed: 'failed to logout from all sessions',
+        logoutSessionFailed: 'failed to logout session'
       }
     },
     danger: {
@@ -414,7 +456,9 @@ const strings = {
       chars: (count) => `${count} chars`,
       updated: (date) => `updated: ${date}`
     },
-    report: 'report'
+    report: 'report',
+    copy: 'copy',
+    copied: 'copied!'
   },
 
   // 404 not found
