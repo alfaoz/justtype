@@ -34,6 +34,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'off'); // 'off' | 'on' | 'auto'
+  const [showCounter, setShowCounter] = useState(() => localStorage.getItem('justtype-show-counter') !== 'false');
+  const autoZenTimeoutRef = useRef(null);
+  const autoZenActiveRef = useRef(false);
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
@@ -86,6 +91,80 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     localStorage.setItem('justtype-punto', punto);
   }, [punto]);
 
+  // Save focus mode preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('justtype-focus-mode', focusMode);
+  }, [focusMode]);
+
+  // Save counter visibility to localStorage
+  useEffect(() => {
+    localStorage.setItem('justtype-show-counter', showCounter.toString());
+  }, [showCounter]);
+
+  // Handle focus mode changes
+  useEffect(() => {
+    if (focusMode === 'on') {
+      setZenMode(true);
+    } else if (focusMode === 'off') {
+      setZenMode(false);
+      autoZenActiveRef.current = false;
+    } else if (focusMode === 'auto') {
+      // Reset to off state, auto will kick in when typing
+      setZenMode(false);
+      autoZenActiveRef.current = false;
+    }
+  }, [focusMode]);
+
+  // Auto focus: enter zen mode when typing, exit on mouse move or after 3 seconds of inactivity
+  useEffect(() => {
+    if (focusMode !== 'auto') return;
+
+    const handleTyping = (e) => {
+      // Only trigger on actual typing in the textarea, not shortcuts
+      if (e.target !== textareaRef.current) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Enter zen mode if not already in it
+      if (!zenMode && !autoZenActiveRef.current) {
+        setZenMode(true);
+        autoZenActiveRef.current = true;
+      }
+
+      // Reset the inactivity timer
+      if (autoZenTimeoutRef.current) {
+        clearTimeout(autoZenTimeoutRef.current);
+      }
+
+      autoZenTimeoutRef.current = setTimeout(() => {
+        if (autoZenActiveRef.current) {
+          setZenMode(false);
+          autoZenActiveRef.current = false;
+        }
+      }, 3000);
+    };
+
+    const handleMouseMove = () => {
+      // Exit zen mode on any mouse movement
+      if (autoZenActiveRef.current) {
+        if (autoZenTimeoutRef.current) {
+          clearTimeout(autoZenTimeoutRef.current);
+        }
+        setZenMode(false);
+        autoZenActiveRef.current = false;
+      }
+    };
+
+    window.addEventListener('keydown', handleTyping);
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('keydown', handleTyping);
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (autoZenTimeoutRef.current) {
+        clearTimeout(autoZenTimeoutRef.current);
+      }
+    };
+  }, [focusMode, zenMode]);
+
   // Handle menu close with animation
   const handleCloseMenu = () => {
     if (!showSettingsMenu) return;
@@ -123,7 +202,9 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target)) {
         if (showSettingsMenu && !isMenuClosing) {
           setIsMenuClosing(true);
+          // Delay hiding menu buttons until after animation completes
           setTimeout(() => {
+            setShowMenuButton(false);
             setShowSettingsMenu(false);
             setIsMenuClosing(false);
           }, 500);
@@ -297,10 +378,10 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         }
       }
 
-      // Cmd/Ctrl + X: Export as TXT
-      if (cmdOrCtrl && e.key === 'x') {
+      // Cmd/Ctrl + E: Open export menu
+      if (cmdOrCtrl && e.key === 'e') {
         e.preventDefault();
-        exportToTxt();
+        setShowExportMenu(true);
       }
 
       // Cmd/Ctrl + P: Export as PDF
@@ -721,6 +802,21 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     }
   };
 
+  const cycleFocus = () => {
+    const modes = ['off', 'on', 'auto'];
+    const currentIndex = modes.indexOf(focusMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    setFocusMode(modes[nextIndex]);
+  };
+
+  const getFocusLabel = () => {
+    switch (focusMode) {
+      case 'on': return 'focus';
+      case 'auto': return 'focus: auto';
+      default: return 'focus: off';
+    }
+  };
+
   return (
     <div className="relative flex flex-col bg-[#111111] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
@@ -748,23 +844,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
           {/* Left Controls */}
           <div className="flex items-center gap-6 min-h-[32px] relative" ref={settingsMenuRef}>
-            {/* Zen mode and counter - fade out when menu expands */}
-            <div className={`flex gap-6 items-center transition-opacity duration-500 ${showSettingsMenu && !isMenuClosing ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-              <button
-                onClick={() => setZenMode(!zenMode)}
-                className={`transition-colors duration-200 ${zenMode ? 'text-white' : 'hover:text-white'}`}
-              >
-                {zenMode ? strings.writer.zenMode.on : strings.writer.zenMode.off}
-              </button>
-              <span className="opacity-30">|</span>
-              <div className="opacity-50 flex gap-4">
-                <span>{strings.writer.stats.words(wordCount)}</span>
-                <span>{strings.writer.stats.chars(charCount)}</span>
-              </div>
-              <span className="opacity-30">|</span>
-            </div>
-
-            {/* Three dots button - animates with JS-calculated transform */}
+            {/* Three dots button */}
             <button
               ref={threeDotsRef}
               onClick={handleToggleMenu}
@@ -785,7 +865,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             {/* Menu buttons - appear after animation, slide in from three dots position */}
             {showMenuButton && (
               <div
-                className="absolute left-12 flex items-center gap-2 animate-[fadeInFromLeft_0.4s_ease-out_both]"
+                className={`absolute left-12 flex items-center gap-2 transition-opacity duration-500 ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
                 style={{ zIndex: 150 }}
               >
                 <button
@@ -803,6 +883,30 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 >
                   {getPuntoLabel()}
                 </button>
+                <span className="opacity-30">·</span>
+                <button
+                  onClick={cycleFocus}
+                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                >
+                  {getFocusLabel()}
+                </button>
+                <span className="opacity-30">·</span>
+                <button
+                  onClick={() => setShowCounter(!showCounter)}
+                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                >
+                  {showCounter ? 'counter: on' : 'counter: off'}
+                </button>
+              </div>
+            )}
+
+            {/* Counter - shown when enabled, fades when menu opens */}
+            {showCounter && (
+              <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu && !isMenuClosing ? 'opacity-0' : 'opacity-50'}`}>
+                <span>{strings.writer.stats.words(wordCount)}</span>
+                <span>{strings.writer.stats.chars(charCount)}</span>
               </div>
             )}
           </div>
@@ -910,18 +1014,11 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   className="absolute bottom-full right-0 mb-1 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[140px]"
                 >
                   <button
-                    onClick={exportToTxt}
+                    onClick={() => setShowExportMenu(true)}
                     className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200 flex justify-between items-center"
                   >
-                    <span>{strings.writer.buttons.exportTxt}</span>
-                    <span className="text-xs opacity-50 ml-4">⌘X</span>
-                  </button>
-                  <button
-                    onClick={exportToPdf}
-                    className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200 flex justify-between items-center"
-                  >
-                    <span>{strings.writer.buttons.exportPdf}</span>
-                    <span className="text-xs opacity-50 ml-4">⌘P</span>
+                    <span>export</span>
+                    <span className="text-xs opacity-50 ml-4">⌘E</span>
                   </button>
                 </div>
               )}
@@ -951,16 +1048,18 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             <div className="flex flex-col gap-6">
 
               {/* Stats */}
-              <div className="flex gap-4 text-sm opacity-70">
-                <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
-                  <div className="text-2xl font-bold text-white">{wordCount}</div>
-                  <div className="text-xs">words</div>
+              {showCounter && (
+                <div className="flex gap-4 text-sm opacity-70">
+                  <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
+                    <div className="text-2xl font-bold text-white">{wordCount}</div>
+                    <div className="text-xs">words</div>
+                  </div>
+                  <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
+                    <div className="text-2xl font-bold text-white">{charCount}</div>
+                    <div className="text-xs">characters</div>
+                  </div>
                 </div>
-                <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
-                  <div className="text-2xl font-bold text-white">{charCount}</div>
-                  <div className="text-xs">characters</div>
-                </div>
-              </div>
+              )}
 
               {/* Settings */}
               <div className="flex gap-4 text-sm">
@@ -975,6 +1074,22 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
                 >
                   font: {getPuntoLabel()}
+                </button>
+              </div>
+
+              {/* Focus and counter toggles */}
+              <div className="flex gap-4 text-sm">
+                <button
+                  onClick={cycleFocus}
+                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
+                >
+                  {getFocusLabel()}
+                </button>
+                <button
+                  onClick={() => setShowCounter(!showCounter)}
+                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
+                >
+                  {showCounter ? 'counter: on' : 'counter: off'}
                 </button>
               </div>
 
@@ -1010,27 +1125,16 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 {strings.writer.menu.saveToAccount}
               </button>
 
-              {/* Export Options */}
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={() => {
-                    exportToTxt();
-                    setShowMobileMenu(false);
-                  }}
-                  className="p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
-                >
-                  {strings.writer.menu.exportAsTXT}
-                </button>
-                <button
-                  onClick={() => {
-                    exportToPdf();
-                    setShowMobileMenu(false);
-                  }}
-                  className="p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
-                >
-                  {strings.writer.menu.exportAsPDF}
-                </button>
-              </div>
+              {/* Export Option */}
+              <button
+                onClick={() => {
+                  setShowMobileMenu(false);
+                  setShowExportMenu(true);
+                }}
+                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+              >
+                export slate
+              </button>
 
               {/* About Button */}
               <div className="border-t border-[#333] pt-4">
@@ -1299,6 +1403,41 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 {strings.subscription.alreadySubscribed.closeButton}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Modal */}
+      {showExportMenu && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowExportMenu(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-white mb-6">export slate</h2>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  exportToTxt();
+                  setShowExportMenu(false);
+                }}
+                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+              >
+                {strings.writer.buttons.exportTxt}
+              </button>
+              <button
+                onClick={() => {
+                  exportToPdf();
+                  setShowExportMenu(false);
+                }}
+                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+              >
+                {strings.writer.buttons.exportPdf}
+              </button>
+            </div>
+            <button
+              onClick={() => setShowExportMenu(false)}
+              className="mt-6 w-full border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+            >
+              cancel
+            </button>
           </div>
         </div>
       )}
