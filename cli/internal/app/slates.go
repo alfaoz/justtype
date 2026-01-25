@@ -28,6 +28,11 @@ func (app *App) showSlates() {
 
 		subtitle := fmt.Sprintf("%d words  %s", slate.WordCount, formatTimeAgo(slate.UpdatedAt))
 
+		// Add publish status
+		if slate.IsPublished {
+			subtitle += "  [published]"
+		}
+
 		// Capture slate in closure
 		s := slate
 		list.AddItem(title, subtitle, 0, func() {
@@ -41,7 +46,7 @@ func (app *App) showSlates() {
 		SetBackgroundColor(colorBackground)
 
 	help := tview.NewTextView().
-		SetText("enter open · n new · d delete · esc back").
+		SetText("enter open · n new · p publish · d delete · esc back").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(colorDim)
 	help.SetBorder(false).SetBackgroundColor(colorBackground)
@@ -59,6 +64,14 @@ func (app *App) showSlates() {
 		case 'n':
 			app.currentSlate = nil
 			app.showEditor(nil)
+			return nil
+
+		case 'p':
+			idx := list.GetCurrentItem()
+			if idx >= 0 && idx < len(app.slates) {
+				slate := app.slates[idx]
+				app.handlePublish(slate)
+			}
 			return nil
 
 		case 'd':
@@ -103,6 +116,82 @@ func (app *App) confirmDelete(slate *storage.Slate) {
 		SetButtonTextColor(colorForeground)
 
 	app.pages.AddPage("confirm-delete", modal, true, true)
+}
+
+func (app *App) handlePublish(slate *storage.Slate) {
+	// Only works with cloud storage
+	cs, ok := app.storage.(*storage.CloudStorage)
+	if !ok {
+		modal := tview.NewModal().
+			SetText("Publishing requires cloud sync.\n\nPlease login to publish slates.").
+			AddButtons([]string{"OK"}).
+			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+				app.pages.RemovePage("publish-error")
+			}).
+			SetBackgroundColor(colorBackground).
+			SetTextColor(colorForeground).
+			SetButtonBackgroundColor(colorPurple).
+			SetButtonTextColor(colorForeground)
+
+		app.pages.AddPage("publish-error", modal, true, true)
+		return
+	}
+
+	if slate.IsPublished {
+		// Unpublish
+		modal := tview.NewModal().
+			SetText(fmt.Sprintf("unpublish \"%s\"?", slate.Title)).
+			AddButtons([]string{"Unpublish", "Cancel"}).
+			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+				app.pages.RemovePage("confirm-unpublish")
+				if buttonIndex == 0 {
+					go func() {
+						if err := cs.Unpublish(slate); err != nil {
+							app.tviewApp.QueueUpdateDraw(func() {
+								app.showError(fmt.Sprintf("Failed to unpublish: %v", err))
+							})
+							return
+						}
+						app.tviewApp.QueueUpdateDraw(func() {
+							app.showSlates()
+						})
+					}()
+				}
+			}).
+			SetBackgroundColor(colorBackground).
+			SetTextColor(colorForeground).
+			SetButtonBackgroundColor(colorPurple).
+			SetButtonTextColor(colorForeground)
+
+		app.pages.AddPage("confirm-unpublish", modal, true, true)
+	} else {
+		// Publish
+		go func() {
+			shareURL, err := cs.Publish(slate)
+			if err != nil {
+				app.tviewApp.QueueUpdateDraw(func() {
+					app.showError(fmt.Sprintf("Failed to publish: %v", err))
+				})
+				return
+			}
+
+			app.tviewApp.QueueUpdateDraw(func() {
+				modal := tview.NewModal().
+					SetText(fmt.Sprintf("Published!\n\n%s", shareURL)).
+					AddButtons([]string{"OK"}).
+					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+						app.pages.RemovePage("publish-success")
+						app.showSlates()
+					}).
+					SetBackgroundColor(colorBackground).
+					SetTextColor(colorGreen).
+					SetButtonBackgroundColor(colorPurple).
+					SetButtonTextColor(colorForeground)
+
+				app.pages.AddPage("publish-success", modal, true, true)
+			})
+		}()
+	}
 }
 
 func formatTimeAgo(t time.Time) string {

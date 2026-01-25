@@ -20,6 +20,10 @@ func (app *App) showMenu() {
 			app.pages.RemovePage("menu")
 			app.showSettings()
 		}).
+		AddItem("help", "", 'h', func() {
+			app.pages.RemovePage("menu")
+			app.showHelp()
+		}).
 		AddItem("quit", "", 'q', func() {
 			app.Close()
 			app.tviewApp.Stop()

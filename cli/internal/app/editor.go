@@ -92,6 +92,13 @@ func (app *App) showEditor(slate *storage.Slate) {
 			return nil
 		}
 
+		// ? shows help
+		if event.Rune() == '?' {
+			app.saveNow()
+			app.showHelp()
+			return nil
+		}
+
 		// Ctrl+S force save
 		if event.Key() == tcell.KeyCtrlS {
 			app.saveNow()
@@ -122,7 +129,7 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc menu[-]")
+	parts = append(parts, "[#666666]esc menu · ? help[-]")
 
 	footer.SetText(joinParts(parts))
 }
