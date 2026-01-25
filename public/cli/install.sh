@@ -83,8 +83,9 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     fi
 
     if [ -n "$SHELL_CONFIG" ]; then
-        # Check if PATH export already exists in config
-        if ! grep -q "export PATH.*$INSTALL_DIR" "$SHELL_CONFIG" 2>/dev/null; then
+        # Check if PATH export already exists in config (check for both literal path and $HOME)
+        if ! grep -q 'export PATH.*\.local/bin' "$SHELL_CONFIG" 2>/dev/null && \
+           ! grep -q "export PATH.*$INSTALL_DIR" "$SHELL_CONFIG" 2>/dev/null; then
             echo "Adding $INSTALL_DIR to PATH in $SHELL_CONFIG..."
             echo "" >> "$SHELL_CONFIG"
             echo "# Added by justtype installer" >> "$SHELL_CONFIG"
