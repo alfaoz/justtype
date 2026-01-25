@@ -12,13 +12,13 @@ func (app *App) showHelp() {
 [white]editor[-]
   esc           quit menu
   ctrl+k        command palette
-  ctrl+s        force save
+  ctrl+s        save
 
 [white]command palette[-]
   n             new slate
   a             all slates
   h             help
-  s             force save
+  s             save
   e             settings
   esc           back to editor
 
@@ -36,12 +36,11 @@ func (app *App) showHelp() {
   esc           back to editor
 
 [white]workflow[-]
-  1. write in editor (auto-saves after 2 seconds)
+  1. write in editor (press ctrl+s to save)
   2. press ctrl+k → a (all slates)
   3. select your slate → press p to publish
   4. copy share URL from modal
 
-[dim]new slates save after 10+ words[-]
 [dim]local mode: publishing requires cloud sync[-]`
 
 	textView := tview.NewTextView().

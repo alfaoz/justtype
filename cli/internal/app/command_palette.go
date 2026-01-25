@@ -39,8 +39,8 @@ func (app *App) showCommandPalette() {
 			},
 		},
 		{
-			Label:       "force save",
-			Description: "save current slate immediately",
+			Label:       "save",
+			Description: "save current slate",
 			Action: func() {
 				app.pages.RemovePage("command_palette")
 				app.tviewApp.SetFocus(app.editor)

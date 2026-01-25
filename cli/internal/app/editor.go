@@ -36,11 +36,10 @@ func (app *App) showEditor(slate *storage.Slate) {
 			Foreground(colorDim)
 		app.editor.SetPlaceholderStyle(placeholderStyle)
 
-		// On text change, trigger auto-save
+		// On text change, mark as dirty but don't auto-save
 		app.editor.SetChangedFunc(func() {
 			app.isDirty = true
 			app.saveStatus = ""
-			app.scheduleAutoSave()
 		})
 	}
 
@@ -159,24 +158,9 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc quit · ctrl+k commands[-]")
+	parts = append(parts, "[#666666]esc quit · ctrl+k commands · ctrl+s save[-]")
 
 	footer.SetText(joinParts(parts))
-}
-
-func (app *App) scheduleAutoSave() {
-	if app.saveTimer != nil {
-		app.saveTimer.Stop()
-	}
-
-	// Show "saving..." immediately
-	app.saveStatus = "saving..."
-
-	app.saveTimer = time.AfterFunc(2*time.Second, func() {
-		app.tviewApp.QueueUpdateDraw(func() {
-			app.saveNow()
-		})
-	})
 }
 
 func (app *App) saveNow() {
@@ -189,16 +173,6 @@ func (app *App) saveNow() {
 		app.isDirty = false
 		app.saveStatus = ""
 		return
-	}
-
-	// For new slates, require minimum 10 words before creating
-	if app.currentSlate == nil {
-		words := storage.CountWords(content)
-		if words < 10 {
-			app.isDirty = false
-			app.saveStatus = ""
-			return
-		}
 	}
 
 	// Show "saving..." status
