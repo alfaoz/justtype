@@ -15,9 +15,11 @@ export function CliPair({ token, username, onLogin }) {
   useEffect(() => {
     if (initialCode && token && initialCode.length >= 6 && !loading && !success) {
       setLoading(true);
+      console.log('Auto-submitting code:', initialCode);
       // Auto-submit after a brief delay
       const timer = setTimeout(async () => {
         try {
+          console.log('Sending approve request...');
           const response = await fetch(`${API_URL}/cli/approve`, {
             method: 'POST',
             headers: {
@@ -27,7 +29,9 @@ export function CliPair({ token, username, onLogin }) {
             body: JSON.stringify({ user_code: initialCode.toUpperCase().trim() })
           });
 
+          console.log('Response status:', response.status);
           const data = await response.json();
+          console.log('Response data:', data);
 
           if (!response.ok) {
             setError(data.error || 'failed to authorize');
@@ -38,7 +42,8 @@ export function CliPair({ token, username, onLogin }) {
           setSuccess(true);
           setLoading(false);
         } catch (err) {
-          setError('network error');
+          console.error('Error approving device:', err);
+          setError('network error: ' + err.message);
           setLoading(false);
         }
       }, 500);
@@ -106,6 +111,17 @@ export function CliPair({ token, username, onLogin }) {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
+        <div className="max-w-md w-full text-center">
+          <h1 className="text-xl text-[#8B5CF6] mb-4">authorizing...</h1>
+          <p className="text-[#666666]">connecting cli to your account</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
       <div className="max-w-md w-full">
@@ -124,20 +140,19 @@ export function CliPair({ token, username, onLogin }) {
               maxLength={7}
               className="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333333] rounded text-[#d4d4d4] text-center text-2xl font-mono tracking-wider focus:outline-none focus:border-[#8B5CF6] transition"
               autoFocus
-              disabled={loading}
             />
           </div>
 
           {error && (
-            <div className="text-[#EF4444] text-sm text-center">{error}</div>
+            <div className="bg-[#EF4444]/10 border border-[#EF4444] rounded p-3 text-[#EF4444] text-sm text-center">{error}</div>
           )}
 
           <button
             type="submit"
-            disabled={loading || code.length < 6}
+            disabled={code.length < 6}
             className="w-full py-3 bg-[#8B5CF6] text-white rounded hover:bg-[#7C3AED] transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? 'authorizing...' : 'authorize'}
+            authorize
           </button>
         </form>
 
