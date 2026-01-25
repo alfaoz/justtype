@@ -41,7 +41,7 @@ export function CliPair({ token, onLogin }) {
   // Redirect to login if not logged in
   if (!token) {
     return (
-      <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
         <div className="max-w-md w-full text-center">
           <h1 className="text-xl text-white mb-4">authorize justtype cli by entering the code shown in your terminal</h1>
           <p className="text-[#666666] mb-8">you need to be logged in first</p>
@@ -58,7 +58,7 @@ export function CliPair({ token, onLogin }) {
 
   if (success) {
     return (
-      <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
+      <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
         <div className="max-w-md w-full text-center">
           <div className="text-6xl mb-4">✓</div>
           <h1 className="text-xl text-[#10B981] mb-4">authorized!</h1>
@@ -69,7 +69,7 @@ export function CliPair({ token, onLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
       <div className="max-w-md w-full">
         <h1 className="text-xl text-white mb-8 text-center leading-relaxed">authorize justtype cli by entering the code shown in your terminal</h1>
 
