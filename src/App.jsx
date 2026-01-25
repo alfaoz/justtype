@@ -574,7 +574,21 @@ export default function App() {
   // CLI Pair
   if (view === 'cli-pair') {
     return (
-      <>
+      <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+          html, body, #root {
+            height: 100%;
+            overflow: hidden;
+          }
+          body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #111111;
+            margin: 0;
+            padding: 0;
+          }
+        `}</style>
+
         <CliPair token={token} username={username} onLogin={() => setShowAuthModal(true)} />
         {showAuthModal && (
           <AuthModal
@@ -582,7 +596,7 @@ export default function App() {
             onAuth={handleAuth}
           />
         )}
-      </>
+      </div>
     );
   }
 
