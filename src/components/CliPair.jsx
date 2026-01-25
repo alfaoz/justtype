@@ -34,9 +34,9 @@ export function CliPair({ token, username, onLogin }) {
           const response = await fetch(`${API_URL}/cli/approve`, {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
+              'Content-Type': 'application/json'
             },
+            credentials: 'include', // Use HttpOnly cookie for auth
             body: JSON.stringify({ user_code: initialCode.toUpperCase().trim() })
           });
 
@@ -79,9 +79,9 @@ export function CliPair({ token, username, onLogin }) {
       const response = await fetch(`${API_URL}/cli/approve`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
+        credentials: 'include', // Use HttpOnly cookie for auth
         body: JSON.stringify({ user_code: code.toUpperCase().trim() })
       });
 

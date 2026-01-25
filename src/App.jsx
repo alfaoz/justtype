@@ -573,7 +573,17 @@ export default function App() {
 
   // CLI Pair
   if (view === 'cli-pair') {
-    return <CliPair token={token} username={username} onLogin={() => setShowAuthModal(true)} />;
+    return (
+      <>
+        <CliPair token={token} username={username} onLogin={() => setShowAuthModal(true)} />
+        {showAuthModal && (
+          <AuthModal
+            onClose={() => setShowAuthModal(false)}
+            onAuth={handleAuth}
+          />
+        )}
+      </>
+    );
   }
 
   return (
