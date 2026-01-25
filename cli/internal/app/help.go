@@ -12,6 +12,7 @@ func (app *App) showHelp() {
 [white]editor[-]
   ctrl+k        command palette
   ctrl+s        force save
+  ctrl+c        quit
 
 [white]command palette[-]
   n             new slate
@@ -19,13 +20,6 @@ func (app *App) showHelp() {
   h             help
   s             force save
   e             settings
-  q             quit
-  esc           quit menu
-
-[white]quit menu[-]
-  q             quit
-  l             logout (if cloud mode)
-  c             cancel
   esc           back to editor
 
 [white]all slates[-]
