@@ -103,14 +103,15 @@ func (app *App) Run() error {
 
 func (app *App) initStorage() error {
 	if app.token != "" {
-		// Cloud storage
-		storagePath := app.getDefaultStoragePath()
-		cloud, err := storage.NewCloud(storagePath, app.apiURL, app.token, app.username)
+		// Cloud storage - use temp dir instead of persistent storage
+		homeDir, _ := os.UserHomeDir()
+		tempDir := filepath.Join(homeDir, ".justtype", "temp")
+		cloud, err := storage.NewCloud(tempDir, app.apiURL, app.token, app.username)
 		if err != nil {
 			return err
 		}
 		app.storage = cloud
-		app.storagePath = storagePath
+		app.storagePath = tempDir
 		app.isCloud = true
 	} else if app.storagePath != "" {
 		// Local storage
@@ -124,18 +125,7 @@ func (app *App) initStorage() error {
 		return fmt.Errorf("no storage configured")
 	}
 
-	// Load slates
-	slates, err := app.storage.List()
-	if err != nil {
-		return err
-	}
-	app.slates = slates
-
-	// Load most recent slate
-	if len(app.slates) > 0 {
-		app.currentSlate = app.slates[0]
-	}
-
+	// Don't load slates on init - fetch on demand
 	return nil
 }
 

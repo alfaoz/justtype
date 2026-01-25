@@ -13,32 +13,29 @@ func (app *App) showSlates() {
 	list := tview.NewList()
 	list.ShowSecondaryText(true)
 
-	// Refresh slates
+	// Fetch slates from cloud (not cached)
 	if app.storage != nil {
-		slates, _ := app.storage.List()
-		app.slates = slates
+		list.AddItem("loading slates...", "", 0, nil)
+
+		go func() {
+			slates, err := app.storage.List()
+			if err != nil {
+				app.tviewApp.QueueUpdateDraw(func() {
+					app.showError(fmt.Sprintf("Failed to load slates: %v", err))
+				})
+				return
+			}
+
+			app.slates = slates
+
+			app.tviewApp.QueueUpdateDraw(func() {
+				list.Clear()
+				app.populateSlatesList(list)
+			})
+		}()
 	}
 
-	// Add slates to list
-	for _, slate := range app.slates {
-		title := slate.Title
-		if title == "" {
-			title = "untitled"
-		}
-
-		subtitle := fmt.Sprintf("%d words  %s", slate.WordCount, formatTimeAgo(slate.UpdatedAt))
-
-		// Add publish status
-		if slate.IsPublished {
-			subtitle += "  [published]"
-		}
-
-		// Capture slate in closure
-		s := slate
-		list.AddItem(title, subtitle, 0, func() {
-			app.showEditor(s)
-		})
-	}
+	app.populateSlatesList(list)
 
 	list.SetBorder(true).
 		SetTitle(" my slates ").
@@ -60,31 +57,29 @@ func (app *App) showSlates() {
 
 	// Handle keys
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		switch event.Rune() {
-		case 'n':
-			app.currentSlate = nil
+		if event.Key() == tcell.KeyEsc {
+			app.showEditor(app.currentSlate)
+			return nil
+		}
+
+		if event.Rune() == 'n' {
 			app.showEditor(nil)
 			return nil
+		}
 
-		case 'p':
+		if event.Rune() == 'd' {
 			idx := list.GetCurrentItem()
 			if idx >= 0 && idx < len(app.slates) {
-				slate := app.slates[idx]
-				app.handlePublish(slate)
-			}
-			return nil
-
-		case 'd':
-			idx := list.GetCurrentItem()
-			if idx >= 0 && idx < len(app.slates) {
-				slate := app.slates[idx]
-				app.confirmDelete(slate)
+				app.confirmDelete(app.slates[idx])
 			}
 			return nil
 		}
 
-		if event.Key() == tcell.KeyEsc {
-			app.showEditor(app.currentSlate)
+		if event.Rune() == 'p' {
+			idx := list.GetCurrentItem()
+			if idx >= 0 && idx < len(app.slates) {
+				app.handlePublish(app.slates[idx])
+			}
 			return nil
 		}
 
@@ -93,6 +88,29 @@ func (app *App) showSlates() {
 
 	app.pages.AddAndSwitchToPage(PageSlates, layout, true)
 	app.tviewApp.SetFocus(list)
+}
+
+func (app *App) populateSlatesList(list *tview.List) {
+	// Add slates to list
+	for _, slate := range app.slates {
+		title := slate.Title
+		if title == "" {
+			title = "untitled"
+		}
+
+		subtitle := fmt.Sprintf("%d words  %s", slate.WordCount, formatTimeAgo(slate.UpdatedAt))
+
+		// Add publish status
+		if slate.IsPublished {
+			subtitle += "  [published]"
+		}
+
+		// Capture slate in closure
+		s := slate
+		list.AddItem(title, subtitle, 0, func() {
+			app.showEditor(s)
+		})
+	}
 }
 
 func (app *App) confirmDelete(slate *storage.Slate) {
