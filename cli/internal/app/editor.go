@@ -196,7 +196,12 @@ func (app *App) saveNow() {
 	}
 
 	if app.storage != nil {
-		app.storage.Save(app.currentSlate)
+		err := app.storage.Save(app.currentSlate)
+		if err != nil {
+			app.saveStatus = fmt.Sprintf("error: %v", err)
+			app.isDirty = true // Keep dirty flag since save failed
+			return
+		}
 	}
 
 	app.isDirty = false

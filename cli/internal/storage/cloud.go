@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/justtype/cli/internal/updater"
@@ -46,9 +47,21 @@ func (cs *CloudStorage) Save(slate *Slate) error {
 	// Save to temp file (for current editing session only)
 	cs.saveTempFile(slate)
 
+	// Extract title from first line if not set
+	title := slate.Title
+	if title == "" && slate.Content != "" {
+		lines := strings.Split(slate.Content, "\n")
+		if len(lines) > 0 {
+			title = strings.TrimSpace(lines[0])
+			if len(title) > 100 {
+				title = title[:100]
+			}
+		}
+	}
+
 	// Push to cloud immediately (not in background)
 	body := map[string]string{
-		"title":   slate.Title,
+		"title":   title,
 		"content": slate.Content,
 	}
 
