@@ -1,0 +1,140 @@
+package app
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gdamore/tcell/v2"
+	"github.com/justtype/cli/internal/storage"
+	"github.com/rivo/tview"
+)
+
+func (app *App) showSlates() {
+	list := tview.NewList()
+	list.ShowSecondaryText(true)
+
+	// Refresh slates
+	if app.storage != nil {
+		slates, _ := app.storage.List()
+		app.slates = slates
+	}
+
+	// Add slates to list
+	for _, slate := range app.slates {
+		title := slate.Title
+		if title == "" {
+			title = "untitled"
+		}
+
+		subtitle := fmt.Sprintf("%d words  %s", slate.WordCount, formatTimeAgo(slate.UpdatedAt))
+
+		// Capture slate in closure
+		s := slate
+		list.AddItem(title, subtitle, 0, func() {
+			app.showEditor(s)
+		})
+	}
+
+	list.SetBorder(true).
+		SetTitle(" my slates ").
+		SetTitleAlign(tview.AlignLeft).
+		SetBackgroundColor(colorBackground)
+
+	help := tview.NewTextView().
+		SetText("enter open · n new · d delete · esc back").
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(colorDim)
+	help.SetBorder(false).SetBackgroundColor(colorBackground)
+
+	layout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(list, 0, 1, true).
+		AddItem(help, 1, 0, false)
+
+	layout.SetBackgroundColor(colorBackground)
+
+	// Handle keys
+	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Rune() {
+		case 'n':
+			app.currentSlate = nil
+			app.showEditor(nil)
+			return nil
+
+		case 'd':
+			idx := list.GetCurrentItem()
+			if idx >= 0 && idx < len(app.slates) {
+				slate := app.slates[idx]
+				app.confirmDelete(slate)
+			}
+			return nil
+		}
+
+		if event.Key() == tcell.KeyEsc {
+			app.showEditor(app.currentSlate)
+			return nil
+		}
+
+		return event
+	})
+
+	app.pages.AddAndSwitchToPage(PageSlates, layout, true)
+	app.tviewApp.SetFocus(list)
+}
+
+func (app *App) confirmDelete(slate *storage.Slate) {
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("delete \"%s\"?", slate.Title)).
+		AddButtons([]string{"Delete", "Cancel"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			app.pages.RemovePage("confirm-delete")
+			if buttonIndex == 0 {
+				// Delete
+				if app.storage != nil {
+					app.storage.Delete(slate.ID)
+				}
+				app.showSlates()
+			}
+		})
+
+	modal.SetBackgroundColor(colorBackground).
+		SetTextColor(colorForeground).
+		SetButtonBackgroundColor(colorPurple).
+		SetButtonTextColor(colorForeground)
+
+	app.pages.AddPage("confirm-delete", modal, true, true)
+}
+
+func formatTimeAgo(t time.Time) string {
+	diff := time.Since(t)
+
+	if diff < time.Minute {
+		return "just now"
+	}
+	if diff < time.Hour {
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "1 min ago"
+		}
+		return fmt.Sprintf("%d mins ago", mins)
+	}
+	if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	if diff < 48*time.Hour {
+		return "yesterday"
+	}
+	days := int(diff.Hours() / 24)
+	if days < 7 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	if days < 30 {
+		weeks := days / 7
+		return fmt.Sprintf("%dw ago", weeks)
+	}
+	return t.Format("Jan 2")
+}

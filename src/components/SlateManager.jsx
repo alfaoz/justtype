@@ -7,6 +7,14 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
   const [loading, setLoading] = useState(true);
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
+
+  // Persist view mode to localStorage
+  useEffect(() => {
+    localStorage.setItem('justtype-slate-view', viewMode);
+  }, [viewMode]);
 
   useEffect(() => {
     if (token) {
@@ -130,6 +138,28 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  // Filter and sort slates
+  const filteredAndSortedSlates = slates
+    .filter(slate => {
+      if (!searchQuery.trim()) return true;
+      return slate.title.toLowerCase().includes(searchQuery.toLowerCase());
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':
+          return new Date(a.updated_at) - new Date(b.updated_at);
+        case 'a-z':
+          return a.title.localeCompare(b.title);
+        case 'z-a':
+          return b.title.localeCompare(a.title);
+        case 'words':
+          return b.word_count - a.word_count;
+        case 'recent':
+        default:
+          return new Date(b.updated_at) - new Date(a.updated_at);
+      }
+    });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -141,15 +171,82 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
-        <div className="flex justify-between items-center mb-6 md:mb-8">
-        <h1 className="text-xl md:text-2xl text-white">{strings.slates.title}</h1>
-        <button
-          onClick={onNewSlate}
-          className="border border-[#333] px-4 md:px-6 py-2 rounded hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 text-xs md:text-sm"
-        >
-          {strings.slates.newSlate}
-        </button>
-      </div>
+        <div className="flex justify-between items-center mb-4 md:mb-6">
+          <h1 className="text-xl md:text-2xl text-white">{strings.slates.title}</h1>
+          <button
+            onClick={onNewSlate}
+            className="border border-[#333] px-4 md:px-6 py-2 rounded hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 text-xs md:text-sm"
+          >
+            {strings.slates.newSlate}
+          </button>
+        </div>
+
+        {/* Search and Sort Controls */}
+        {slates.length > 0 && (
+          <div className="flex flex-col md:flex-row gap-3 mb-6">
+            {/* Search */}
+            <div className="flex-1">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="search slates..."
+                className="w-full bg-[#1a1a1a] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
+              />
+            </div>
+            {/* Sort */}
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-[#666]">sort:</span>
+              <div className="flex gap-1 flex-wrap">
+                {[
+                  { id: 'recent', label: 'recent' },
+                  { id: 'oldest', label: 'oldest' },
+                  { id: 'a-z', label: 'a-z' },
+                  { id: 'z-a', label: 'z-a' },
+                  { id: 'words', label: 'words' },
+                ].map(option => (
+                  <button
+                    key={option.id}
+                    onClick={() => setSortBy(option.id)}
+                    className={`px-2 py-1 rounded transition-colors ${
+                      sortBy === option.id
+                        ? 'bg-[#333] text-white'
+                        : 'text-[#666] hover:text-white'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* View Mode Toggle */}
+            <div className="flex items-center border border-[#333] rounded overflow-hidden">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-2 transition-colors ${viewMode === 'list' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                title="list view"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                  <rect x="1" y="2" width="14" height="2" rx="0.5"/>
+                  <rect x="1" y="7" width="14" height="2" rx="0.5"/>
+                  <rect x="1" y="12" width="14" height="2" rx="0.5"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`p-2 transition-colors ${viewMode === 'grid' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                title="grid view"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                  <rect x="1" y="1" width="6" height="6" rx="1"/>
+                  <rect x="9" y="1" width="6" height="6" rx="1"/>
+                  <rect x="1" y="9" width="6" height="6" rx="1"/>
+                  <rect x="9" y="9" width="6" height="6" rx="1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
 
       {slates.length === 0 ? (
         <div className="text-center py-16">
@@ -161,9 +258,14 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
             {strings.slates.empty.cta}
           </button>
         </div>
-      ) : (
+      ) : filteredAndSortedSlates.length === 0 ? (
+        <div className="text-center py-16">
+          <p className="text-[#666] text-sm md:text-base">no slates match "{searchQuery}"</p>
+        </div>
+      ) : viewMode === 'list' ? (
+        /* List View */
         <div className="space-y-3">
-          {slates.map((slate) => (
+          {filteredAndSortedSlates.map((slate) => (
             <div
               key={slate.id}
               onClick={() => onSelectSlate(slate)}
@@ -218,7 +320,7 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
                         onClick={(e) => togglePublish(slate.id, slate.is_published, e)}
                         className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
                       >
-                        {slate.is_published ? strings.slates.menu.unpublish : strings.slates.menu.publish}
+                        {slate.is_published ? 'make private' : 'make public'}
                       </button>
                       <button
                         onClick={(e) => {
@@ -232,6 +334,63 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Grid View */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredAndSortedSlates.map((slate) => (
+            <div
+              key={slate.id}
+              onClick={() => onSelectSlate(slate)}
+              className="bg-[#1a1a1a] border border-[#333] p-4 rounded hover:border-[#666] transition-all cursor-pointer group flex flex-col"
+            >
+              <div className="flex justify-between items-start gap-2 mb-3">
+                <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">{slate.title}</h3>
+                <div className="relative flex-shrink-0">
+                  <button
+                    onClick={(e) => toggleMenu(slate.id, e)}
+                    className="md:opacity-0 md:group-hover:opacity-100 opacity-100 text-[#666] hover:text-white transition-opacity p-1"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                      <circle cx="8" cy="2" r="1.5"/>
+                      <circle cx="8" cy="8" r="1.5"/>
+                      <circle cx="8" cy="14" r="1.5"/>
+                    </svg>
+                  </button>
+                  {openMenuId === slate.id && (
+                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[140px] z-10">
+                      <button
+                        onClick={(e) => togglePublish(slate.id, slate.is_published, e)}
+                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                      >
+                        {slate.is_published ? 'make private' : 'make public'}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          setOpenMenuId(null);
+                          showDeleteConfirmation(slate.id, slate.title, e);
+                        }}
+                        className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
+                      >
+                        {strings.slates.menu.delete}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-xs text-[#666] space-y-1 mt-auto">
+                <div className="flex justify-between">
+                  <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
+                  <span>{formatDateShort(slate.updated_at)}</span>
+                </div>
+                {slate.is_published ? (
+                  <div className="text-blue-400 text-xs">public</div>
+                ) : slate.published_at ? (
+                  <div className="text-orange-400 text-xs">draft (was public)</div>
+                ) : null}
               </div>
             </div>
           ))}

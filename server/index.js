@@ -174,11 +174,24 @@ const getCachedEncryptionKey = (userId) => {
   return null;
 };
 
-// CORS configuration - only allow our domain
+// CORS configuration - allow our domain and CLI requests
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? ['https://justtype.io', 'https://www.justtype.io']
-    : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (CLI, mobile apps, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    const allowedOrigins = process.env.NODE_ENV === 'production'
+      ? ['https://justtype.io', 'https://www.justtype.io']
+      : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'];
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true // Required for HttpOnly cookies
 }));
 
@@ -542,6 +555,21 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
   }
 }));
 
+// Serve CLI binaries from public/cli directory
+app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    // Set correct content type for shell scripts
+    if (filePath.endsWith('.sh')) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
+    // Set download headers for tar.gz files
+    if (filePath.endsWith('.tar.gz')) {
+      res.setHeader('Content-Type', 'application/gzip');
+    }
+  }
+}));
+
 // Helper function to parse device info from user agent
 const parseDevice = (userAgent) => {
   if (!userAgent) return 'Unknown Device';
@@ -857,7 +885,11 @@ app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res)
       // Set HttpOnly cookie
       res.cookie('justtype_token', token, getAuthCookieOptions());
 
+      // Check if this is a CLI request - include token in response
+      const isCLI = req.headers['user-agent']?.includes('justtype-cli');
+
       return res.json({
+        token: isCLI ? token : undefined,
         user: {
           id: user.id,
           username: user.username,
@@ -876,7 +908,11 @@ app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res)
     // Set HttpOnly cookie
     res.cookie('justtype_token', token, getAuthCookieOptions());
 
+    // Check if this is a CLI request - include token in response
+    const isCLI = req.headers['user-agent']?.includes('justtype-cli');
+
     res.json({
+      token: isCLI ? token : undefined,
       user: {
         id: user.id,
         username: user.username,
@@ -961,6 +997,280 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
     console.error('Get user info error:', error);
     res.status(500).json({ error: 'Failed to get user info' });
   }
+});
+
+// Verify token (for CLI and other clients)
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT id, username, email FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.json({ valid: false });
+    }
+
+    res.json({
+      valid: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    console.error('Token verify error:', error);
+    res.json({ valid: false });
+  }
+});
+
+// ============================================================================
+// CLI OAuth Device Flow
+// ============================================================================
+
+// Generate device code
+app.post('/api/cli/device-code', createRateLimitMiddleware('deviceCode'), (req, res) => {
+  try {
+    // Generate codes
+    const deviceCode = crypto.randomBytes(32).toString('hex');
+    const userCode = generateUserCode();
+    const expiresIn = 600; // 10 minutes
+    const interval = 5; // Poll every 5 seconds
+    const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+
+    // Store in database
+    db.prepare(`
+      INSERT INTO cli_device_codes (device_code, user_code, expires_at)
+      VALUES (?, ?, ?)
+    `).run(deviceCode, userCode, expiresAt);
+
+    res.json({
+      device_code: deviceCode,
+      user_code: userCode,
+      verification_uri: `${req.protocol}://${req.get('host')}/pair`,
+      expires_in: expiresIn,
+      interval: interval
+    });
+  } catch (error) {
+    console.error('Device code error:', error);
+    res.status(500).json({ error: 'Failed to generate device code' });
+  }
+});
+
+// Approve device code (from browser)
+app.post('/api/cli/approve', authenticateToken, createRateLimitMiddleware('approveDevice'), (req, res) => {
+  const { user_code } = req.body;
+
+  if (!user_code) {
+    return res.status(400).json({ error: 'Missing user_code' });
+  }
+
+  try {
+    const now = Math.floor(Date.now() / 1000);
+
+    // Find the device code
+    const deviceCode = db.prepare(`
+      SELECT * FROM cli_device_codes
+      WHERE user_code = ? AND expires_at > ? AND approved = 0
+    `).get(user_code, now);
+
+    if (!deviceCode) {
+      return res.status(404).json({ error: 'Invalid or expired code' });
+    }
+
+    // Approve it
+    db.prepare(`
+      UPDATE cli_device_codes
+      SET approved = 1, user_id = ?
+      WHERE user_code = ?
+    `).run(req.user.id, user_code);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Approve device error:', error);
+    res.status(500).json({ error: 'Failed to approve device' });
+  }
+});
+
+// Poll for token (from CLI)
+app.post('/api/cli/token', createRateLimitMiddleware('pollToken'), (req, res) => {
+  const { device_code } = req.body;
+
+  if (!device_code) {
+    return res.status(400).json({ error: 'Missing device_code' });
+  }
+
+  try {
+    const now = Math.floor(Date.now() / 1000);
+
+    // Find the device code
+    const record = db.prepare(`
+      SELECT * FROM cli_device_codes
+      WHERE device_code = ?
+    `).get(device_code);
+
+    if (!record) {
+      return res.json({ error: 'invalid_request' });
+    }
+
+    // Check if expired
+    if (record.expires_at < now) {
+      return res.json({ error: 'expired' });
+    }
+
+    // Check if approved
+    if (record.approved === 0) {
+      return res.json({ status: 'pending' });
+    }
+
+    // Approved! Generate token
+    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(record.user_id);
+
+    if (!user) {
+      return res.json({ error: 'user_not_found' });
+    }
+
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '90d' });
+
+    // Delete the device code (one-time use)
+    db.prepare('DELETE FROM cli_device_codes WHERE device_code = ?').run(device_code);
+
+    res.json({
+      token: token,
+      username: user.username
+    });
+  } catch (error) {
+    console.error('Token poll error:', error);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// Helper to generate user-friendly codes (e.g., "ABC-123")
+function generateUserCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars
+  let code = '';
+  for (let i = 0; i < 3; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  code += '-';
+  for (let i = 0; i < 3; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+// ============================================================================
+// End CLI OAuth Device Flow
+// ============================================================================
+
+// CLI auth flow - redirects browser back to CLI with token
+app.get('/cli-auth', (req, res) => {
+  const { redirect } = req.query;
+
+  if (!redirect) {
+    return res.status(400).send('Missing redirect parameter');
+  }
+
+  // Validate redirect is to localhost
+  try {
+    const redirectUrl = new URL(redirect);
+    if (redirectUrl.hostname !== '127.0.0.1' && redirectUrl.hostname !== 'localhost') {
+      return res.status(400).send('Invalid redirect URL');
+    }
+  } catch {
+    return res.status(400).send('Invalid redirect URL');
+  }
+
+  // Serve a simple login page that will redirect back to CLI
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>justtype CLI Login</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: system-ui, -apple-system, sans-serif;
+          background: #0a0a0a;
+          color: #fff;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .container {
+          max-width: 400px;
+          padding: 2rem;
+          text-align: center;
+        }
+        h1 { margin-bottom: 1rem; font-size: 1.5rem; }
+        p { color: #888; margin-bottom: 2rem; }
+        form { display: flex; flex-direction: column; gap: 1rem; }
+        input {
+          background: #1a1a1a;
+          border: 1px solid #333;
+          color: #fff;
+          padding: 0.75rem 1rem;
+          border-radius: 6px;
+          font-size: 1rem;
+        }
+        input:focus { outline: none; border-color: #666; }
+        button {
+          background: #fff;
+          color: #000;
+          border: none;
+          padding: 0.75rem 1rem;
+          border-radius: 6px;
+          font-size: 1rem;
+          cursor: pointer;
+          font-weight: 500;
+        }
+        button:hover { background: #eee; }
+        .error { color: #f55; margin-top: 1rem; }
+        .or { color: #666; margin: 1rem 0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>justtype CLI</h1>
+        <p>Log in to authorize the CLI</p>
+        <form id="loginForm">
+          <input type="text" name="username" placeholder="username or email" required autocomplete="username">
+          <input type="password" name="password" placeholder="password" required autocomplete="current-password">
+          <button type="submit">log in</button>
+        </form>
+        <div class="error" id="error" style="display: none;"></div>
+      </div>
+      <script>
+        const redirect = ${JSON.stringify(redirect)};
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const form = e.target;
+          const username = form.username.value;
+          const password = form.password.value;
+          const errorEl = document.getElementById('error');
+
+          try {
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+
+            if (res.ok && data.token) {
+              window.location.href = redirect + '/callback?token=' + encodeURIComponent(data.token);
+            } else {
+              errorEl.textContent = data.error || 'Login failed';
+              errorEl.style.display = 'block';
+            }
+          } catch (err) {
+            errorEl.textContent = 'Connection error';
+            errorEl.style.display = 'block';
+          }
+        });
+      </script>
+    </body>
+    </html>
+  `);
 });
 
 // Resend verification email
@@ -1247,12 +1557,26 @@ app.get('/auth/google/link/callback',
 // Get all slates for authenticated user
 app.get('/api/slates', authenticateToken, (req, res) => {
   try {
-    const slates = db.prepare(`
-      SELECT id, title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
-      FROM slates
-      WHERE user_id = ?
-      ORDER BY updated_at DESC
-    `).all(req.user.id);
+    const { search } = req.query;
+
+    let slates;
+    if (search && search.trim()) {
+      // Search by title (case-insensitive)
+      const searchTerm = `%${search.trim()}%`;
+      slates = db.prepare(`
+        SELECT id, title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
+        FROM slates
+        WHERE user_id = ? AND title LIKE ?
+        ORDER BY updated_at DESC
+      `).all(req.user.id, searchTerm);
+    } else {
+      slates = db.prepare(`
+        SELECT id, title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
+        FROM slates
+        WHERE user_id = ?
+        ORDER BY updated_at DESC
+      `).all(req.user.id);
+    }
 
     res.json(slates);
   } catch (error) {

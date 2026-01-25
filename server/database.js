@@ -311,6 +311,25 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN is_system_slate BOOLEAN DEFAULT 0;`);
     console.log('✓ Database migrated: Added is_system_slate column to slates');
   }
+
+  // Create CLI device codes table for OAuth device flow
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cli_device_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_code TEXT UNIQUE NOT NULL,
+      user_code TEXT UNIQUE NOT NULL,
+      user_id INTEGER,
+      approved INTEGER DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cli_device_codes_device_code ON cli_device_codes(device_code);
+    CREATE INDEX IF NOT EXISTS idx_cli_device_codes_user_code ON cli_device_codes(user_code);
+    CREATE INDEX IF NOT EXISTS idx_cli_device_codes_expires_at ON cli_device_codes(expires_at);
+  `);
+  console.log('✓ CLI device codes table initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

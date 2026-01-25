@@ -306,3 +306,192 @@ body.light-mode * {
   scrollbar-width: thin;
   scrollbar-color: #d4d2cf transparent;
 }
+
+/* ========================================
+   SEPIA THEME
+   ======================================== */
+body.sepia-mode {
+  background: #f4ecd8;
+  color: #5c4b37;
+}
+
+body.sepia-mode #root {
+  background: #f4ecd8;
+}
+
+body.sepia-mode .bg-\[\#111111\],
+body.sepia-mode .bg-black {
+  background: #f4ecd8 !important;
+}
+
+body.sepia-mode .bg-\[\#1a1a1a\] {
+  background: #faf6eb !important;
+}
+
+body.sepia-mode .bg-\[\#222\] {
+  background: #ebe4d0 !important;
+}
+
+body.sepia-mode .text-white {
+  color: #3d2e1f !important;
+}
+
+body.sepia-mode .text-\[\#d4d4d4\] {
+  color: #5c4b37 !important;
+}
+
+body.sepia-mode .text-\[\#a0a0a0\] {
+  color: #7a6b5a !important;
+}
+
+body.sepia-mode .text-\[\#666\] {
+  color: #9a8b7a !important;
+}
+
+body.sepia-mode .text-\[\#808080\] {
+  color: #8a7b6a !important;
+}
+
+body.sepia-mode .border-\[\#333\],
+body.sepia-mode .border-\[\#222\] {
+  border-color: #d4c4a8 !important;
+}
+
+body.sepia-mode input,
+body.sepia-mode textarea {
+  background: #faf6eb !important;
+  color: #5c4b37 !important;
+  border-color: #d4c4a8 !important;
+}
+
+body.sepia-mode textarea::placeholder {
+  color: #b8a890 !important;
+}
+
+body.sepia-mode .hover\:text-white:hover {
+  color: #3d2e1f !important;
+}
+
+body.sepia-mode .hover\:bg-\[\#333\]:hover {
+  background: #e0d4be !important;
+}
+
+body.sepia-mode .bg-white {
+  background: #3d2e1f !important;
+  color: #f4ecd8 !important;
+}
+
+body.sepia-mode .punto-small,
+body.sepia-mode .punto-base,
+body.sepia-mode .punto-large {
+  color: #5c4b37 !important;
+}
+
+body.sepia-mode ::-webkit-scrollbar-thumb {
+  background: #d4c4a8;
+}
+
+body.sepia-mode ::-webkit-scrollbar-track {
+  background: #f4ecd8;
+}
+
+/* ========================================
+   MIDNIGHT THEME
+   ======================================== */
+body.midnight-mode {
+  background: #0a0a14;
+  color: #c8c8d4;
+}
+
+body.midnight-mode #root {
+  background: #0a0a14;
+}
+
+body.midnight-mode .bg-\[\#111111\],
+body.midnight-mode .bg-black {
+  background: #0a0a14 !important;
+}
+
+body.midnight-mode .bg-\[\#1a1a1a\] {
+  background: #12121e !important;
+}
+
+body.midnight-mode .bg-\[\#222\] {
+  background: #1a1a28 !important;
+}
+
+body.midnight-mode .text-white {
+  color: #e0e0f0 !important;
+}
+
+body.midnight-mode .text-\[\#d4d4d4\] {
+  color: #c8c8d4 !important;
+}
+
+body.midnight-mode .text-\[\#a0a0a0\] {
+  color: #8888a0 !important;
+}
+
+body.midnight-mode .text-\[\#666\] {
+  color: #55556a !important;
+}
+
+body.midnight-mode .text-\[\#808080\] {
+  color: #7878a0 !important;
+}
+
+body.midnight-mode .border-\[\#333\],
+body.midnight-mode .border-\[\#222\] {
+  border-color: #2a2a3a !important;
+}
+
+body.midnight-mode input,
+body.midnight-mode textarea {
+  background: #12121e !important;
+  color: #c8c8d4 !important;
+  border-color: #2a2a3a !important;
+}
+
+body.midnight-mode textarea::placeholder {
+  color: #4a4a5a !important;
+}
+
+body.midnight-mode .hover\:text-white:hover {
+  color: #e0e0f0 !important;
+}
+
+body.midnight-mode .hover\:bg-\[\#333\]:hover {
+  background: #22223a !important;
+}
+
+body.midnight-mode .bg-white {
+  background: #e0e0f0 !important;
+  color: #0a0a14 !important;
+}
+
+body.midnight-mode .punto-small,
+body.midnight-mode .punto-base,
+body.midnight-mode .punto-large {
+  color: #c8c8d4 !important;
+}
+
+body.midnight-mode .text-blue-400 {
+  color: #6366f1 !important;
+}
+
+body.midnight-mode .text-orange-400 {
+  color: #f59e0b !important;
+}
+
+body.midnight-mode .text-green-500,
+body.midnight-mode .text-green-400 {
+  color: #22c55e !important;
+}
+
+body.midnight-mode ::-webkit-scrollbar-thumb {
+  background: #2a2a3a;
+}
+
+body.midnight-mode ::-webkit-scrollbar-track {
+  background: #0a0a14;
+}

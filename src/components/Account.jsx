@@ -52,6 +52,11 @@ export function Account({ token, username, email, emailVerified, authProvider, o
   const [exportingSlates, setExportingSlates] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
 
+  // Collapsible sections state
+  const [showSessions, setShowSessions] = useState(false);
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
+
   useEffect(() => {
     if (token) {
       loadSessions();
@@ -477,133 +482,164 @@ export function Account({ token, username, email, emailVerified, authProvider, o
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-      <h1 className="text-xl md:text-2xl text-white mb-8">{strings.account.title}</h1>
+      <div className="max-w-4xl mx-auto p-4 md:p-8">
+        <h1 className="text-xl md:text-2xl text-white mb-8">{strings.account.title}</h1>
 
-      {/* Account Info + Plan & Support (Merged) */}
-      <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-        <h2 className="text-base md:text-lg text-white mb-4">{strings.account.info.title}</h2>
-        <div className="space-y-3 text-sm">
-          <p><span className="text-[#666]">{strings.account.info.username}</span> <span className="text-white">{username}</span></p>
-          <div className="flex items-center justify-between">
-            <p>
-              <span className="text-[#666]">{strings.account.info.email}</span> <span className="text-white">{email}</span>
-              {emailVerified ? (
-                <span className="ml-2 text-green-400 text-xs">{strings.account.info.verified}</span>
-              ) : (
-                <span className="ml-2 text-yellow-400 text-xs">{strings.account.info.notVerified}</span>
-              )}
-            </p>
-            {authProvider === 'local' && (
-              <button
-                onClick={() => setShowEmailModal(true)}
-                className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
-              >
-                {strings.account.info.change}
-              </button>
-            )}
+        {/* Main Info - Clean text-based layout */}
+        <div className="mb-8 space-y-4 text-sm">
+          {/* Username */}
+          <div className="flex items-center justify-between py-3 border-b border-[#222]">
+            <span className="text-[#666]">username:</span>
+            <span className="text-white">{username}</span>
           </div>
-          <div className="flex items-center justify-between">
-            <p>
-              <span className="text-[#666]">{strings.account.googleAuth.signInMethod} </span>
+
+          {/* Email */}
+          <div className="flex items-center justify-between py-3 border-b border-[#222]">
+            <span className="text-[#666]">email:</span>
+            <div className="flex items-center gap-3">
+              <span className="text-white">{email}</span>
+              {emailVerified ? (
+                <span className="text-green-400 text-xs">verified</span>
+              ) : (
+                <span className="text-yellow-400 text-xs">not verified</span>
+              )}
+              {authProvider === 'local' && (
+                <button
+                  onClick={() => setShowEmailModal(true)}
+                  className="text-[#666] hover:text-white transition-colors text-xs"
+                >
+                  change
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sign in method */}
+          <div className="flex items-center justify-between py-3 border-b border-[#222]">
+            <span className="text-[#666]">sign in method:</span>
+            <div className="flex items-center gap-3">
               <span className="text-white">
                 {authProvider === 'google'
-                  ? strings.account.googleAuth.methods.google
+                  ? 'google'
                   : authProvider === 'both'
-                  ? strings.account.googleAuth.methods.both
-                  : strings.account.googleAuth.methods.password}
+                  ? 'google + password'
+                  : 'password'}
               </span>
-            </p>
-            {authProvider === 'local' && (
-              <button
-                onClick={() => setShowLinkGoogleModal(true)}
-                className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
-              >
-                {strings.account.googleAuth.link.button}
-              </button>
-            )}
-            {authProvider === 'both' && (
-              <button
-                onClick={handleRequestUnlinkGoogle}
-                disabled={requestingUnlink}
-                className="text-red-400 hover:text-red-300 transition-colors text-xs disabled:opacity-50"
-              >
-                {requestingUnlink ? strings.account.googleAuth.unlink.sendingCode : strings.account.googleAuth.unlink.button}
-              </button>
-            )}
+              {authProvider === 'local' && (
+                <button
+                  onClick={() => setShowLinkGoogleModal(true)}
+                  className="text-[#666] hover:text-white transition-colors text-xs"
+                >
+                  + link google
+                </button>
+              )}
+              {authProvider === 'both' && (
+                <button
+                  onClick={handleRequestUnlinkGoogle}
+                  disabled={requestingUnlink}
+                  className="text-red-400 hover:text-red-300 transition-colors text-xs disabled:opacity-50"
+                >
+                  {requestingUnlink ? 'sending...' : 'unlink google'}
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Plan */}
           {!loadingStorage && storageInfo && (
-            <>
-              <div className="flex items-center justify-between">
-                <p>
-                  <span className="text-[#666]">current plan:</span> <span className="text-white">
-                    {storageInfo.supporterTier === 'quarterly' && strings.subscription.manage.plans.quarterly}
-                    {storageInfo.supporterTier === 'one_time' && strings.subscription.manage.plans.oneTime}
-                    {!storageInfo.supporterTier && strings.subscription.manage.plans.free}
-                  </span>
-                </p>
+            <div className="flex items-center justify-between py-3 border-b border-[#222]">
+              <span className="text-[#666]">current plan:</span>
+              <div className="flex items-center gap-3">
+                <span className="text-white">
+                  {storageInfo.supporterTier === 'quarterly' ? 'supporter · unlimited' :
+                   storageInfo.supporterTier === 'one_time' ? 'supporter · 50MB' :
+                   'free · 5MB'}
+                </span>
                 {storageInfo.supporterTier === 'quarterly' && (
                   <button
                     onClick={() => window.location.href = '/manage-subscription'}
-                    className="text-blue-400 hover:text-blue-300 transition-colors text-xs"
+                    className="text-[#666] hover:text-white transition-colors text-xs"
                   >
                     manage
                   </button>
                 )}
+                {!storageInfo.supporterTier && (
+                  <button
+                    onClick={() => window.location.href = '/?donate=quarterly'}
+                    className="text-[#666] hover:text-white transition-colors text-xs"
+                  >
+                    upgrade
+                  </button>
+                )}
               </div>
-              {storageInfo.supporterTier && (
-                <div className="flex items-center justify-between">
-                  <p>
-                    <span className="text-[#666]">show supporter badge on published slates:</span>
-                  </p>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={storageInfo.supporterBadgeVisible}
-                      onChange={async (e) => {
-                        const newValue = e.target.checked;
-                        try {
-                          const response = await fetch(`${API_URL}/account/update-badge-visibility`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({ visible: newValue })
-                          });
-                          if (response.ok) {
-                            setStorageInfo({ ...storageInfo, supporterBadgeVisible: newValue });
-                          } else {
-                            console.error('Failed to update badge visibility');
-                          }
-                        } catch (err) {
-                          console.error('Badge visibility update error:', err);
-                        }
-                      }}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-[#333] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
-                  </label>
-                </div>
-              )}
-            </>
+            </div>
+          )}
+
+          {/* Supporter badge toggle */}
+          {!loadingStorage && storageInfo && storageInfo.supporterTier && (
+            <div className="flex items-center justify-between py-3 border-b border-[#222]">
+              <span className="text-[#666]">supporter badge:</span>
+              <button
+                onClick={async () => {
+                  const newValue = !storageInfo.supporterBadgeVisible;
+                  try {
+                    const response = await fetch(`${API_URL}/account/update-badge-visibility`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({ visible: newValue })
+                    });
+                    if (response.ok) {
+                      setStorageInfo({ ...storageInfo, supporterBadgeVisible: newValue });
+                    }
+                  } catch (err) {
+                    console.error('Badge visibility update error:', err);
+                  }
+                }}
+                className="text-white hover:opacity-70 transition-opacity"
+              >
+                {storageInfo.supporterBadgeVisible ? 'visible' : 'hidden'}
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Upgrade/Support Message */}
+        {/* Quick Actions Row */}
+        <div className="flex flex-wrap gap-3 mb-8 text-sm">
+          <button
+            onClick={onLogout}
+            className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors"
+          >
+            sign out
+          </button>
+          <button
+            onClick={exportSlates}
+            disabled={exportingSlates}
+            className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors disabled:opacity-50"
+          >
+            {exportingSlates ? 'exporting...' : 'export data'}
+          </button>
+          {exportMessage && (
+            <span className={`px-4 py-2 ${exportMessage.includes('started') ? 'text-green-400' : 'text-red-400'}`}>
+              {exportMessage}
+            </span>
+          )}
+        </div>
+
+        {/* Upgrade prompt for free users */}
         {!loadingStorage && storageInfo && !storageInfo.supporterTier && (
-          <div className="mt-4 pt-4 border-t border-[#333]">
-            <p className="text-xs text-[#666] mb-3">
-              support justtype development and get more storage
-            </p>
-            <div className="flex gap-2 flex-wrap">
+          <div className="mb-8 p-4 bg-[#1a1a1a] border border-[#333] rounded">
+            <p className="text-sm text-[#666] mb-3">support justtype and get more storage</p>
+            <div className="flex gap-3 text-sm">
               <button
                 onClick={() => window.location.href = '/?donate=one_time'}
-                className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
+                className="px-4 py-2 bg-[#222] hover:bg-[#333] rounded transition-colors"
               >
                 donate once
               </button>
               <button
                 onClick={() => window.location.href = '/?donate=quarterly'}
-                className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
+                className="px-4 py-2 bg-white text-black hover:bg-[#e5e5e5] rounded transition-colors"
               >
                 subscribe
               </button>
@@ -611,299 +647,178 @@ export function Account({ token, username, email, emailVerified, authProvider, o
           </div>
         )}
 
-        {!loadingStorage && storageInfo && storageInfo.supporterTier === 'one_time' && (
-          <div className="mt-4 pt-4 border-t border-[#333]">
-            <p className="text-xs text-[#666] mb-3">
-              upgrade to quarterly for unlimited storage
+        {/* Grace Period Warning */}
+        {!loadingStorage && storageInfo && storageInfo.inGracePeriod && (
+          <div className="mb-8 p-4 bg-red-900/20 border border-red-500/50 rounded">
+            <p className="text-sm text-red-400 mb-2">storage grace period active</p>
+            <p className="text-xs text-[#a0a0a0] mb-3">
+              {storageInfo.gracePeriodDaysRemaining} days remaining to reduce storage or slates will be deleted.
             </p>
-            <button
-              onClick={() => window.location.href = '/?donate=quarterly'}
-              className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
-            >
-              upgrade to quarterly (7 EUR / 3 months)
-            </button>
+            <a href="/slates" className="text-xs text-white hover:underline">manage slates →</a>
           </div>
         )}
 
-        {!loadingStorage && storageInfo && storageInfo.supporterTier === 'quarterly' && (
-          <div className="mt-4 pt-4 border-t border-[#333]">
-            {storageInfo.subscriptionExpiresAt ? (
-              <>
-                <p className="text-xs text-yellow-400 mb-3">
-                  cancellation successful. remaining: {Math.ceil((new Date(storageInfo.subscriptionExpiresAt) - new Date()) / (1000 * 60 * 60 * 24))} days
-                </p>
-                {storageInfo.storageUsedMB > 50 ? (
-                  <>
-                    <p className="text-xs text-[#666] mb-3">
-                      you're currently using {storageInfo.storageUsedMB.toFixed(2)} MB. your account will remain as a one-time supporter. export your slates to avoid losing files that exceed this limit.
-                    </p>
-                    <button
-                      onClick={exportSlates}
-                      disabled={exportingSlates}
-                      className="text-xs px-3 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
-                    </button>
-                    {exportMessage && (
-                      <p className={`text-xs mt-2 ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
-                        {exportMessage}
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-xs text-[#666]">
-                    your account will remain as a one-time supporter.
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-green-400">
-                thank you for your continued support! you have unlimited storage.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Grace Period Warning - Shows when user exceeds storage after downgrade */}
-      {!loadingStorage && storageInfo && storageInfo.inGracePeriod && (
-        <div className="mb-8 md:mb-12 bg-red-900/20 border border-red-500/50 rounded p-4 md:p-6">
-          <h2 className="text-base md:text-lg text-red-400 mb-4">⚠️ storage grace period active</h2>
-          <div className="space-y-3 text-sm text-[#d4d4d4]">
-            <p>
-              your storage exceeds your current tier's limit.
-            </p>
-            <p className="text-orange-400 font-medium">
-              you have {storageInfo.gracePeriodDaysRemaining} day{storageInfo.gracePeriodDaysRemaining !== 1 ? 's' : ''} remaining to reduce your storage.
-            </p>
-            <p className="text-xs text-[#a0a0a0]">
-              after the grace period expires, your <strong>latest slates will be automatically deleted</strong> until your storage is below the limit.
-            </p>
-            <div className="pt-3 space-y-2">
-              <p className="text-xs text-[#666] mb-2">recommended actions:</p>
-              <button
-                onClick={exportSlates}
-                disabled={exportingSlates}
-                className="w-full text-sm px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {exportingSlates ? 'exporting...' : 'export all slates (sent via email)'}
-              </button>
-              {exportMessage && (
-                <p className={`text-xs ${exportMessage.includes('started') || exportMessage.includes('email') ? 'text-green-400' : 'text-red-400'}`}>
-                  {exportMessage}
-                </p>
-              )}
-              <a
-                href="/slates"
-                className="block w-full text-center text-sm px-4 py-2 bg-[#2a2a2a] hover:bg-[#333] border border-[#444] rounded transition-colors"
-              >
-                manage slates →
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Storage Usage - Only show if >= 80% and not quarterly supporter */}
-      {!loadingStorage && storageInfo && storageInfo.percentage >= 80 && storageInfo.supporterTier !== 'quarterly' && (
-        <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-          <h2 className="text-base md:text-lg text-white mb-4">storage</h2>
-          <div className="space-y-3">
+        {/* Storage Warning */}
+        {!loadingStorage && storageInfo && storageInfo.percentage >= 80 && storageInfo.supporterTier !== 'quarterly' && (
+          <div className="mb-8 p-4 bg-[#1a1a1a] border border-[#333] rounded">
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-[#666]">
-                storage usage
-              </span>
-              <span className={`${
-                storageInfo.percentage >= 100 ? 'text-red-400' :
-                storageInfo.percentage >= 80 ? 'text-orange-400' :
-                'text-green-400'
-              }`}>
+              <span className="text-[#666]">storage</span>
+              <span className={storageInfo.percentage >= 100 ? 'text-red-400' : 'text-orange-400'}>
                 {storageInfo.percentage.toFixed(0)}%
               </span>
             </div>
-
-            {/* Storage Bar */}
-            <div className="w-full bg-[#111111] rounded-full h-2 overflow-hidden">
+            <div className="w-full bg-[#111] rounded-full h-1.5 overflow-hidden">
               <div
-                className={`h-full transition-all duration-300 ${
-                  storageInfo.percentage >= 100 ? 'bg-red-500' :
-                  storageInfo.percentage >= 80 ? 'bg-orange-500' :
-                  'bg-green-500'
-                }`}
+                className={`h-full ${storageInfo.percentage >= 100 ? 'bg-red-500' : 'bg-orange-500'}`}
                 style={{ width: `${Math.min(storageInfo.percentage, 100)}%` }}
               />
             </div>
+          </div>
+        )}
 
-            {/* Warning messages */}
-            {storageInfo.percentage >= 100 && (
-              <p className="text-red-400 text-xs mt-3">
-                you've reached your storage limit. delete some slates or upgrade to continue saving.
-              </p>
+        {/* Collapsible Sections */}
+        <div className="space-y-4">
+          {/* Password Section - Only for local/both auth */}
+          {(authProvider === 'local' || authProvider === 'both') && (
+            <div className="border border-[#333] rounded">
+              <button
+                onClick={() => setShowPasswordSection(!showPasswordSection)}
+                className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
+              >
+                <span>change password</span>
+                <span className="text-[#666]">{showPasswordSection ? '−' : '+'}</span>
+              </button>
+              {showPasswordSection && (
+                <div className="p-4 border-t border-[#333]">
+                  <form onSubmit={handleChangePassword} className="space-y-3">
+                    <input
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="current password"
+                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      required
+                    />
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="new password"
+                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      required
+                    />
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="confirm new password"
+                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      required
+                    />
+                    {passwordError && <p className="text-red-400 text-xs">{passwordError}</p>}
+                    {passwordSuccess && <p className="text-green-400 text-xs">{passwordSuccess}</p>}
+                    <button
+                      type="submit"
+                      disabled={changingPassword}
+                      className="px-4 py-2 bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {changingPassword ? 'changing...' : 'change password'}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sessions Section */}
+          <div className="border border-[#333] rounded">
+            <button
+              onClick={() => setShowSessions(!showSessions)}
+              className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
+            >
+              <span>sessions {!loadingSessions && sessions.length > 0 && `(${sessions.length})`}</span>
+              <span className="text-[#666]">{showSessions ? '−' : '+'}</span>
+            </button>
+            {showSessions && (
+              <div className="p-4 border-t border-[#333]">
+                {loadingSessions ? (
+                  <p className="text-[#666] text-sm">loading...</p>
+                ) : (
+                  <div className="space-y-3">
+                    {sessions.slice(0, 5).map((session, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded text-sm ${
+                          session.is_current === 1 ? 'bg-blue-950/20 border border-blue-500/30' : 'bg-[#111]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-white">{session.device || 'unknown device'}</span>
+                          {session.is_current === 1 && (
+                            <span className="text-blue-400 text-xs">current</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-[#666] mt-1">
+                          {formatSessionDate(session.last_activity)}
+                          {session.ip_address && ` · ${formatIpAddress(session.ip_address)}`}
+                        </div>
+                      </div>
+                    ))}
+                    {sessions.length > 5 && (
+                      <p className="text-xs text-[#666]">+ {sessions.length - 5} more sessions</p>
+                    )}
+
+                    <div className="pt-3 border-t border-[#333]">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={trackIpAddress}
+                          onChange={toggleIpTracking}
+                          disabled={togglingIpTracking}
+                          className="w-4 h-4 rounded border-[#666] bg-[#111] text-blue-500 focus:ring-0"
+                        />
+                        <span className="text-[#a0a0a0]">track IP addresses</span>
+                      </label>
+                    </div>
+
+                    <button
+                      onClick={showLogoutEverywhereConfirmation}
+                      disabled={loggingOutAll}
+                      className="text-red-400 hover:text-red-300 text-sm disabled:opacity-50"
+                    >
+                      {loggingOutAll ? 'logging out...' : 'sign out everywhere'}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
-            {storageInfo.percentage >= 80 && storageInfo.percentage < 100 && (
-              <p className="text-orange-400 text-xs mt-3">
-                you're approaching your storage limit ({storageInfo.percentage.toFixed(0)}% used).
-              </p>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="border border-red-900/50 rounded">
+            <button
+              onClick={() => setShowDangerZone(!showDangerZone)}
+              className="w-full flex items-center justify-between p-4 text-sm hover:bg-red-900/10 transition-colors text-red-400"
+            >
+              <span>danger zone</span>
+              <span>{showDangerZone ? '−' : '+'}</span>
+            </button>
+            {showDangerZone && (
+              <div className="p-4 border-t border-red-900/50">
+                <p className="text-xs text-[#666] mb-3">
+                  permanently delete your account and all data. this cannot be undone.
+                </p>
+                <button
+                  onClick={showDeleteAccountConfirmation}
+                  disabled={deleting}
+                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
+                >
+                  {deleting ? 'deleting...' : 'delete account'}
+                </button>
+              </div>
             )}
           </div>
         </div>
-      )}
-
-      {/* Change Password - Only show for local/both auth users */}
-      {(authProvider === 'local' || authProvider === 'both') && (
-        <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-          <h2 className="text-base md:text-lg text-white mb-4">{strings.account.password.title}</h2>
-          <form onSubmit={handleChangePassword} className="space-y-4">
-            <div>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder={strings.account.password.currentPlaceholder}
-                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-                required
-              />
-            </div>
-            <div>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder={strings.account.password.newPlaceholder}
-                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-                required
-              />
-            </div>
-            <div>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder={strings.account.password.confirmPlaceholder}
-                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-2 md:py-3 focus:outline-none focus:border-[#666] text-white text-sm"
-                required
-              />
-            </div>
-            {passwordError && <p className="text-red-400 text-xs md:text-sm">{passwordError}</p>}
-            {passwordSuccess && <p className="text-green-400 text-xs md:text-sm">{passwordSuccess}</p>}
-            <button
-              type="submit"
-              disabled={changingPassword}
-              className="bg-white text-black px-6 py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
-            >
-              {changingPassword ? strings.account.password.submitting : strings.account.password.submit}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Sessions & Logout */}
-      <div className="mb-8 md:mb-12 bg-[#1a1a1a] border border-[#333] rounded p-4 md:p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base md:text-lg text-white">{strings.account.sessions.title}</h2>
-          {!loadingSessions && sessions.length > 0 && (
-            <span className="text-xs text-[#666]">{strings.account.sessions.count(sessions.length)}</span>
-          )}
-        </div>
-
-        {loadingSessions ? (
-          <p className="text-[#666] text-sm mb-4">{strings.account.sessions.loading}</p>
-        ) : (
-          <>
-            {sessions.length > 0 && (
-              <div className="mb-6 space-y-3">
-                {sessions.map((session, idx) => (
-                  <div
-                    key={idx}
-                    className={`bg-[#111111] border rounded p-4 ${
-                      session.is_current === 1 ? 'border-blue-500/50 bg-blue-950/10' : 'border-[#333]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-white text-sm font-medium truncate">
-                            {session.device || strings.account.sessions.unknownDevice}
-                          </span>
-                          {session.is_current === 1 && (
-                            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full whitespace-nowrap">
-                              {strings.account.sessions.currentBadge}
-                            </span>
-                          )}
-                        </div>
-                        <div className="space-y-1">
-                          {(() => {
-                            const formattedDate = formatSessionDate(session.last_activity);
-                            return formattedDate && (
-                              <p className="text-xs text-[#666]">
-                                {strings.account.sessions.lastActive(formattedDate)}
-                              </p>
-                            );
-                          })()}
-                          {session.ip_address && (
-                            <p className="text-xs text-[#666]">
-                              {formatIpAddress(session.ip_address)}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="mb-6 pb-6 border-b border-[#333]">
-              <label className="flex items-start gap-3 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={trackIpAddress}
-                  onChange={toggleIpTracking}
-                  disabled={togglingIpTracking}
-                  className="mt-0.5 w-4 h-4 rounded border-[#666] bg-[#111111] text-blue-500 focus:ring-0 focus:ring-offset-0 disabled:opacity-50"
-                />
-                <div>
-                  <span className="text-[#d4d4d4] block mb-1">
-                    {strings.account.sessions.trackIp}
-                  </span>
-                  <p className="text-xs text-[#666]">
-                    {strings.account.sessions.trackIpDescription}
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <div className="flex gap-3 flex-wrap">
-              <button
-                onClick={onLogout}
-                className="border border-[#666] text-[#d4d4d4] px-4 py-2 rounded hover:bg-[#333] hover:border-[#999] transition-colors text-sm"
-              >
-                {strings.account.sessions.signOutThisDevice}
-              </button>
-              <button
-                onClick={showLogoutEverywhereConfirmation}
-                disabled={loggingOutAll}
-                className="border border-red-600/50 text-red-400 px-4 py-2 rounded hover:bg-red-900/20 hover:border-red-600 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loggingOutAll ? strings.account.sessions.loggingOut : strings.account.sessions.logoutEverywhere}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Delete Account */}
-      <div className="bg-[#1a1a1a] border border-red-900 rounded p-4 md:p-6">
-        <h2 className="text-base md:text-lg text-red-400 mb-2">{strings.account.danger.title}</h2>
-        <p className="text-xs md:text-sm text-[#666] mb-4">{strings.account.danger.warning}</p>
-        <button
-          onClick={showDeleteAccountConfirmation}
-          disabled={deleting}
-          className="bg-red-600 text-white px-6 py-2 md:py-3 rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
-        >
-          {deleting ? strings.account.danger.submitting : strings.account.danger.submit}
-        </button>
-      </div>
 
       {/* Email Change Modal */}
       {showEmailModal && (

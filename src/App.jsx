@@ -7,6 +7,8 @@ import { AdminConsole } from './components/AdminConsole';
 import { Account } from './components/Account';
 import { ManageSubscription } from './components/ManageSubscription';
 import { NotFound } from './components/NotFound';
+import { CommandPalette } from './components/CommandPalette';
+import { CliPair } from './components/CliPair';
 import { API_URL } from './config';
 import { strings } from './strings';
 
@@ -33,6 +35,8 @@ export default function App() {
   const writerRef = useRef(null);
   const lastSlateRef = useRef(null); // Track last working slate when switching views
   const blankSlateContentRef = useRef(''); // Preserve blank slate content when navigating
+  const writerScrollRef = useRef(0); // Preserve writer scroll position
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // Setup global login nudge trigger for Writer component
   useEffect(() => {
@@ -132,6 +136,8 @@ export default function App() {
         }
       } else if (path === '/manage-subscription') {
         setView('manage-subscription');
+      } else if (path === '/pair') {
+        setView('cli-pair');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -148,17 +154,66 @@ export default function App() {
     return () => window.removeEventListener('popstate', handleRoute);
   }, [token]);
 
-  // Restore blank slate content when returning to writer view
+  // Restore blank slate content and scroll position when returning to writer view
   useEffect(() => {
-    if (view === 'writer' && !currentSlate && blankSlateContentRef.current && writerRef.current) {
-      // Small delay to ensure Writer has mounted
-      setTimeout(() => {
-        if (writerRef.current && blankSlateContentRef.current) {
-          writerRef.current.setContent(blankSlateContentRef.current);
-        }
-      }, 50);
+    if (view === 'writer') {
+      // Restore blank slate content
+      if (!currentSlate && blankSlateContentRef.current && writerRef.current) {
+        setTimeout(() => {
+          if (writerRef.current && blankSlateContentRef.current) {
+            writerRef.current.setContent(blankSlateContentRef.current);
+          }
+        }, 50);
+      }
+      // Restore scroll position
+      if (writerScrollRef.current > 0) {
+        setTimeout(() => {
+          const textarea = document.querySelector('textarea');
+          if (textarea) {
+            textarea.scrollTop = writerScrollRef.current;
+          }
+        }, 100);
+      }
     }
   }, [view, currentSlate]);
+
+  // ESC key to close overlay views (slates, account) and return to writer
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        if (view === 'slates' || view === 'account') {
+          e.preventDefault();
+          // Navigate back to writer
+          if (lastSlateRef.current) {
+            setCurrentSlate(lastSlateRef.current);
+            window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
+          } else {
+            window.history.pushState({}, '', '/');
+          }
+          setView('writer');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [view]);
+
+  // Cmd+K to open command palette
+  useEffect(() => {
+    const handleCmdK = (e) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      if (cmdOrCtrl && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleCmdK);
+    return () => window.removeEventListener('keydown', handleCmdK);
+  }, []);
 
   // Handle Google OAuth callback and payment status
   useEffect(() => {
@@ -319,22 +374,19 @@ export default function App() {
       return;
     }
 
-    // Check if there's content - if yes, simulate reload to trigger beforeunload
-    if (writerRef.current) {
-      const content = writerRef.current.getContent();
-      if (content && content.trim()) {
-        window.location.reload();
-        return;
-      }
+    // Save current slate if there are unsaved changes
+    if (writerRef.current && currentSlate && token) {
+      await writerRef.current.saveBeforeNavigate();
     }
 
-    // No content - clear normally
+    // Clear content
     if (writerRef.current && writerRef.current.clearContent) {
       writerRef.current.clearContent();
     }
 
     // Create new slate and reset nudge states
     setCurrentSlate(null);
+    blankSlateContentRef.current = '';
     setShowLoginNudge(false);
     setLoginNudgeDismissed(false);
     setView('writer');
@@ -350,6 +402,12 @@ export default function App() {
     }
 
     if (view === 'writer') {
+      // Save scroll position before switching
+      const textarea = document.querySelector('textarea');
+      if (textarea) {
+        writerScrollRef.current = textarea.scrollTop;
+      }
+
       // Only save if there's a currentSlate (existing slate)
       // Don't save blank slates - just preserve content locally
       if (writerRef.current) {
@@ -432,6 +490,72 @@ export default function App() {
     setPendingNavigation(null);
   };
 
+  // Command palette execute handler
+  const handleCommandExecute = async (cmd) => {
+    switch (cmd.action) {
+      case 'NEW_SLATE':
+        handleNewSlate();
+        break;
+
+      case 'NAVIGATE_SLATES':
+        if (view === 'writer') {
+          lastSlateRef.current = currentSlate;
+        }
+        setView('slates');
+        setZenMode(false);
+        window.history.pushState({}, '', '/slates');
+        break;
+
+      case 'NAVIGATE_ACCOUNT':
+        if (view === 'writer') {
+          lastSlateRef.current = currentSlate;
+        }
+        setView('account');
+        setZenMode(false);
+        window.history.pushState({}, '', '/account');
+        break;
+
+      case 'SAVE':
+        if (writerRef.current) {
+          writerRef.current.saveSlate?.();
+        }
+        break;
+
+      case 'SHARE':
+        if (writerRef.current) {
+          writerRef.current.openPublishMenu?.();
+        }
+        break;
+
+      case 'EXPORT':
+        if (writerRef.current) {
+          writerRef.current.exportAs?.(cmd.payload);
+        }
+        break;
+
+      case 'SET_THEME':
+        if (writerRef.current) {
+          writerRef.current.setTheme?.(cmd.payload);
+        }
+        break;
+
+      case 'TOGGLE_ZEN':
+        if (view === 'writer') {
+          setZenMode(prev => !prev);
+        }
+        break;
+
+      case 'SET_FOCUS':
+        if (writerRef.current) {
+          writerRef.current.setFocusMode?.(cmd.payload);
+        }
+        break;
+
+      default:
+        console.log('Unknown command action:', cmd.action);
+    }
+  };
+
   // Public viewer
   if (view === 'public') {
     return <PublicViewer />;
@@ -445,6 +569,11 @@ export default function App() {
   // 404 Not Found
   if (view === 'notfound') {
     return <NotFound />;
+  }
+
+  // CLI Pair
+  if (view === 'cli-pair') {
+    return <CliPair token={token} onLogin={() => setShowAuthModal(true)} />;
   }
 
   return (
@@ -473,6 +602,17 @@ export default function App() {
         }
         .animate-fade-in {
           animation: fade-in 0.5s ease-out;
+        }
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateY(-20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-down {
+          animation: slideDown 0.2s ease-out;
         }
       `}</style>
 
@@ -505,9 +645,43 @@ export default function App() {
               </button>
               <button
                 onClick={async () => {
-                  if (writerRef.current) {
-                    await writerRef.current.saveBeforeNavigate();
+                  // Toggle: if already on account, go back to writer
+                  if (view === 'account') {
+                    if (lastSlateRef.current) {
+                      setCurrentSlate(lastSlateRef.current);
+                      window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
+                    } else {
+                      window.history.pushState({}, '', '/');
+                    }
+                    setView('writer');
+                    return;
                   }
+
+                  // Save scroll position before switching
+                  if (view === 'writer') {
+                    const textarea = document.querySelector('textarea');
+                    if (textarea) {
+                      writerScrollRef.current = textarea.scrollTop;
+                    }
+                  }
+
+                  if (writerRef.current) {
+                    if (currentSlate) {
+                      await writerRef.current.saveBeforeNavigate();
+                    } else {
+                      // Preserve blank slate content
+                      const content = writerRef.current.getContent();
+                      if (content) {
+                        blankSlateContentRef.current = content;
+                      }
+                    }
+                  }
+
+                  // Remember current slate for returning
+                  if (view === 'writer') {
+                    lastSlateRef.current = currentSlate;
+                  }
+
                   setView('account');
                   setZenMode(false);
                   window.history.pushState({}, '', '/account');
@@ -559,27 +733,31 @@ export default function App() {
           />
         )}
         {view === 'slates' && (
-          <SlateManager
-            token={token}
-            onSelectSlate={handleSelectSlate}
-            onNewSlate={handleNewSlate}
-          />
+          <div className="h-full animate-slide-down">
+            <SlateManager
+              token={token}
+              onSelectSlate={handleSelectSlate}
+              onNewSlate={handleNewSlate}
+            />
+          </div>
         )}
         {view === 'account' && (
-          <Account
-            token={token}
-            username={username}
-            email={email}
-            emailVerified={emailVerified}
-            authProvider={authProvider}
-            onLogout={handleLogout}
-            onEmailUpdate={(newEmail, verified) => {
-              setEmail(newEmail);
-              setEmailVerified(verified);
-              localStorage.setItem('justtype-email', newEmail);
-              localStorage.setItem('justtype-email-verified', verified);
-            }}
-          />
+          <div className="h-full animate-slide-down">
+            <Account
+              token={token}
+              username={username}
+              email={email}
+              emailVerified={emailVerified}
+              authProvider={authProvider}
+              onLogout={handleLogout}
+              onEmailUpdate={(newEmail, verified) => {
+                setEmail(newEmail);
+                setEmailVerified(verified);
+                localStorage.setItem('justtype-email', newEmail);
+                localStorage.setItem('justtype-email-verified', verified);
+              }}
+            />
+          </div>
         )}
         {view === 'manage-subscription' && (
           <ManageSubscription
@@ -745,6 +923,18 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        context={{
+          view,
+          token,
+          currentSlate
+        }}
+        onExecute={handleCommandExecute}
+      />
 
     </div>
   );

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } f
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
+import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme } from '../themes';
 
 export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
   const [content, setContent] = useState('');
@@ -35,11 +36,24 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [mobileTab, setMobileTab] = useState('write'); // 'write' | 'settings' | 'more'
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [themeImportError, setThemeImportError] = useState(null);
+  const themeFileInputRef = useRef(null);
   const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'off'); // 'off' | 'on' | 'auto'
   const [showCounter, setShowCounter] = useState(() => localStorage.getItem('justtype-show-counter') !== 'false');
   const autoZenTimeoutRef = useRef(null);
   const autoZenActiveRef = useRef(false);
-  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem('justtype-theme');
+    if (stored) return stored;
+    // Detect system preference, default to light if unknown
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+    return 'light';
+  });
+  const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
@@ -76,15 +90,28 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     }
   }, [zenMode, onZenModeChange]);
 
-  // Apply theme to body
+  // Apply theme to body (uses previewTheme on hover, otherwise actual theme)
   useEffect(() => {
-    if (theme === 'light') {
+    const activeTheme = previewTheme || theme;
+
+    // Remove all theme classes first
+    document.body.classList.remove('light-mode', 'sepia-mode', 'midnight-mode');
+
+    // Apply the appropriate theme class
+    if (activeTheme === 'light') {
       document.body.classList.add('light-mode');
-    } else {
-      document.body.classList.remove('light-mode');
+    } else if (activeTheme === 'sepia') {
+      document.body.classList.add('sepia-mode');
+    } else if (activeTheme === 'midnight') {
+      document.body.classList.add('midnight-mode');
     }
-    localStorage.setItem('justtype-theme', theme);
-  }, [theme]);
+    // 'dark' is the default, no class needed
+
+    // Only save to localStorage when not previewing
+    if (!previewTheme) {
+      localStorage.setItem('justtype-theme', theme);
+    }
+  }, [theme, previewTheme]);
 
   // Save punto to localStorage
   useEffect(() => {
@@ -202,6 +229,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target)) {
         if (showSettingsMenu && !isMenuClosing) {
           setIsMenuClosing(true);
+          setShowThemePicker(false);
           // Delay hiding menu buttons until after animation completes
           setTimeout(() => {
             setShowMenuButton(false);
@@ -210,13 +238,17 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           }, 500);
         }
       }
+      // Close theme picker if clicking outside
+      if (showThemePicker && !event.target.closest('[data-theme-picker]')) {
+        setShowThemePicker(false);
+      }
     };
 
-    if (showSettingsMenu) {
+    if (showSettingsMenu || showThemePicker) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showSettingsMenu, isMenuClosing]);
+  }, [showSettingsMenu, isMenuClosing, showThemePicker]);
 
   // Warn user before leaving with unsaved changes (only on actual page unload, not internal navigation)
   useEffect(() => {
@@ -532,7 +564,20 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       setTitle('');
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
-    }
+    },
+    // Command palette methods
+    saveSlate: () => saveSlate(),
+    openPublishMenu: () => setShowPublishMenu(true),
+    exportAs: (format) => {
+      switch (format) {
+        case 'txt': exportToTxt(); break;
+        case 'md': exportToMarkdown(); break;
+        case 'pdf': exportToPdf(); break;
+        case 'html': exportToHtml(); break;
+      }
+    },
+    setTheme: (themeId) => setTheme(themeId),
+    setFocusMode: (mode) => setFocusMode(mode)
   }));
 
   const saveSlate = async () => {
@@ -782,9 +827,63 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   };
 
   const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    // Don't close menu when clicking theme button
+    setShowThemePicker(!showThemePicker);
+  };
+
+  const selectTheme = (themeId) => {
+    setTheme(themeId);
+    setPreviewTheme(null);
+    setShowThemePicker(false);
+  };
+
+  const cycleTheme = () => {
+    const themes = getThemeIds();
+    const currentIndex = themes.indexOf(theme);
+    const nextIndex = (currentIndex + 1) % themes.length;
+    setTheme(themes[nextIndex]);
+  };
+
+  const downloadExampleTheme = () => {
+    const example = getExampleThemeJson();
+    const blob = new Blob([JSON.stringify(example, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'example-theme.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleThemeImport = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const json = JSON.parse(e.target.result);
+        const result = addCustomTheme(json);
+        if (result.success) {
+          setTheme(json.id);
+          setThemeImportError(null);
+          setShowThemePicker(false);
+        } else {
+          setThemeImportError(result.errors.join(', '));
+        }
+      } catch (err) {
+        setThemeImportError('invalid json file');
+      }
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be selected again
+    event.target.value = '';
+  };
+
+  const handleDeleteTheme = (themeId) => {
+    const result = removeCustomTheme(themeId);
+    if (result.success && theme === themeId) {
+      setTheme('dark');
+    }
   };
 
   const cyclePunto = () => {
@@ -812,9 +911,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const getFocusLabel = () => {
     switch (focusMode) {
       case 'on': return 'focus';
-      case 'auto': return 'focus: auto';
-      default: return 'focus: off';
+      case 'auto': return 'smart focus';
+      default: return 'focus off';
     }
+  };
+
+  const getCounterLabel = () => {
+    return showCounter ? 'hide counter' : 'show counter';
   };
 
   return (
@@ -844,7 +947,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
           {/* Left Controls */}
           <div className="flex items-center gap-6 min-h-[32px] relative" ref={settingsMenuRef}>
-            {/* Three dots button */}
+            {/* Three dots button - animates to horizontal line when open */}
             <button
               ref={threeDotsRef}
               onClick={handleToggleMenu}
@@ -855,10 +958,18 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               }}
               aria-label="Settings menu"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="5" cy="12" r="2"/>
-                <circle cx="12" cy="12" r="2"/>
-                <circle cx="19" cy="12" r="2"/>
+              <svg className="w-5 h-5 transition-all duration-300" viewBox="0 0 24 24" fill="currentColor">
+                {showSettingsMenu && !isMenuClosing ? (
+                  // Horizontal line when open
+                  <rect x="4" y="11" width="16" height="2" rx="1"/>
+                ) : (
+                  // Three dots when closed
+                  <>
+                    <circle cx="5" cy="12" r="2"/>
+                    <circle cx="12" cy="12" r="2"/>
+                    <circle cx="19" cy="12" r="2"/>
+                  </>
+                )}
               </svg>
             </button>
 
@@ -868,13 +979,90 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                 className={`absolute left-12 flex items-center gap-2 transition-opacity duration-500 ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
                 style={{ zIndex: 150 }}
               >
-                <button
-                  onClick={toggleTheme}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
-                >
-                  {theme === 'dark' ? 'light mode' : 'dark mode'}
-                </button>
+                <div className="relative" data-theme-picker>
+                  <button
+                    onClick={toggleTheme}
+                    className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                    style={{ color: theme === 'dark' || theme === 'midnight' ? 'white' : '#1a1a1a' }}
+                  >
+                    theme: {theme}
+                  </button>
+                  {showThemePicker && (
+                    <div
+                      className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                      onMouseLeave={() => setPreviewTheme(null)}
+                    >
+                      {/* Built-in themes */}
+                      {Object.keys(builtInThemes).map(themeId => (
+                        <button
+                          key={themeId}
+                          onClick={() => selectTheme(themeId)}
+                          onMouseEnter={() => setPreviewTheme(themeId)}
+                          className={`w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm ${
+                            theme === themeId ? 'text-white' : 'text-[#a0a0a0]'
+                          }`}
+                        >
+                          {themeId}
+                        </button>
+                      ))}
+                      {/* Custom themes */}
+                      {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
+                        <>
+                          <div className="border-t border-[#333] my-1" />
+                          {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => (
+                            <div key={themeId} className="flex items-center">
+                              <button
+                                onClick={() => selectTheme(themeId)}
+                                onMouseEnter={() => setPreviewTheme(themeId)}
+                                className={`flex-1 px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm ${
+                                  theme === themeId ? 'text-white' : 'text-[#a0a0a0]'
+                                }`}
+                              >
+                                {themeId}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTheme(themeId)}
+                                onMouseEnter={() => setPreviewTheme(themeId)}
+                                className="px-3 py-2 text-[#666] hover:text-red-400 hover:bg-[#333] transition-colors duration-200 text-sm"
+                                title="delete theme"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {/* Import/Download buttons */}
+                      <div className="border-t border-[#333] my-1" />
+                      <button
+                        onClick={() => themeFileInputRef.current?.click()}
+                        className="w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm text-[#a0a0a0]"
+                      >
+                        + import json
+                      </button>
+                      <button
+                        onClick={downloadExampleTheme}
+                        className="w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm text-[#666]"
+                      >
+                        ↓ example.json
+                      </button>
+                      {/* Import error message */}
+                      {themeImportError && (
+                        <div className="px-4 py-2 text-xs text-red-400 border-t border-[#333]">
+                          {themeImportError}
+                        </div>
+                      )}
+                      {/* Hidden file input */}
+                      <input
+                        ref={themeFileInputRef}
+                        type="file"
+                        accept=".json,application/json"
+                        onChange={handleThemeImport}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+                </div>
                 <span className="opacity-30">·</span>
                 <button
                   onClick={cyclePunto}
@@ -897,7 +1085,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
                   style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
                 >
-                  {showCounter ? 'counter: on' : 'counter: off'}
+                  {getCounterLabel()}
                 </button>
               </div>
             )}
@@ -912,7 +1100,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
           </div>
 
           {/* Right Controls */}
-          <div className="flex gap-6 items-center">
+          <div className="flex gap-4 items-center">
             <span
               className={`transition-opacity duration-300 ${
                 status === 'ready' ? 'opacity-0' : 'opacity-100'
@@ -934,6 +1122,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               {status}
             </span>
 
+            {status !== 'ready' && <span className="opacity-30">·</span>}
+
             <button
               onClick={() => setShowAboutModal(true)}
               className="hover:text-white transition-colors duration-200"
@@ -942,45 +1132,68 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
             </button>
 
             {token && (
-              <div className="relative">
+              <div className="relative flex items-center gap-3">
+                {/* Public status indicator */}
+                {(shareUrl || wasPublishedBeforeEdit) && (
+                  <span className={`text-sm ${wasPublishedBeforeEdit ? 'text-orange-400' : 'text-blue-400'}`}>
+                    public{wasPublishedBeforeEdit ? ' · outdated' : ''}
+                  </span>
+                )}
+
+                {/* Sync button - only when changes pending */}
+                {wasPublishedBeforeEdit && (
+                  <button
+                    onClick={handlePublish}
+                    className="text-orange-400 hover:text-white transition-colors duration-200"
+                  >
+                    sync
+                  </button>
+                )}
+
+                {/* Share button */}
                 <button
-                  onClick={() => {
-                    if (wasPublishedBeforeEdit) {
-                      // Republish directly without showing menu
-                      handlePublish();
-                    } else {
-                      // Show menu for first publish or already published
-                      setShowPublishMenu(!showPublishMenu);
-                    }
-                  }}
-                  className={`hover:text-white transition-colors duration-200 ${
-                    shareUrl ? 'text-blue-400' :
-                    wasPublishedBeforeEdit ? 'text-orange-400' :
-                    ''
-                  }`}
+                  onClick={() => setShowPublishMenu(!showPublishMenu)}
+                  className="hover:text-white transition-colors duration-200"
                 >
-                  {shareUrl ? strings.writer.publishButton.published :
-                   wasPublishedBeforeEdit ? strings.writer.publishButton.republish :
-                   strings.writer.publishButton.publish}
+                  share
                 </button>
                 {showPublishMenu && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[180px]">
-                    <button
-                      onClick={handlePublish}
-                      className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
-                    >
-                      {shareUrl ? strings.writer.menu.unpublishSlate : strings.writer.menu.getShareLink}
-                    </button>
-                    {shareUrl && (
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
+                    {!shareUrl && !wasPublishedBeforeEdit && (
                       <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(shareUrl);
-                          setStatus(strings.writer.status.linkCopied);
-                          setTimeout(() => setStatus(strings.writer.status.ready), 2000);
-                        }}
+                        onClick={handlePublish}
                         className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
                       >
-                        {strings.writer.menu.copyLink}
+                        make public
+                      </button>
+                    )}
+                    {shareUrl && (
+                      <>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(shareUrl);
+                            setStatus(strings.writer.status.linkCopied);
+                            setTimeout(() => setStatus('ready'), 2000);
+                            setShowPublishMenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
+                        >
+                          copy link
+                        </button>
+                        <button
+                          onClick={handlePublish}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-400 hover:text-red-300 transition-colors duration-200"
+                        >
+                          make private
+                        </button>
+                      </>
+                    )}
+                    {wasPublishedBeforeEdit && !shareUrl && (
+                      <button
+                        onClick={handlePublish}
+                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
+                      >
+                        update public version
                       </button>
                     )}
                   </div>
@@ -1002,23 +1215,23 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
                   }
                   saveSlate();
                 }}
-                className="border border-[#333] px-6 py-2 rounded hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 active:scale-95 flex items-center gap-2"
+                className="hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
               >
-                <span>{strings.writer.buttons.save}</span>
+                <span>[{strings.writer.buttons.save}]</span>
                 {token && <span className="text-xs opacity-50">⌘S</span>}
               </button>
               {showSaveMenu && (
                 <div
                   onMouseEnter={handleSaveMenuEnter}
                   onMouseLeave={handleSaveMenuLeave}
-                  className="absolute bottom-full right-0 mb-1 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[140px]"
+                  className="absolute bottom-full right-0 mb-2 animate-[fadeInUp_0.15s_ease-out]"
                 >
                   <button
                     onClick={() => setShowExportMenu(true)}
-                    className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200 flex justify-between items-center"
+                    className="px-3 py-1.5 hover:text-white transition-colors duration-200 flex items-center gap-3 whitespace-nowrap"
                   >
                     <span>export</span>
-                    <span className="text-xs opacity-50 ml-4">⌘E</span>
+                    <span className="text-xs opacity-50">⌘E</span>
                   </button>
                 </div>
               )}
@@ -1037,158 +1250,194 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         </svg>
       </button>
 
-      {/* MOBILE BOTTOM SHEET */}
+      {/* MOBILE BOTTOM SHEET - Tabbed Design */}
       {showMobileMenu && (
         <>
           <div
             className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
             onClick={() => setShowMobileMenu(false)}
           />
-          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1a1a1a] border-t border-[#333] rounded-t-2xl p-6 z-50 max-h-[70vh] overflow-y-auto">
-            <div className="flex flex-col gap-6">
-
-              {/* Stats */}
-              {showCounter && (
-                <div className="flex gap-4 text-sm opacity-70">
-                  <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
-                    <div className="text-2xl font-bold text-white">{wordCount}</div>
-                    <div className="text-xs">words</div>
-                  </div>
-                  <div className="flex-1 p-4 bg-[#222] rounded-lg text-center">
-                    <div className="text-2xl font-bold text-white">{charCount}</div>
-                    <div className="text-xs">characters</div>
-                  </div>
-                </div>
-              )}
-
-              {/* Settings */}
-              <div className="flex gap-4 text-sm">
+          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1a1a1a] border-t border-[#333] rounded-t-2xl z-50 max-h-[60vh] flex flex-col">
+            {/* Tab Bar */}
+            <div className="flex border-b border-[#333] px-2 pt-3">
+              {['write', 'settings', 'more'].map(tab => (
                 <button
-                  onClick={toggleTheme}
-                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
+                  key={tab}
+                  onClick={() => setMobileTab(tab)}
+                  className={`flex-1 py-2 text-sm transition-colors ${
+                    mobileTab === tab
+                      ? 'text-white border-b-2 border-white -mb-[1px]'
+                      : 'text-[#666]'
+                  }`}
                 >
-                  {theme === 'dark' ? 'light mode' : 'dark mode'}
+                  {tab}
                 </button>
-                <button
-                  onClick={cyclePunto}
-                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
-                >
-                  font: {getPuntoLabel()}
-                </button>
-              </div>
+              ))}
+            </div>
 
-              {/* Focus and counter toggles */}
-              <div className="flex gap-4 text-sm">
-                <button
-                  onClick={cycleFocus}
-                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
-                >
-                  {getFocusLabel()}
-                </button>
-                <button
-                  onClick={() => setShowCounter(!showCounter)}
-                  className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-center"
-                >
-                  {showCounter ? 'counter: on' : 'counter: off'}
-                </button>
-              </div>
+            {/* Tab Content */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {/* Write Tab */}
+              {mobileTab === 'write' && (
+                <div className="flex flex-col gap-4">
+                  {/* Stats */}
+                  {showCounter && (
+                    <div className="flex gap-4 text-sm">
+                      <div className="flex-1 p-3 bg-[#222] rounded-lg text-center">
+                        <div className="text-xl font-medium text-white">{wordCount}</div>
+                        <div className="text-xs text-[#666]">words</div>
+                      </div>
+                      <div className="flex-1 p-3 bg-[#222] rounded-lg text-center">
+                        <div className="text-xl font-medium text-white">{charCount}</div>
+                        <div className="text-xs text-[#666]">chars</div>
+                      </div>
+                    </div>
+                  )}
 
-              {/* Status */}
-              {status !== 'ready' && (
-                <div className={`p-3 rounded-lg text-center text-sm ${
-                  status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
-                    ? 'bg-orange-900/20 border border-orange-700/50 text-orange-400'
-                    : 'bg-green-900/20 border border-green-700/50 text-green-500'
-                }`}>
-                  {status}
-                </div>
-              )}
+                  {/* Status */}
+                  {status !== 'ready' && (
+                    <div className={`p-3 rounded-lg text-center text-sm ${
+                      status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
+                        ? 'text-orange-400'
+                        : 'text-green-500'
+                    }`}>
+                      {status}
+                    </div>
+                  )}
 
-              {/* Save Button */}
-              <button
-                onClick={() => {
-                  if (!token) {
-                    onLogin();
-                    return;
-                  }
-                  if (!hasUnsavedChanges && currentSlate) {
-                    // Already saved, just show status
-                    setStatus('saved');
-                    setTimeout(() => setStatus('ready'), 2000);
-                    return;
-                  }
-                  saveSlate();
-                  // Keep menu open to show status
-                }}
-                className="p-4 bg-white text-black rounded-lg hover:bg-[#e5e5e5] transition-colors font-medium text-base"
-              >
-                {strings.writer.menu.saveToAccount}
-              </button>
-
-              {/* Export Option */}
-              <button
-                onClick={() => {
-                  setShowMobileMenu(false);
-                  setShowExportMenu(true);
-                }}
-                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
-              >
-                export slate
-              </button>
-
-              {/* About Button */}
-              <div className="border-t border-[#333] pt-4">
-                <button
-                  onClick={() => {
-                    setShowAboutModal(true);
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
-                >
-                  {strings.writer.menu.aboutJustType}
-                </button>
-              </div>
-
-              {/* Publish Options */}
-              {token && (
-                <div className="border-t border-[#333] pt-4">
+                  {/* Save Button */}
                   <button
                     onClick={() => {
-                      handlePublish();
-                      // Keep menu open to show status
+                      if (!token) {
+                        onLogin();
+                        setShowMobileMenu(false);
+                        return;
+                      }
+                      if (!hasUnsavedChanges && currentSlate) {
+                        setStatus('saved');
+                        setTimeout(() => setStatus('ready'), 2000);
+                        return;
+                      }
+                      saveSlate();
                     }}
-                    className={`w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left ${
-                      shareUrl ? 'text-blue-400' :
-                      wasPublishedBeforeEdit ? 'text-orange-400' :
-                      ''
-                    }`}
+                    className="p-4 bg-white text-black rounded-lg hover:bg-[#e5e5e5] transition-colors font-medium"
                   >
-                    {shareUrl ? strings.writer.menu.unpublishSlateAction :
-                     wasPublishedBeforeEdit ? `${strings.writer.publishButton.republish} slate` :
-                     strings.writer.menu.getShareLinkAction}
+                    {strings.writer.buttons.save}
                   </button>
-                  {shareUrl && (
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(shareUrl);
-                        setStatus(strings.writer.status.linkCopied);
-                        setTimeout(() => {
-                          if (wasPublishedBeforeEdit) {
-                            setStatus(strings.writer.status.privateDraft);
-                          } else {
-                            setStatus(strings.writer.status.ready);
-                          }
-                        }, 2000);
-                        // Keep menu open
-                      }}
-                      className="w-full mt-3 p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
-                    >
-                      {strings.writer.menu.copyShareLink}
-                    </button>
+
+                  {/* Share section */}
+                  {token && (
+                    <div className="flex flex-col gap-2">
+                      {/* Status indicator */}
+                      {(shareUrl || wasPublishedBeforeEdit) && (
+                        <div className={`text-sm text-center py-2 ${wasPublishedBeforeEdit ? 'text-orange-400' : 'text-blue-400'}`}>
+                          public{wasPublishedBeforeEdit ? ' · outdated' : ''}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        {/* Sync button when needed */}
+                        {wasPublishedBeforeEdit && (
+                          <button
+                            onClick={handlePublish}
+                            className="flex-1 p-3 bg-orange-900/30 text-orange-400 rounded-lg hover:bg-orange-900/50 transition-colors"
+                          >
+                            sync
+                          </button>
+                        )}
+
+                        {/* Share/Copy/Make Private */}
+                        {!shareUrl && !wasPublishedBeforeEdit && (
+                          <button
+                            onClick={handlePublish}
+                            className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors"
+                          >
+                            make public
+                          </button>
+                        )}
+                        {shareUrl && (
+                          <>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(shareUrl);
+                                setStatus(strings.writer.status.linkCopied);
+                                setTimeout(() => setStatus('ready'), 2000);
+                              }}
+                              className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors"
+                            >
+                              copy link
+                            </button>
+                            <button
+                              onClick={handlePublish}
+                              className="p-3 bg-[#222] text-red-400 rounded-lg hover:bg-[#333] transition-colors"
+                            >
+                              private
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
 
+              {/* Settings Tab */}
+              {mobileTab === 'settings' && (
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={cycleTheme}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                  >
+                    <span>theme</span>
+                    <span className="text-[#666]">{theme}</span>
+                  </button>
+                  <button
+                    onClick={cyclePunto}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                  >
+                    <span>font size</span>
+                    <span className="text-[#666]">{getPuntoLabel()}</span>
+                  </button>
+                  <button
+                    onClick={cycleFocus}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                  >
+                    <span>focus mode</span>
+                    <span className="text-[#666]">{getFocusLabel()}</span>
+                  </button>
+                  <button
+                    onClick={() => setShowCounter(!showCounter)}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                  >
+                    <span>counter</span>
+                    <span className="text-[#666]">{showCounter ? 'on' : 'off'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* More Tab */}
+              {mobileTab === 'more' && (
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => {
+                      setShowMobileMenu(false);
+                      setShowExportMenu(true);
+                    }}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                  >
+                    export slate
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAboutModal(true);
+                      setShowMobileMenu(false);
+                    }}
+                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                  >
+                    about justtype
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </>
