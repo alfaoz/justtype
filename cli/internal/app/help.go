@@ -10,9 +10,9 @@ func (app *App) showHelp() {
 	helpText := `[purple]justtype cli v` + updater.GetVersion() + `[-]
 
 [white]editor[-]
+  esc           quit menu
   ctrl+k        command palette
   ctrl+s        force save
-  ctrl+c        quit
 
 [white]command palette[-]
   n             new slate
@@ -20,6 +20,12 @@ func (app *App) showHelp() {
   h             help
   s             force save
   e             settings
+  esc           back to editor
+
+[white]quit menu[-]
+  q             quit
+  l             logout (if cloud mode)
+  c             cancel
   esc           back to editor
 
 [white]all slates[-]

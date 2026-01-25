@@ -97,6 +97,12 @@ func (app *App) showEditor(slate *storage.Slate) {
 
 	// Handle global keys
 	app.editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Esc opens quit menu
+		if event.Key() == tcell.KeyEsc {
+			app.showQuitMenu()
+			return nil
+		}
+
 		// Ctrl+K opens command palette
 		if event.Key() == tcell.KeyCtrlK {
 			app.saveNow()
@@ -153,7 +159,7 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]ctrl+k commands[-]")
+	parts = append(parts, "[#666666]esc quit · ctrl+k commands[-]")
 
 	footer.SetText(joinParts(parts))
 }
