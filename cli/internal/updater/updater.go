@@ -15,7 +15,7 @@ import (
 
 const (
 	BaseURL        = "https://justtype.io/cli"
-	CurrentVersion = "2.0.7"
+	CurrentVersion = "2.0.8"
 )
 
 type UpdateInfo struct {
@@ -75,13 +75,25 @@ func Update() error {
 		return fmt.Errorf("couldn't resolve executable path: %w", err)
 	}
 
-	// Check if we can write to the executable location (before downloading)
+	// Check if we can write to the executable location
 	execDir := filepath.Dir(execPath)
 	testFile := filepath.Join(execDir, ".justtype-update-test")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		return fmt.Errorf("permission denied")
+	canWriteToInstallDir := os.WriteFile(testFile, []byte("test"), 0644) == nil
+	if canWriteToInstallDir {
+		os.Remove(testFile)
 	}
-	os.Remove(testFile)
+
+	// If we can't write to install dir, use ~/.local/bin instead
+	targetPath := execPath
+	if !canWriteToInstallDir {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("couldn't find home directory: %w", err)
+		}
+		localBin := filepath.Join(homeDir, ".local", "bin")
+		os.MkdirAll(localBin, 0755)
+		targetPath = filepath.Join(localBin, "justtype")
+	}
 
 	// Download new version
 	resp, err := http.Get(info.DownloadURL)
@@ -126,7 +138,7 @@ func Update() error {
 		return fmt.Errorf("binary not found in archive")
 	}
 
-	// Write to system temp directory (always writable)
+	// Write to temp file
 	tmpFile, err := os.CreateTemp("", "justtype-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
@@ -146,20 +158,20 @@ func Update() error {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Try to replace the binary directly first
-	err = os.Rename(tmpPath, execPath)
+	// Try to replace the binary
+	err = os.Rename(tmpPath, targetPath)
 	if err != nil {
-		// Rename failed (likely cross-device or permission issue)
-		// Try copying instead
-		err = copyFile(tmpPath, execPath)
+		// Rename failed, try copying
+		err = copyFile(tmpPath, targetPath)
 		os.Remove(tmpPath)
 		if err != nil {
-			// Check if it's a permission error
-			if os.IsPermission(err) {
-				return fmt.Errorf("permission denied. run: sudo curl -fsSL https://justtype.io/cli/install.sh | sudo bash")
-			}
-			return fmt.Errorf("failed to replace binary: %w", err)
+			return fmt.Errorf("failed to install update: %w", err)
 		}
+	}
+
+	// If we installed to a different location, return a message
+	if targetPath != execPath {
+		return fmt.Errorf("installed to %s (add to PATH if needed)", targetPath)
 	}
 
 	return nil

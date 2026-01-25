@@ -72,15 +72,32 @@ func (app *App) showCommandPalette() {
 		SetTitleAlign(tview.AlignLeft).
 		SetBackgroundColor(colorBackground)
 
-	for _, cmd := range commands {
+	for i, cmd := range commands {
 		cmd := cmd // capture loop variable
-		list.AddItem(cmd.Label, cmd.Description, 0, cmd.Action)
+		// Add keyboard shortcuts
+		var shortcut rune
+		switch i {
+		case 0:
+			shortcut = 'n'
+		case 1:
+			shortcut = 'a'
+		case 2:
+			shortcut = 'h'
+		case 3:
+			shortcut = 's'
+		case 4:
+			shortcut = 'e' // settings = 'e' for "edit settings"
+		case 5:
+			shortcut = 'q'
+		}
+		list.AddItem(cmd.Label, cmd.Description, shortcut, cmd.Action)
 	}
 
 	list.SetSelectedBackgroundColor(colorPurple)
 	list.SetSelectedTextColor(colorBackground)
 	list.SetMainTextColor(colorForeground)
 	list.SetSecondaryTextColor(colorDim)
+	list.SetShortcutColor(colorPurple)
 
 	// Handle keys
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {

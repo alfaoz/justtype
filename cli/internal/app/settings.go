@@ -11,13 +11,14 @@ func (app *App) showSettings() {
 	// Build settings info
 	var info string
 	if app.isCloud {
-		info = fmt.Sprintf("signed in as: %s\nstorage: cloud (cached locally)", app.username)
+		info = fmt.Sprintf("signed in as: %s\nstorage: cloud (cached locally)\n\n[#666666]more settings available at justtype.io[-]", app.username)
 	} else {
-		info = fmt.Sprintf("storage: %s", app.storagePath)
+		info = fmt.Sprintf("storage: %s\n\n[#666666]more settings available at justtype.io[-]", app.storagePath)
 	}
 
 	infoView := tview.NewTextView().
 		SetText(info).
+		SetDynamicColors(true).
 		SetTextColor(colorForeground)
 	infoView.SetBorder(false).SetBackgroundColor(colorBackground)
 

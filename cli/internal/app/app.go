@@ -41,8 +41,9 @@ type App struct {
 	slates       []*storage.Slate
 
 	// Auto-save
-	saveTimer *time.Timer
-	isDirty   bool
+	saveTimer  *time.Timer
+	isDirty    bool
+	saveStatus string // "saved", "saving...", ""
 
 	// UI components (created on demand)
 	editor       *tview.TextArea
@@ -220,16 +221,31 @@ func (app *App) checkAndUpdate() {
 
 	// Perform update
 	if err := updater.Update(); err != nil {
-		// Check if it's a permission error
 		errMsg := err.Error()
-		var message string
-		if strings.Contains(errMsg, "permission denied") {
-			message = fmt.Sprintf("Update available: %s → %s\n\nInstalled in system directory (needs sudo).\n\nReinstall to ~/.local/bin for auto-updates:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", info.CurrentVersion, info.LatestVersion)
-		} else {
-			message = fmt.Sprintf("Update failed: %v\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)
+
+		// Check if it installed to an alternate location (not an error)
+		if strings.Contains(errMsg, "installed to") {
+			app.tviewApp.QueueUpdateDraw(func() {
+				app.pages.RemovePage("update")
+				successModal := tview.NewModal().
+					SetText(fmt.Sprintf("Updated to %s!\n\n%s\n\nRestart justtype to use the new version.", info.LatestVersion, errMsg)).
+					AddButtons([]string{"OK"}).
+					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+						app.pages.RemovePage("update-success")
+					}).
+					SetBackgroundColor(colorBackground).
+					SetTextColor(colorGreen).
+					SetButtonBackgroundColor(colorPurple).
+					SetButtonTextColor(colorForeground)
+
+				app.pages.AddPage("update-success", successModal, true, true)
+			})
+			return
 		}
 
-		// Show error
+		// Real error - show error message
+		message := fmt.Sprintf("Update failed: %v\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)
+
 		app.tviewApp.QueueUpdateDraw(func() {
 			app.pages.RemovePage("update")
 			errorModal := tview.NewModal().

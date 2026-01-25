@@ -10,15 +10,15 @@ func (app *App) showHelp() {
 	helpText := `[purple]justtype cli v` + updater.GetVersion() + `[-]
 
 [white]editor[-]
-  ctrl+k        command palette
-  esc           open menu
+  esc / ctrl+k  command palette
   ctrl+s        force save
 
-[white]menu[-]
+[white]command palette[-]
   n             new slate
   a             all slates
-  s             settings
   h             help
+  s             force save
+  e             settings
   q             quit
   esc           back to editor
 
@@ -29,13 +29,9 @@ func (app *App) showHelp() {
   d             delete slate
   esc           back to editor
 
-[white]help screen[-]
-  esc           back to editor
-  q             back to menu
-
 [white]workflow[-]
   1. write in editor (auto-saves after 1 second)
-  2. press esc → all slates
+  2. press esc → command palette → a (all slates)
   3. select your slate → press p to publish
   4. copy share URL from modal
 
@@ -56,11 +52,6 @@ func (app *App) showHelp() {
 		if event.Key() == tcell.KeyEsc {
 			app.pages.RemovePage("help")
 			app.tviewApp.SetFocus(app.editor)
-			return nil
-		}
-		if event.Rune() == 'q' {
-			app.pages.RemovePage("help")
-			app.showMenu()
 			return nil
 		}
 		return event

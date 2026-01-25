@@ -10,9 +10,10 @@ import (
 )
 
 func (app *App) showEditor(slate *storage.Slate) {
-	if slate != nil {
-		app.currentSlate = slate
-	}
+	// Set current slate (nil means new blank slate)
+	app.currentSlate = slate
+	app.isDirty = false
+	app.saveStatus = ""
 
 	// Create or reuse editor
 	if app.editor == nil {
@@ -38,6 +39,7 @@ func (app *App) showEditor(slate *storage.Slate) {
 		// On text change, trigger auto-save
 		app.editor.SetChangedFunc(func() {
 			app.isDirty = true
+			app.saveStatus = ""
 			app.scheduleAutoSave()
 		})
 	}
@@ -45,9 +47,18 @@ func (app *App) showEditor(slate *storage.Slate) {
 	// Load content
 	if app.currentSlate != nil {
 		app.editor.SetText(app.currentSlate.Content, true)
+		app.saveStatus = "saved"
 	} else {
 		app.editor.SetText("", true)
+		app.saveStatus = ""
 	}
+
+	// Header showing account
+	header := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignCenter)
+	header.SetBackgroundColor(colorBackground)
+	app.updateHeader(header)
 
 	// Build layout with centered textarea
 	footer := tview.NewTextView().
@@ -72,6 +83,7 @@ func (app *App) showEditor(slate *storage.Slate) {
 	// Main flex layout
 	editorWrapper := tview.NewFlex().
 		SetDirection(tview.FlexRow).
+		AddItem(header, 1, 0, false).
 		AddItem(app.editor, 0, 1, true).
 		AddItem(footer, 1, 0, false)
 
@@ -85,15 +97,8 @@ func (app *App) showEditor(slate *storage.Slate) {
 
 	// Handle global keys
 	app.editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Esc opens menu
-		if event.Key() == tcell.KeyEsc {
-			app.saveNow()
-			app.showMenu()
-			return nil
-		}
-
-		// Ctrl+K opens command palette
-		if event.Key() == tcell.KeyCtrlK {
+		// Esc or Ctrl+K opens command palette
+		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyCtrlK {
 			app.saveNow()
 			app.showCommandPalette()
 			return nil
@@ -112,6 +117,14 @@ func (app *App) showEditor(slate *storage.Slate) {
 	app.tviewApp.SetFocus(app.editor)
 }
 
+func (app *App) updateHeader(header *tview.TextView) {
+	if app.isCloud && app.username != "" {
+		header.SetText(fmt.Sprintf("[#8B5CF6]hey, %s[-]", app.username))
+	} else {
+		header.SetText("")
+	}
+}
+
 func (app *App) updateFooter(footer *tview.TextView) {
 	content := app.editor.GetText()
 	words := storage.CountWords(content)
@@ -121,15 +134,26 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	// Word count
 	parts = append(parts, fmt.Sprintf("[#666666]%d words[-]", words))
 
+	// Save status
+	if app.saveStatus != "" {
+		color := "#666666"
+		if app.saveStatus == "saving..." {
+			color = "#8B5CF6" // purple
+		} else if app.saveStatus == "saved" {
+			color = "#10B981" // green
+		}
+		parts = append(parts, fmt.Sprintf("[%s]%s[-]", color, app.saveStatus))
+	}
+
 	// Mode indicator
 	if app.isCloud {
-		parts = append(parts, fmt.Sprintf("[#666666]%s[-]", app.username))
+		parts = append(parts, "[#666666]cloud[-]")
 	} else {
 		parts = append(parts, "[#666666]local[-]")
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc menu · ctrl+k commands[-]")
+	parts = append(parts, "[#666666]esc commands[-]")
 
 	footer.SetText(joinParts(parts))
 }
@@ -138,6 +162,9 @@ func (app *App) scheduleAutoSave() {
 	if app.saveTimer != nil {
 		app.saveTimer.Stop()
 	}
+
+	// Show "saving..." immediately
+	app.saveStatus = "saving..."
 
 	app.saveTimer = time.AfterFunc(1*time.Second, func() {
 		app.tviewApp.QueueUpdateDraw(func() {
@@ -153,8 +180,13 @@ func (app *App) saveNow() {
 
 	content := app.editor.GetText()
 	if content == "" {
+		app.isDirty = false
+		app.saveStatus = ""
 		return
 	}
+
+	// Show "saving..." status
+	app.saveStatus = "saving..."
 
 	if app.currentSlate == nil {
 		app.currentSlate = &storage.Slate{
@@ -169,6 +201,7 @@ func (app *App) saveNow() {
 	}
 
 	app.isDirty = false
+	app.saveStatus = "saved"
 
 	// Refresh slates list
 	if app.storage != nil {
