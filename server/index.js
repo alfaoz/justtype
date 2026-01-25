@@ -536,6 +536,27 @@ Object.entries(systemSlatesMeta).forEach(([route, meta]) => {
   });
 });
 
+// Serve CLI binaries from public/cli directory (must be BEFORE dist serving)
+app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    // Never cache version.txt (needed for auto-update checks)
+    if (filePath.endsWith('version.txt')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+    // Set correct content type for shell scripts
+    if (filePath.endsWith('.sh')) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
+    // Set download headers for tar.gz files
+    if (filePath.endsWith('.tar.gz')) {
+      res.setHeader('Content-Type', 'application/gzip');
+    }
+  }
+}));
+
 // Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
@@ -551,21 +572,6 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
     // Don't cache JS/CSS files either (Vite handles hashing)
     else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-    }
-  }
-}));
-
-// Serve CLI binaries from public/cli directory
-app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
-  maxAge: '1h',
-  setHeaders: (res, filePath) => {
-    // Set correct content type for shell scripts
-    if (filePath.endsWith('.sh')) {
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    }
-    // Set download headers for tar.gz files
-    if (filePath.endsWith('.tar.gz')) {
-      res.setHeader('Content-Type', 'application/gzip');
     }
   }
 }));
