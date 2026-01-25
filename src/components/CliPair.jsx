@@ -10,10 +10,20 @@ export function CliPair({ token, username, onLogin }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loginTriggered, setLoginTriggered] = useState(false);
+  const [lastToken, setLastToken] = useState(token);
+
+  // Reset loginTriggered when user successfully logs in (token changes)
+  useEffect(() => {
+    if (token && token !== lastToken && token !== 'checking') {
+      setLoginTriggered(false);
+      setLastToken(token);
+    }
+  }, [token, lastToken]);
 
   // Auto-submit if code is pre-filled
   useEffect(() => {
-    if (initialCode && token && initialCode.length >= 6 && !loading && !success) {
+    if (initialCode && token && initialCode.length >= 6 && !loading && !success && !loginTriggered) {
       console.log('Auto-submitting code:', initialCode);
       setLoading(true);
 
@@ -39,6 +49,7 @@ export function CliPair({ token, username, onLogin }) {
             if (data.code === 'PASSWORD_REQUIRED' || response.status === 401) {
               console.log('Authentication required, showing login modal');
               setLoading(false);
+              setLoginTriggered(true); // Prevent retry loop
               onLogin(); // Show login modal
               return;
             }
@@ -57,7 +68,7 @@ export function CliPair({ token, username, onLogin }) {
         }
       })();
     }
-  }, [initialCode, token, onLogin]);
+  }, [initialCode, token, onLogin, loginTriggered]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -81,6 +92,7 @@ export function CliPair({ token, username, onLogin }) {
         if (data.code === 'PASSWORD_REQUIRED' || response.status === 401) {
           console.log('Authentication required, showing login modal');
           setLoading(false);
+          setLoginTriggered(true); // Prevent retry loop
           onLogin(); // Show login modal
           return;
         }
