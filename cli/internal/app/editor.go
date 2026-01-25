@@ -20,6 +20,12 @@ func (app *App) showEditor(slate *storage.Slate) {
 		app.editor.SetBackgroundColor(colorBackground)
 		app.editor.SetPlaceholder("start writing...")
 
+		// Set text style to prevent highlighting
+		style := tcell.StyleDefault.
+			Background(colorBackground).
+			Foreground(colorForeground)
+		app.editor.SetTextStyle(style)
+
 		// On text change, trigger auto-save
 		app.editor.SetChangedFunc(func() {
 			app.isDirty = true

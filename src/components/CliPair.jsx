@@ -13,7 +13,7 @@ export function CliPair({ token, onLogin }) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/cli/approve`, {
+      const response = await fetch(`${API_URL}/cli/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
