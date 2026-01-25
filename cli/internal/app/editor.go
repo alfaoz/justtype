@@ -97,8 +97,8 @@ func (app *App) showEditor(slate *storage.Slate) {
 
 	// Handle global keys
 	app.editor.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Esc or Ctrl+K opens command palette
-		if event.Key() == tcell.KeyEsc || event.Key() == tcell.KeyCtrlK {
+		// Ctrl+K opens command palette
+		if event.Key() == tcell.KeyCtrlK {
 			app.saveNow()
 			app.showCommandPalette()
 			return nil
@@ -153,7 +153,7 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc commands[-]")
+	parts = append(parts, "[#666666]ctrl+k commands[-]")
 
 	footer.SetText(joinParts(parts))
 }
@@ -166,7 +166,7 @@ func (app *App) scheduleAutoSave() {
 	// Show "saving..." immediately
 	app.saveStatus = "saving..."
 
-	app.saveTimer = time.AfterFunc(1*time.Second, func() {
+	app.saveTimer = time.AfterFunc(2*time.Second, func() {
 		app.tviewApp.QueueUpdateDraw(func() {
 			app.saveNow()
 		})
@@ -183,6 +183,16 @@ func (app *App) saveNow() {
 		app.isDirty = false
 		app.saveStatus = ""
 		return
+	}
+
+	// For new slates, require minimum 10 words before creating
+	if app.currentSlate == nil {
+		words := storage.CountWords(content)
+		if words < 10 {
+			app.isDirty = false
+			app.saveStatus = ""
+			return
+		}
 	}
 
 	// Show "saving..." status

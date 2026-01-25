@@ -10,7 +10,7 @@ func (app *App) showHelp() {
 	helpText := `[purple]justtype cli v` + updater.GetVersion() + `[-]
 
 [white]editor[-]
-  esc / ctrl+k  command palette
+  ctrl+k        command palette
   ctrl+s        force save
 
 [white]command palette[-]
@@ -20,6 +20,12 @@ func (app *App) showHelp() {
   s             force save
   e             settings
   q             quit
+  esc           quit menu
+
+[white]quit menu[-]
+  q             quit
+  l             logout (if cloud mode)
+  c             cancel
   esc           back to editor
 
 [white]all slates[-]
@@ -30,11 +36,12 @@ func (app *App) showHelp() {
   esc           back to editor
 
 [white]workflow[-]
-  1. write in editor (auto-saves after 1 second)
-  2. press esc → command palette → a (all slates)
+  1. write in editor (auto-saves after 2 seconds)
+  2. press ctrl+k → a (all slates)
   3. select your slate → press p to publish
   4. copy share URL from modal
 
+[dim]new slates save after 10+ words[-]
 [dim]local mode: publishing requires cloud sync[-]`
 
 	textView := tview.NewTextView().
