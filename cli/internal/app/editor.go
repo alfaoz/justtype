@@ -26,6 +26,15 @@ func (app *App) showEditor(slate *storage.Slate) {
 			Foreground(colorForeground)
 		app.editor.SetTextStyle(style)
 
+		// Set selected style to same as normal text (no visible selection)
+		app.editor.SetSelectedStyle(style)
+
+		// Set placeholder style
+		placeholderStyle := tcell.StyleDefault.
+			Background(colorBackground).
+			Foreground(colorDim)
+		app.editor.SetPlaceholderStyle(placeholderStyle)
+
 		// On text change, trigger auto-save
 		app.editor.SetChangedFunc(func() {
 			app.isDirty = true

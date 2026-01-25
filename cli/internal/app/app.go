@@ -49,6 +49,21 @@ type App struct {
 }
 
 func New() *App {
+	// Set tview theme to match our color scheme
+	tview.Styles = tview.Theme{
+		PrimitiveBackgroundColor:    colorBackground,
+		ContrastBackgroundColor:     colorBackground,
+		MoreContrastBackgroundColor: colorBackground,
+		BorderColor:                 colorDim,
+		TitleColor:                  colorPurple,
+		GraphicsColor:               colorForeground,
+		PrimaryTextColor:            colorForeground,
+		SecondaryTextColor:          colorDim,
+		TertiaryTextColor:           colorPurple,
+		InverseTextColor:            colorBackground,
+		ContrastSecondaryTextColor:  colorDim,
+	}
+
 	app := &App{
 		tviewApp: tview.NewApplication(),
 		pages:    tview.NewPages(),

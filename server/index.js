@@ -1130,6 +1130,9 @@ app.post('/api/cli/token', createRateLimitMiddleware('pollToken'), (req, res) =>
 
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '90d' });
 
+    // Create session for this CLI token
+    createSession(user.id, token, req);
+
     // Delete the device code (one-time use)
     db.prepare('DELETE FROM cli_device_codes WHERE device_code = ?').run(device_code);
 
