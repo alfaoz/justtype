@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { API_URL } from '../config';
 
-export function CliPair({ token, onLogin }) {
+export function CliPair({ token, username, onLogin }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -71,7 +71,10 @@ export function CliPair({ token, onLogin }) {
   return (
     <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
       <div className="max-w-md w-full">
-        <h1 className="text-xl text-white mb-8 text-center leading-relaxed">authorize justtype cli by entering the code shown in your terminal</h1>
+        <h1 className="text-xl text-white mb-2 text-center leading-relaxed">authorize justtype cli by entering the code shown in your terminal</h1>
+        {username && (
+          <p className="text-[#666666] text-center mb-6">pairing {username}</p>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>

@@ -48,7 +48,7 @@ func (app *App) showAuth() {
 	status.SetBorder(false).SetBackgroundColor(colorBackground)
 
 	help := tview.NewTextView().
-		SetText("o open in browser  esc cancel").
+		SetText("browser will open automatically · o reopen · esc cancel").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(colorDim)
 	help.SetBorder(false).SetBackgroundColor(colorBackground)
@@ -88,6 +88,9 @@ func (app *App) showAuth() {
 	})
 
 	app.pages.AddPage(PageAuth, centered, true, true)
+
+	// Auto-open browser (best effort)
+	go openBrowser(dcr.VerificationURI)
 
 	// Start polling for token in background
 	go func() {

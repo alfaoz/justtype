@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,9 +137,34 @@ func (app *App) initStorage() error {
 	return nil
 }
 
+type Config struct {
+	Token       string `json:"token"`
+	Username    string `json:"username"`
+	StoragePath string `json:"storage_path"`
+}
+
+func (app *App) getConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".justtype", "config.json")
+}
+
 func (app *App) loadConfig() {
-	// TODO: Load from config file
-	// For now, check environment or defaults
+	configPath := app.getConfigPath()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		// Config doesn't exist yet, that's fine
+		return
+	}
+
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		// Invalid config, ignore
+		return
+	}
+
+	app.token = config.Token
+	app.username = config.Username
+	app.storagePath = config.StoragePath
 }
 
 func (app *App) saveConfig() {
@@ -146,7 +172,18 @@ func (app *App) saveConfig() {
 	configDir := filepath.Join(homeDir, ".justtype")
 	os.MkdirAll(configDir, 0755)
 
-	// TODO: Save config to file
+	config := Config{
+		Token:       app.token,
+		Username:    app.username,
+		StoragePath: app.storagePath,
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return
+	}
+
+	os.WriteFile(app.getConfigPath(), data, 0600)
 }
 
 func (app *App) getDefaultStoragePath() string {
