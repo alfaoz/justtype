@@ -15,7 +15,7 @@ import (
 
 const (
 	BaseURL        = "https://justtype.io/cli"
-	CurrentVersion = "2.0.2"
+	CurrentVersion = "2.0.3"
 )
 
 type UpdateInfo struct {
@@ -74,6 +74,14 @@ func Update() error {
 	if err != nil {
 		return fmt.Errorf("couldn't resolve executable path: %w", err)
 	}
+
+	// Check if we can write to the executable location (before downloading)
+	execDir := filepath.Dir(execPath)
+	testFile := filepath.Join(execDir, ".justtype-update-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		return fmt.Errorf("permission denied")
+	}
+	os.Remove(testFile)
 
 	// Download new version
 	resp, err := http.Get(info.DownloadURL)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -219,11 +220,20 @@ func (app *App) checkAndUpdate() {
 
 	// Perform update
 	if err := updater.Update(); err != nil {
+		// Check if it's a permission error
+		errMsg := err.Error()
+		var message string
+		if strings.Contains(errMsg, "permission denied") {
+			message = fmt.Sprintf("Update available: %s → %s\n\nCan't auto-update (permission denied).\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", info.CurrentVersion, info.LatestVersion)
+		} else {
+			message = fmt.Sprintf("Update failed: %v\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)
+		}
+
 		// Show error
 		app.tviewApp.QueueUpdateDraw(func() {
 			app.pages.RemovePage("update")
 			errorModal := tview.NewModal().
-				SetText(fmt.Sprintf("Update failed: %v\n\nPlease update manually:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)).
+				SetText(message).
 				AddButtons([]string{"OK"}).
 				SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 					app.pages.RemovePage("update-error")
