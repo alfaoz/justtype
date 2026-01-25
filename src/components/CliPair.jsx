@@ -14,10 +14,11 @@ export function CliPair({ token, username, onLogin }) {
   // Auto-submit if code is pre-filled
   useEffect(() => {
     if (initialCode && token && initialCode.length >= 6 && !loading && !success) {
-      setLoading(true);
       console.log('Auto-submitting code:', initialCode);
-      // Auto-submit after a brief delay
-      const timer = setTimeout(async () => {
+      setLoading(true);
+
+      // Don't use setTimeout - just do it immediately
+      (async () => {
         try {
           console.log('Sending approve request...');
           const response = await fetch(`${API_URL}/cli/approve`, {
@@ -46,10 +47,9 @@ export function CliPair({ token, username, onLogin }) {
           setError('network error: ' + err.message);
           setLoading(false);
         }
-      }, 500);
-      return () => clearTimeout(timer);
+      })();
     }
-  }, [initialCode, token, loading, success]);
+  }, [initialCode, token]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
