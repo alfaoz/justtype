@@ -43,7 +43,7 @@ export function CliPair({ token, onLogin }) {
     return (
       <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
-          <h1 className="text-2xl font-bold text-[#d4d4d4] mb-4">authorize cli</h1>
+          <h1 className="text-xl text-white mb-4">authorize justtype cli by entering the code shown in your terminal</h1>
           <p className="text-[#666666] mb-8">you need to be logged in first</p>
           <button
             onClick={onLogin}
@@ -61,7 +61,7 @@ export function CliPair({ token, onLogin }) {
       <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
           <div className="text-6xl mb-4">✓</div>
-          <h1 className="text-2xl font-bold text-[#10B981] mb-4">authorized!</h1>
+          <h1 className="text-xl text-[#10B981] mb-4">authorized!</h1>
           <p className="text-[#666666]">you can now return to your terminal</p>
         </div>
       </div>
@@ -71,8 +71,7 @@ export function CliPair({ token, onLogin }) {
   return (
     <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4">
       <div className="max-w-md w-full">
-        <h1 className="text-2xl font-bold text-[#d4d4d4] mb-2 text-center">authorize cli</h1>
-        <p className="text-[#666666] mb-8 text-center">enter the code shown in your terminal</p>
+        <h1 className="text-xl text-white mb-8 text-center leading-relaxed">authorize justtype cli by entering the code shown in your terminal</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
