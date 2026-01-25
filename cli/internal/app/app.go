@@ -8,6 +8,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/justtype/cli/internal/storage"
+	"github.com/justtype/cli/internal/updater"
 	"github.com/rivo/tview"
 )
 
@@ -77,6 +78,9 @@ func New() *App {
 }
 
 func (app *App) Run() error {
+	// Check for updates in background (non-blocking)
+	go app.checkAndUpdate()
+
 	// Check if first run
 	if app.token == "" && app.storagePath == "" {
 		// First run - show welcome
@@ -148,6 +152,68 @@ func (app *App) saveConfig() {
 func (app *App) getDefaultStoragePath() string {
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".justtype")
+}
+
+func (app *App) checkAndUpdate() {
+	// Check for updates
+	info, err := updater.CheckForUpdate()
+	if err != nil {
+		// Fail silently - don't interrupt user experience
+		return
+	}
+
+	if !info.Available {
+		// Already up to date
+		return
+	}
+
+	// Show update notification
+	app.tviewApp.QueueUpdateDraw(func() {
+		modal := tview.NewModal().
+			SetText(fmt.Sprintf("Update available: %s → %s\n\nUpdating now...", info.CurrentVersion, info.LatestVersion)).
+			SetBackgroundColor(colorBackground).
+			SetTextColor(colorForeground)
+
+		app.pages.AddPage("update", modal, true, true)
+	})
+
+	// Perform update
+	if err := updater.Update(); err != nil {
+		// Show error
+		app.tviewApp.QueueUpdateDraw(func() {
+			app.pages.RemovePage("update")
+			errorModal := tview.NewModal().
+				SetText(fmt.Sprintf("Update failed: %v\n\nPlease update manually:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)).
+				AddButtons([]string{"OK"}).
+				SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+					app.pages.RemovePage("update-error")
+				}).
+				SetBackgroundColor(colorBackground).
+				SetTextColor(colorForeground).
+				SetButtonBackgroundColor(colorPurple).
+				SetButtonTextColor(colorForeground)
+
+			app.pages.AddPage("update-error", errorModal, true, true)
+		})
+		return
+	}
+
+	// Update successful - show message and exit
+	app.tviewApp.QueueUpdateDraw(func() {
+		app.pages.RemovePage("update")
+		successModal := tview.NewModal().
+			SetText(fmt.Sprintf("Updated to %s!\n\nPlease restart justtype.", info.LatestVersion)).
+			AddButtons([]string{"Quit"}).
+			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+				app.tviewApp.Stop()
+			}).
+			SetBackgroundColor(colorBackground).
+			SetTextColor(colorGreen).
+			SetButtonBackgroundColor(colorPurple).
+			SetButtonTextColor(colorForeground)
+
+		app.pages.AddPage("update-success", successModal, true, true)
+	})
 }
 
 func (app *App) Close() {
