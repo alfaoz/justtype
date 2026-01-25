@@ -69,12 +69,37 @@ fi
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
-    echo "⚠ $INSTALL_DIR is not in your PATH"
-    echo ""
-    echo "Add this to your shell config (~/.bashrc, ~/.zshrc, etc.):"
-    echo "  export PATH=\"\$PATH:$INSTALL_DIR\""
-    echo ""
-    echo "Then restart your shell or run: source ~/.bashrc"
+
+    # Detect shell config file
+    SHELL_CONFIG=""
+    if [ -n "$ZSH_VERSION" ]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+    elif [ -n "$BASH_VERSION" ]; then
+        SHELL_CONFIG="$HOME/.bashrc"
+    elif [ -f "$HOME/.zshrc" ]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+        SHELL_CONFIG="$HOME/.bashrc"
+    fi
+
+    if [ -n "$SHELL_CONFIG" ]; then
+        # Check if PATH export already exists in config
+        if ! grep -q "export PATH.*$INSTALL_DIR" "$SHELL_CONFIG" 2>/dev/null; then
+            echo "Adding $INSTALL_DIR to PATH in $SHELL_CONFIG..."
+            echo "" >> "$SHELL_CONFIG"
+            echo "# Added by justtype installer" >> "$SHELL_CONFIG"
+            echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_CONFIG"
+            echo "✓ Updated $SHELL_CONFIG"
+            echo ""
+            echo "Restart your shell or run:"
+            echo "  source $SHELL_CONFIG"
+        fi
+    else
+        echo "⚠ $INSTALL_DIR is not in your PATH"
+        echo ""
+        echo "Add this to your shell config:"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
 fi
 
 echo ""
