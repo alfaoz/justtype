@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/justtype/cli/internal/api"
 	"github.com/justtype/cli/internal/config"
@@ -759,62 +760,63 @@ func (m *Model) handleRegisterResult(msg registerResultMsg) (tea.Model, tea.Cmd)
 // ============================================================================
 
 func (m Model) viewEditor() string {
-	var b strings.Builder
-
-	// Calculate available width
-	editorWidth := min(m.width-4, 100)
-
-	// Title bar
+	// Get title
 	title := "untitled"
-	if m.currentSlate != nil {
+	if m.currentSlate != nil && m.currentSlate.Title != "" {
 		title = m.currentSlate.Title
-		if title == "" {
-			title = "untitled"
-		}
-	} else if m.titleInput.Value() != "" {
-		title = m.titleInput.Value()
-	}
-
-	// Status indicators
-	var status string
-	if m.mode == ModeAccount {
-		status = SuccessStyle.Render("●") + " " + DimStyle.Render(m.config.Username)
-	} else {
-		status = DimStyle.Render("● local")
 	}
 
 	// Word count
 	content := m.textarea.Value()
 	words := len(strings.Fields(content))
-	wordCount := DimStyle.Render(fmt.Sprintf("%d words", words))
 
-	// Header line
-	header := LogoStyle.Render(title)
-	headerLine := header + strings.Repeat(" ", max(0, editorWidth-len(title)-20)) + status
-	b.WriteString(headerLine + "\n")
-	b.WriteString(strings.Repeat("─", editorWidth) + "\n")
-
-	// Editor
-	b.WriteString(m.textarea.View() + "\n")
-
-	// Footer
-	b.WriteString(strings.Repeat("─", editorWidth) + "\n")
-
-	// Status line
-	statusLine := wordCount
-	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
-		statusLine = SuccessStyle.Render("✓ " + m.statusMsg)
+	// Status indicator
+	var modeStr string
+	if m.mode == ModeAccount {
+		modeStr = SuccessStyle.Render("●") + " " + m.config.Username
+	} else {
+		modeStr = DimStyle.Render("●") + " local"
 	}
-	if m.errorMsg != "" {
-		statusLine = ErrorStyle.Render(m.errorMsg)
+
+	// Status message
+	var statusStr string
+	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
+		statusStr = SuccessStyle.Render(" ✓ " + m.statusMsg)
+	} else if m.errorMsg != "" {
+		statusStr = ErrorStyle.Render(" " + m.errorMsg)
 		m.errorMsg = ""
 	}
 
-	help := HelpStyle.Render("esc menu")
-	footerLine := statusLine + strings.Repeat(" ", max(0, editorWidth-len(statusLine)-len(help)+10)) + help
-	b.WriteString(footerLine)
+	// Build header: title on left, mode on right
+	headerStyle := lipgloss.NewStyle().
+		Foreground(white).
+		Background(purpleDim).
+		Padding(0, 2).
+		Width(m.width)
 
-	return AppStyle.Render(b.String())
+	titlePart := LogoStyle.Render(title)
+	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(titlePart)-lipgloss.Width(modeStr)-6))
+	header := headerStyle.Render(titlePart + spacer + modeStr)
+
+	// Build footer: word count, status, help
+	footerStyle := lipgloss.NewStyle().
+		Foreground(gray).
+		Background(black).
+		Padding(0, 2).
+		Width(m.width)
+
+	wordStr := fmt.Sprintf("%d words", words)
+	helpStr := "esc menu · ctrl+s save"
+	footerSpacer := strings.Repeat(" ", max(0, m.width-len(wordStr)-len(helpStr)-lipgloss.Width(statusStr)-6))
+	footer := footerStyle.Render(wordStr + statusStr + footerSpacer + DimStyle.Render(helpStr))
+
+	// Textarea takes remaining space
+	editorHeight := m.height - 2 // header + footer
+	m.textarea.SetWidth(m.width - 2)
+	m.textarea.SetHeight(editorHeight)
+
+	// Combine
+	return header + "\n" + m.textarea.View() + "\n" + footer
 }
 
 func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
