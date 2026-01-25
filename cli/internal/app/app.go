@@ -155,6 +155,9 @@ func (app *App) getDefaultStoragePath() string {
 }
 
 func (app *App) checkAndUpdate() {
+	// Wait for UI to be ready
+	time.Sleep(500 * time.Millisecond)
+
 	// Check for updates
 	info, err := updater.CheckForUpdate()
 	if err != nil {

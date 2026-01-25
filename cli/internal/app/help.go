@@ -2,11 +2,12 @@ package app
 
 import (
 	"github.com/gdamore/tcell/v2"
+	"github.com/justtype/cli/internal/updater"
 	"github.com/rivo/tview"
 )
 
 func (app *App) showHelp() {
-	helpText := `[purple]justtype cli shortcuts[-]
+	helpText := `[purple]justtype cli v` + updater.GetVersion() + `[-]
 
 [white]editor[-]
   esc           open menu
