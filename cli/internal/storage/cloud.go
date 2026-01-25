@@ -268,6 +268,16 @@ func (cs *CloudStorage) Publish(slate *Slate) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+
+		// Try to parse as JSON to check for ENCRYPTION_KEY_MISSING
+		var errResp struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code == "ENCRYPTION_KEY_MISSING" {
+			return "", fmt.Errorf("SESSION_EXPIRED")
+		}
+
 		return "", fmt.Errorf("publish failed: %s", string(body))
 	}
 

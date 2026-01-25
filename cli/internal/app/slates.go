@@ -170,7 +170,27 @@ func (app *App) handlePublish(slate *storage.Slate) {
 			shareURL, err := cs.Publish(slate)
 			if err != nil {
 				app.tviewApp.QueueUpdateDraw(func() {
-					app.showError(fmt.Sprintf("Failed to publish: %v", err))
+					// Check if session expired
+					if err.Error() == "SESSION_EXPIRED" {
+						modal := tview.NewModal().
+							SetText("Session expired. Re-login to continue?").
+							AddButtons([]string{"Re-login", "Cancel"}).
+							SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+								app.pages.RemovePage("session-expired")
+								if buttonIndex == 0 {
+									// Re-login
+									app.showAuth()
+								}
+							}).
+							SetBackgroundColor(colorBackground).
+							SetTextColor(colorForeground).
+							SetButtonBackgroundColor(colorPurple).
+							SetButtonTextColor(colorForeground)
+
+						app.pages.AddPage("session-expired", modal, true, true)
+					} else {
+						app.showError(fmt.Sprintf("Failed to publish: %v", err))
+					}
 				})
 				return
 			}

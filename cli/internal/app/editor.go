@@ -109,9 +109,18 @@ func (app *App) showEditor(slate *storage.Slate) {
 			return nil
 		}
 
-		// Ctrl+S force save
+		// Ctrl+S save
 		if event.Key() == tcell.KeyCtrlS {
 			app.saveNow()
+			return nil
+		}
+
+		// Ctrl+P publish
+		if event.Key() == tcell.KeyCtrlP {
+			if app.currentSlate != nil {
+				app.saveNow()
+				app.handlePublish(app.currentSlate)
+			}
 			return nil
 		}
 
@@ -158,7 +167,7 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc quit · ctrl+k commands · ctrl+s save[-]")
+	parts = append(parts, "[#666666]esc quit · ctrl+k commands · ctrl+s save · ctrl+p publish[-]")
 
 	footer.SetText(joinParts(parts))
 }

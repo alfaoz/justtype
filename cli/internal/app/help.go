@@ -13,6 +13,7 @@ func (app *App) showHelp() {
   esc           quit menu
   ctrl+k        command palette
   ctrl+s        save
+  ctrl+p        publish/unpublish
 
 [white]command palette[-]
   n             new slate
@@ -37,9 +38,8 @@ func (app *App) showHelp() {
 
 [white]workflow[-]
   1. write in editor (press ctrl+s to save)
-  2. press ctrl+k → a (all slates)
-  3. select your slate → press p to publish
-  4. copy share URL from modal
+  2. press ctrl+p to publish
+  3. copy share URL from modal
 
 [dim]local mode: publishing requires cloud sync[-]`
 
