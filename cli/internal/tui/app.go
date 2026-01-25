@@ -3,11 +3,11 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -21,15 +21,23 @@ type View int
 
 const (
 	ViewWelcome View = iota
-	ViewSetupEditor
-	ViewHome
-	ViewSlates
-	ViewEditor
 	ViewLogin
+	ViewRegister
+	ViewEditor
+	ViewSlates
+	ViewMenu
 	ViewSettings
 	ViewExport
 	ViewConfirm
-	ViewLoading
+)
+
+// Mode represents whether user is in local or account mode
+type Mode int
+
+const (
+	ModeUnset Mode = iota
+	ModeLocal
+	ModeAccount
 )
 
 type Model struct {
@@ -41,6 +49,7 @@ type Model struct {
 	view         View
 	previousView View
 	selected     int
+	mode         Mode
 
 	// Core data
 	config *config.Config
@@ -48,22 +57,27 @@ type Model struct {
 	client *api.Client
 	slates []*store.Slate
 
-	// Current slate
-	currentSlate   *store.Slate
-	editorTitle    string
-	editorContent  string
-	editorModified bool
+	// Current slate being edited
+	currentSlate *store.Slate
 
-	// Inputs
+	// Built-in editor
+	titleInput textinput.Model
+	textarea   textarea.Model
+	lastSave   time.Time
+	autoSaveTimer *time.Timer
+
+	// Login/Register inputs
 	usernameInput textinput.Model
 	passwordInput textinput.Model
-	searchInput   textinput.Model
-	exportInput   textinput.Model
+	emailInput    textinput.Model
 	inputFocus    int
 
-	// Editor options for setup
-	editors         []string
-	editorSelection int
+	// Export
+	exportInput textinput.Model
+
+	// Search
+	searchInput textinput.Model
+	searching   bool
 
 	// UI state
 	spinner       spinner.Model
@@ -72,7 +86,6 @@ type Model struct {
 	statusMsg     string
 	statusTime    time.Time
 	errorMsg      string
-	searching     bool
 	confirmMsg    string
 	confirmAction func()
 
@@ -82,8 +95,38 @@ type Model struct {
 	// Update state
 	updateAvailable bool
 	latestVersion   string
-	updating        bool
 }
+
+// Messages
+type (
+	updateCheckMsg struct {
+		available bool
+		version   string
+		err       error
+	}
+	cloudSyncMsg struct {
+		slates []*store.Slate
+		err    error
+	}
+	cloudSaveMsg struct {
+		slateID string
+		cloudID int
+		err     error
+	}
+	loginResultMsg struct {
+		success  bool
+		username string
+		token    string
+		err      error
+	}
+	registerResultMsg struct {
+		success  bool
+		username string
+		token    string
+		err      error
+	}
+	autoSaveMsg struct{}
+)
 
 func NewModel() (*Model, error) {
 	cfg, err := config.Load()
@@ -98,87 +141,108 @@ func NewModel() (*Model, error) {
 
 	client := api.New(cfg.APIURL, cfg.Token)
 
-	// Setup text inputs
+	// Title input for editor
+	ti := textinput.New()
+	ti.Placeholder = "untitled"
+	ti.CharLimit = 200
+	ti.Width = 60
+
+	// Main textarea for writing
+	ta := textarea.New()
+	ta.Placeholder = "start writing..."
+	ta.ShowLineNumbers = false
+	ta.SetWidth(80)
+	ta.SetHeight(20)
+	ta.Focus()
+
+	// Login inputs
 	userInput := textinput.New()
-	userInput.Placeholder = "username or email"
-	userInput.CharLimit = 100
-	userInput.Width = 30
+	userInput.Placeholder = "username"
+	userInput.CharLimit = 50
+	userInput.Width = 40
 
 	passInput := textinput.New()
 	passInput.Placeholder = "password"
 	passInput.EchoMode = textinput.EchoPassword
 	passInput.CharLimit = 100
-	passInput.Width = 30
+	passInput.Width = 40
+
+	emailInput := textinput.New()
+	emailInput.Placeholder = "email"
+	emailInput.CharLimit = 100
+	emailInput.Width = 40
 
 	searchInput := textinput.New()
-	searchInput.Placeholder = "search slates..."
+	searchInput.Placeholder = "search..."
 	searchInput.CharLimit = 50
-	searchInput.Width = 30
+	searchInput.Width = 40
 
 	exportInput := textinput.New()
 	exportInput.Placeholder = "~/Documents/justtype"
 	exportInput.CharLimit = 200
-	exportInput.Width = 40
+	exportInput.Width = 50
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = SpinnerStyle
 
-	// Available editors
-	editors := []string{"nano", "vim", "nvim", "code", "subl", "micro", "emacs", "helix"}
+	// Determine initial view and mode
+	initialView := ViewWelcome
+	mode := ModeUnset
 
-	// Determine initial view
-	initialView := ViewHome
-	if cfg.IsFirstRun() {
-		initialView = ViewWelcome
+	if !cfg.IsFirstRun() {
+		// Already set up - go straight to editor
+		if cfg.IsLoggedIn() {
+			mode = ModeAccount
+		} else {
+			mode = ModeLocal
+		}
+		initialView = ViewEditor
 	}
 
 	m := &Model{
 		view:          initialView,
+		mode:          mode,
 		config:        cfg,
 		store:         st,
 		client:        client,
 		slates:        st.List(),
+		titleInput:    ti,
+		textarea:      ta,
 		usernameInput: userInput,
 		passwordInput: passInput,
+		emailInput:    emailInput,
 		searchInput:   searchInput,
 		exportInput:   exportInput,
 		spinner:       s,
-		editors:       editors,
 	}
 
 	return m, nil
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		tea.EnterAltScreen,
 		textinput.Blink,
+		textarea.Blink,
 		m.spinner.Tick,
 		checkForUpdate(),
-	)
-}
+	}
 
-// Update check messages
-type updateCheckMsg struct {
-	available bool
-	version   string
-	err       error
-}
+	// If going straight to editor, create or load a slate
+	if m.view == ViewEditor {
+		// Load most recent slate or create new one
+		if len(m.slates) > 0 {
+			m.currentSlate = m.slates[0]
+		}
+	}
 
-type updateDoneMsg struct {
-	err error
-}
+	// If logged in, sync slates
+	if m.mode == ModeAccount {
+		cmds = append(cmds, m.pullCloudSlates())
+	}
 
-type cloudSyncMsg struct {
-	slates []*store.Slate
-	err    error
-}
-
-type cloudSaveMsg struct {
-	slateID string
-	cloudID int
-	err     error
+	return tea.Batch(cmds...)
 }
 
 func checkForUpdate() tea.Cmd {
@@ -201,10 +265,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Update textarea size
+		m.textarea.SetWidth(min(m.width-4, 100))
+		m.textarea.SetHeight(m.height - 8)
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global quit
+		// Global quit with ctrl+c
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -213,16 +280,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.view {
 		case ViewWelcome:
 			return m.updateWelcome(msg)
-		case ViewSetupEditor:
-			return m.updateSetupEditor(msg)
-		case ViewHome:
-			return m.updateHome(msg)
-		case ViewSlates:
-			return m.updateSlates(msg)
-		case ViewEditor:
-			return m.updateEditor(msg)
 		case ViewLogin:
 			return m.updateLogin(msg)
+		case ViewRegister:
+			return m.updateRegister(msg)
+		case ViewEditor:
+			return m.updateEditor(msg)
+		case ViewSlates:
+			return m.updateSlates(msg)
+		case ViewMenu:
+			return m.updateMenu(msg)
 		case ViewSettings:
 			return m.updateSettings(msg)
 		case ViewExport:
@@ -236,27 +303,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
-	case editorDoneMsg:
-		return m.handleEditorDone(msg)
-
 	case loginResultMsg:
 		return m.handleLoginResult(msg)
+
+	case registerResultMsg:
+		return m.handleRegisterResult(msg)
 
 	case updateCheckMsg:
 		if msg.err == nil && msg.available {
 			m.updateAvailable = true
 			m.latestVersion = msg.version
-		}
-		return m, nil
-
-	case updateDoneMsg:
-		m.updating = false
-		if msg.err != nil {
-			m.errorMsg = "update failed: " + msg.err.Error()
-		} else {
-			m.statusMsg = "updated! restart justtype to use v" + m.latestVersion
-			m.statusTime = time.Now()
-			m.updateAvailable = false
 		}
 		return m, nil
 
@@ -269,13 +325,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.store.ImportFromCloud(slate)
 			}
 			m.slates = m.store.List()
-			count := len(msg.slates)
-			if count > 0 {
-				m.statusMsg = fmt.Sprintf("synced %d slates from cloud", count)
-			} else {
-				m.statusMsg = "cloud slates synced"
+			if len(msg.slates) > 0 {
+				m.statusMsg = fmt.Sprintf("synced %d slates", len(msg.slates))
+				m.statusTime = time.Now()
 			}
-			m.statusTime = time.Now()
 		}
 		return m, nil
 
@@ -285,8 +338,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentSlate != nil && m.currentSlate.ID == msg.slateID {
 				m.currentSlate = m.store.Get(msg.slateID)
 			}
+			m.statusMsg = "saved to cloud"
+			m.statusTime = time.Now()
 		}
 		return m, nil
+
+	case autoSaveMsg:
+		return m.doAutoSave()
 	}
 
 	return m, tea.Batch(cmds...)
@@ -297,36 +355,32 @@ func (m Model) View() string {
 		return ""
 	}
 
-	var content string
-
 	switch m.view {
 	case ViewWelcome:
-		content = m.viewWelcome()
-	case ViewSetupEditor:
-		content = m.viewSetupEditor()
-	case ViewHome:
-		content = m.viewHome()
-	case ViewSlates:
-		content = m.viewSlates()
-	case ViewEditor:
-		content = m.viewEditor()
+		return m.viewWelcome()
 	case ViewLogin:
-		content = m.viewLogin()
+		return m.viewLogin()
+	case ViewRegister:
+		return m.viewRegister()
+	case ViewEditor:
+		return m.viewEditor()
+	case ViewSlates:
+		return m.viewSlates()
+	case ViewMenu:
+		return m.viewMenu()
 	case ViewSettings:
-		content = m.viewSettings()
+		return m.viewSettings()
 	case ViewExport:
-		content = m.viewExport()
+		return m.viewExport()
 	case ViewConfirm:
-		content = m.viewConfirm()
-	case ViewLoading:
-		content = m.viewLoading()
+		return m.viewConfirm()
 	}
 
-	return content
+	return ""
 }
 
 // ============================================================================
-// WELCOME VIEW
+// WELCOME VIEW - First time setup
 // ============================================================================
 
 func (m Model) viewWelcome() string {
@@ -335,485 +389,72 @@ func (m Model) viewWelcome() string {
      ║║ ║╚═╗ ║  ║ ╚╦╝╠═╝║╣
     ╚╝╚═╝╚═╝ ╩  ╩  ╩ ╩  ╚═╝`
 
-	content := LogoStyle.Render(logo) + "\n"
-	content += DimStyle.Render("        v" + updater.GetVersion()) + "\n\n"
-	content += SubtitleStyle.Render("distraction-free writing for your terminal") + "\n\n"
-	content += DimStyle.Render("your notes are stored locally in ~/.justtype") + "\n"
-	content += DimStyle.Render("login to sync across devices") + "\n\n"
-	content += ButtonStyle.Render("press enter to get started") + "\n\n"
-	content += HelpStyle.Render("q to quit")
-
-	box := WelcomeBoxStyle.Render(content)
-	return Centered(m.width, m.height, box)
-}
-
-func (m *Model) updateWelcome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "enter", " ":
-		m.view = ViewSetupEditor
-		return m, nil
-	case "q", "esc":
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-// ============================================================================
-// SETUP EDITOR VIEW
-// ============================================================================
-
-func (m Model) viewSetupEditor() string {
-	content := TitleStyle.Render(" choose your editor ") + "\n\n"
-	content += SubtitleStyle.Render("select your preferred text editor:") + "\n\n"
-
-	for i, editor := range m.editors {
-		cursor := "  "
-		style := MenuItemStyle
-		if i == m.editorSelection {
-			cursor = CursorStyle.Render("▸ ")
-			style = SelectedStyle
-		}
-
-		desc := getEditorDescription(editor)
-		line := fmt.Sprintf("%-8s %s", editor, DimStyle.Render(desc))
-		content += cursor + style.Render(line) + "\n"
-	}
-
-	content += "\n" + HelpStyle.Render("↑/↓ select • enter confirm • you can change this later in settings")
-
-	box := WelcomeBoxStyle.Width(55).Render(content)
-	return Centered(m.width, m.height, box)
-}
-
-func (m *Model) updateSetupEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.editorSelection > 0 {
-			m.editorSelection--
-		}
-	case "down", "j":
-		if m.editorSelection < len(m.editors)-1 {
-			m.editorSelection++
-		}
-	case "enter":
-		editor := m.editors[m.editorSelection]
-		m.config.SetEditor(editor)
-		m.config.CompleteFirstRun()
-		m.view = ViewHome
-		m.statusMsg = fmt.Sprintf("editor set to %s", editor)
-		m.statusTime = time.Now()
-	case "q", "esc":
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func getEditorDescription(editor string) string {
-	switch editor {
-	case "nano":
-		return "simple, beginner-friendly"
-	case "vim":
-		return "powerful, modal editing"
-	case "nvim":
-		return "modern vim"
-	case "code":
-		return "vs code"
-	case "subl":
-		return "sublime text"
-	case "micro":
-		return "modern terminal editor"
-	case "emacs":
-		return "extensible editor"
-	case "helix":
-		return "modern modal editor"
-	default:
-		return ""
-	}
-}
-
-// ============================================================================
-// HOME VIEW
-// ============================================================================
-
-func (m Model) viewHome() string {
 	var b strings.Builder
+	b.WriteString(LogoStyle.Render(logo) + "\n")
+	b.WriteString(DimStyle.Render("        v" + updater.GetVersion()) + "\n\n")
+	b.WriteString(SubtitleStyle.Render("distraction-free writing for your terminal") + "\n\n")
 
-	// Header with version
-	logo := LogoStyle.Render("justtype")
-	version := DimStyle.Render(" v" + updater.GetVersion())
-	b.WriteString(logo + version)
-	b.WriteString("\n\n")
-
-	// Update notification
-	if m.updateAvailable {
-		b.WriteString(WarningStyle.Render("⬆ update available: v"+m.latestVersion) + "\n\n")
+	options := []string{
+		"use locally",
+		"login to justtype.io",
+		"create account",
+	}
+	descriptions := []string{
+		"notes stored in ~/.justtype",
+		"sync across devices",
+		"free account",
 	}
 
-	// Status line
-	if m.config.IsLoggedIn() {
-		b.WriteString(SuccessStyle.Render("●") + " " + DimStyle.Render("logged in as ") + m.config.Username)
-	} else {
-		b.WriteString(DimStyle.Render("○ local mode"))
-	}
-	b.WriteString("\n\n")
-
-	// Menu
-	menuItems := []menuItem{
-		{label: "new slate", key: "n", desc: "create a new note"},
-		{label: "my slates", key: "s", desc: fmt.Sprintf("%d notes", len(m.slates))},
-	}
-
-	if m.config.IsLoggedIn() {
-		menuItems = append(menuItems,
-			menuItem{label: "sync", key: "y", desc: "upload to cloud"},
-			menuItem{label: "logout", key: "l", desc: ""},
-		)
-	} else {
-		menuItems = append(menuItems,
-			menuItem{label: "login", key: "l", desc: "sync to cloud"},
-		)
-	}
-
-	menuItems = append(menuItems,
-		menuItem{label: "settings", key: ",", desc: "editor, export"},
-		menuItem{label: "quit", key: "q", desc: ""},
-	)
-
-	for i, item := range menuItems {
+	for i, opt := range options {
 		cursor := "  "
 		style := MenuItemStyle
 		if i == m.selected {
 			cursor = CursorStyle.Render("▸ ")
 			style = SelectedStyle
 		}
-
-		line := style.Render(item.label)
-		if item.desc != "" {
-			line += "  " + DimStyle.Render(item.desc)
-		}
+		line := style.Render(opt)
+		line += "  " + DimStyle.Render(descriptions[i])
 		b.WriteString(cursor + line + "\n")
 	}
 
-	// Status message
-	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
-		b.WriteString("\n" + SuccessStyle.Render("✓ "+m.statusMsg))
-	}
-	if m.errorMsg != "" {
-		b.WriteString("\n" + ErrorStyle.Render("✗ "+m.errorMsg))
-		m.errorMsg = "" // Clear after showing
-	}
+	b.WriteString("\n" + HelpStyle.Render("↑/↓ select • enter confirm • q quit"))
 
-	// Help
-	b.WriteString("\n\n")
-	b.WriteString(HelpStyle.Render("↑/↓ navigate • enter select • q quit"))
-
-	return AppStyle.Render(b.String())
+	box := WelcomeBoxStyle.Render(b.String())
+	return Centered(m.width, m.height, box)
 }
 
-type menuItem struct {
-	label string
-	key   string
-	desc  string
-}
-
-func (m *Model) updateHome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	menuLen := 5
-	if m.config.IsLoggedIn() {
-		menuLen = 6
-	}
-
+func (m *Model) updateWelcome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		if m.selected > 0 {
 			m.selected--
 		}
 	case "down", "j":
-		if m.selected < menuLen-1 {
+		if m.selected < 2 {
 			m.selected++
 		}
 	case "enter":
-		return m.handleHomeSelect()
-	case "n":
-		return m.createNewSlate()
-	case "s":
-		m.view = ViewSlates
-		m.selected = 0
-		m.slates = m.store.List()
-	case "l":
-		if m.config.IsLoggedIn() {
-			m.config.ClearCredentials()
-			m.statusMsg = "logged out"
-			m.statusTime = time.Now()
-		} else {
+		switch m.selected {
+		case 0: // Local mode
+			m.mode = ModeLocal
+			m.config.CompleteFirstRun()
+			m.view = ViewEditor
+			m.currentSlate = nil // New slate
+			m.textarea.Focus()
+			return m, textarea.Blink
+		case 1: // Login
 			m.view = ViewLogin
+			m.selected = 0
 			m.usernameInput.Focus()
-			m.inputFocus = 0
+			return m, textinput.Blink
+		case 2: // Register
+			m.view = ViewRegister
+			m.selected = 0
+			m.usernameInput.Focus()
 			return m, textinput.Blink
 		}
-	case "y":
-		if m.config.IsLoggedIn() {
-			return m.syncSlates()
-		}
-	case ",":
-		m.view = ViewSettings
-		m.selected = 0
-	case "q":
+	case "q", "esc":
 		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func (m *Model) handleHomeSelect() (tea.Model, tea.Cmd) {
-	isLoggedIn := m.config.IsLoggedIn()
-	idx := m.selected
-
-	// Menu order differs based on login status
-	if !isLoggedIn {
-		// new, slates, login, settings, quit
-		switch idx {
-		case 0:
-			return m.createNewSlate()
-		case 1:
-			m.view = ViewSlates
-			m.selected = 0
-			m.slates = m.store.List()
-		case 2:
-			m.view = ViewLogin
-			m.usernameInput.Focus()
-			m.inputFocus = 0
-			return m, textinput.Blink
-		case 3:
-			m.view = ViewSettings
-			m.selected = 0
-		case 4:
-			return m, tea.Quit
-		}
-	} else {
-		// new, slates, sync, logout, settings, quit
-		switch idx {
-		case 0:
-			return m.createNewSlate()
-		case 1:
-			m.view = ViewSlates
-			m.selected = 0
-			m.slates = m.store.List()
-		case 2:
-			return m.syncSlates()
-		case 3:
-			m.config.ClearCredentials()
-			m.statusMsg = "logged out"
-			m.statusTime = time.Now()
-			m.selected = 0
-		case 4:
-			m.view = ViewSettings
-			m.selected = 0
-		case 5:
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-// ============================================================================
-// SLATES VIEW
-// ============================================================================
-
-func (m Model) viewSlates() string {
-	var b strings.Builder
-
-	b.WriteString(TitleStyle.Render(" my slates ") + "\n\n")
-
-	if m.searching {
-		b.WriteString(FocusedInputStyle.Render(m.searchInput.View()) + "\n\n")
-	}
-
-	if len(m.slates) == 0 {
-		b.WriteString(DimStyle.Render("no slates yet\n"))
-		b.WriteString(DimStyle.Render("press 'n' to create your first note"))
-	} else {
-		visible := m.height - 12
-		if visible < 5 {
-			visible = 5
-		}
-		if visible > len(m.slates) {
-			visible = len(m.slates)
-		}
-
-		start := 0
-		if m.selected >= visible {
-			start = m.selected - visible + 1
-		}
-
-		for i := start; i < len(m.slates) && i < start+visible; i++ {
-			slate := m.slates[i]
-
-			cursor := "  "
-			style := ListItemStyle
-			if i == m.selected {
-				cursor = CursorStyle.Render("▸ ")
-				style = SelectedListStyle
-			}
-
-			title := slate.Title
-			if len(title) > 35 {
-				title = title[:32] + "..."
-			}
-
-			// Badges
-			var badges string
-			if slate.IsPublished {
-				badges = PublishedBadgeStyle.Render("published")
-			} else if slate.Synced {
-				badges = SyncedBadgeStyle.Render("synced")
-			} else {
-				badges = BadgeStyle.Render(fmt.Sprintf("%d words", slate.WordCount))
-			}
-
-			timeAgo := formatTimeAgo(slate.UpdatedAt)
-
-			line := fmt.Sprintf("%-36s %s  %s", title, badges, DimStyle.Render(timeAgo))
-			b.WriteString(cursor + style.Render(line) + "\n")
-		}
-
-		if len(m.slates) > visible {
-			b.WriteString(DimStyle.Render(fmt.Sprintf("\n... and %d more", len(m.slates)-visible)))
-		}
-	}
-
-	b.WriteString("\n\n")
-	b.WriteString(HelpStyle.Render("↑/↓ select • enter edit • n new • d delete • / search • esc back"))
-
-	return AppStyle.Render(b.String())
-}
-
-func (m *Model) updateSlates(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.searching {
-		switch msg.String() {
-		case "esc":
-			m.searching = false
-			m.searchInput.SetValue("")
-			m.slates = m.store.List()
-			m.selected = 0
-			return m, nil
-		case "enter":
-			m.searching = false
-			return m, nil
-		default:
-			var cmd tea.Cmd
-			m.searchInput, cmd = m.searchInput.Update(msg)
-			query := m.searchInput.Value()
-			if query != "" {
-				m.slates = m.store.Search(query)
-			} else {
-				m.slates = m.store.List()
-			}
-			m.selected = 0
-			return m, cmd
-		}
-	}
-
-	switch msg.String() {
-	case "up", "k":
-		if m.selected > 0 {
-			m.selected--
-		}
-	case "down", "j":
-		if m.selected < len(m.slates)-1 {
-			m.selected++
-		}
-	case "enter":
-		if len(m.slates) > 0 {
-			return m.editSlate(m.slates[m.selected])
-		}
-	case "n":
-		return m.createNewSlate()
-	case "d":
-		if len(m.slates) > 0 {
-			slate := m.slates[m.selected]
-			m.confirmMsg = fmt.Sprintf("delete \"%s\"?", slate.Title)
-			m.confirmAction = func() {
-				m.store.Delete(slate.ID)
-				m.slates = m.store.List()
-				if m.selected >= len(m.slates) && m.selected > 0 {
-					m.selected--
-				}
-				m.statusMsg = "slate deleted"
-				m.statusTime = time.Now()
-			}
-			m.view = ViewConfirm
-		}
-	case "/":
-		m.searching = true
-		m.searchInput.Focus()
-		return m, textinput.Blink
-	case "esc", "q":
-		m.view = ViewHome
-		m.selected = 0
-	}
-	return m, nil
-}
-
-// ============================================================================
-// EDITOR VIEW
-// ============================================================================
-
-func (m Model) viewEditor() string {
-	var b strings.Builder
-
-	// Title
-	title := m.editorTitle
-	if title == "" {
-		title = "untitled"
-	}
-	titleDisplay := TitleStyle.Render(" " + title + " ")
-	if m.editorModified {
-		titleDisplay += " " + WarningStyle.Render("(modified)")
-	}
-	b.WriteString(titleDisplay + "\n\n")
-
-	// Preview
-	preview := m.editorContent
-	maxPreview := (m.height - 12) * (m.width - 10) / 50 // rough char estimate
-	if maxPreview < 200 {
-		maxPreview = 200
-	}
-	if len(preview) > maxPreview {
-		preview = preview[:maxPreview] + "..."
-	}
-	if preview == "" {
-		preview = DimStyle.Render("(empty - press 'e' to edit)")
-	}
-
-	previewBox := PreviewStyle.
-		Width(m.width - 8).
-		Height(m.height - 12).
-		Render(preview)
-	b.WriteString(previewBox + "\n\n")
-
-	// Stats
-	words := len(strings.Fields(m.editorContent))
-	chars := len(m.editorContent)
-	b.WriteString(WordCountStyle.Render(fmt.Sprintf("%d words • %d characters", words, chars)))
-
-	b.WriteString("\n\n")
-	editor := m.config.GetEditor()
-	if editor == "" {
-		editor = "your editor"
-	}
-	b.WriteString(HelpStyle.Render(fmt.Sprintf("e open in %s • s save • esc back", editor)))
-
-	return AppStyle.Render(b.String())
-}
-
-func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "e":
-		return m.openEditor()
-	case "s":
-		return m.saveSlate()
-	case "esc", "q":
-		m.view = ViewSlates
-		m.slates = m.store.List()
 	}
 	return m, nil
 }
@@ -824,41 +465,36 @@ func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewLogin() string {
 	var b strings.Builder
-
-	b.WriteString(TitleStyle.Render(" login ") + "\n\n")
-	b.WriteString(SubtitleStyle.Render("login to sync your slates to justtype.io") + "\n\n")
+	b.WriteString(TitleStyle.Render(" login to justtype.io ") + "\n\n")
 
 	// Username
-	b.WriteString(LabelStyle.Render("username or email") + "\n")
+	b.WriteString(LabelStyle.Render("username") + "\n")
 	if m.inputFocus == 0 {
-		b.WriteString(FocusedInputStyle.Render(m.usernameInput.View()))
+		b.WriteString(FocusedInputStyle.Render(m.usernameInput.View()) + "\n\n")
 	} else {
-		b.WriteString(InputStyle.Render(m.usernameInput.View()))
+		b.WriteString(InputStyle.Render(m.usernameInput.View()) + "\n\n")
 	}
-	b.WriteString("\n\n")
 
 	// Password
 	b.WriteString(LabelStyle.Render("password") + "\n")
 	if m.inputFocus == 1 {
-		b.WriteString(FocusedInputStyle.Render(m.passwordInput.View()))
+		b.WriteString(FocusedInputStyle.Render(m.passwordInput.View()) + "\n\n")
 	} else {
-		b.WriteString(InputStyle.Render(m.passwordInput.View()))
+		b.WriteString(InputStyle.Render(m.passwordInput.View()) + "\n\n")
 	}
-	b.WriteString("\n\n")
 
 	if m.loginError != "" {
-		b.WriteString(ErrorStyle.Render("✗ "+m.loginError) + "\n\n")
+		b.WriteString(ErrorStyle.Render(m.loginError) + "\n\n")
 	}
 
 	if m.loading {
-		b.WriteString(m.spinner.View() + " logging in...")
+		b.WriteString(m.spinner.View() + " logging in...\n\n")
 	}
 
-	b.WriteString("\n\n")
-	b.WriteString(HelpStyle.Render("tab switch • enter login • esc cancel"))
+	b.WriteString(HelpStyle.Render("tab next • enter login • esc back"))
 
-	content := WelcomeBoxStyle.Width(50).Render(b.String())
-	return Centered(m.width, m.height, content)
+	box := DialogStyle.Width(50).Render(b.String())
+	return Centered(m.width, m.height, box)
 }
 
 func (m *Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -866,8 +502,8 @@ func (m *Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab", "down":
 		m.inputFocus = (m.inputFocus + 1) % 2
 		if m.inputFocus == 0 {
-			m.passwordInput.Blur()
 			m.usernameInput.Focus()
+			m.passwordInput.Blur()
 		} else {
 			m.usernameInput.Blur()
 			m.passwordInput.Focus()
@@ -876,8 +512,8 @@ func (m *Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up":
 		m.inputFocus = (m.inputFocus + 1) % 2
 		if m.inputFocus == 0 {
-			m.passwordInput.Blur()
 			m.usernameInput.Focus()
+			m.passwordInput.Blur()
 		} else {
 			m.usernameInput.Blur()
 			m.passwordInput.Focus()
@@ -886,11 +522,12 @@ func (m *Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m.doLogin()
 	case "esc":
-		m.view = ViewHome
+		m.view = ViewWelcome
 		m.usernameInput.SetValue("")
 		m.passwordInput.SetValue("")
 		m.loginError = ""
-		m.selected = 0
+		m.selected = 1
+		return m, nil
 	default:
 		var cmd tea.Cmd
 		if m.inputFocus == 0 {
@@ -900,14 +537,6 @@ func (m *Model) updateLogin(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
-	return m, nil
-}
-
-type loginResultMsg struct {
-	success  bool
-	username string
-	token    string
-	err      error
 }
 
 func (m *Model) doLogin() (tea.Model, tea.Cmd) {
@@ -948,55 +577,626 @@ func (m *Model) handleLoginResult(msg loginResultMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.config.SetCredentials(msg.token, msg.username)
+	m.config.CompleteFirstRun()
 	m.client.SetToken(msg.token)
-	m.statusMsg = fmt.Sprintf("welcome, %s! syncing slates...", msg.username)
-	m.statusTime = time.Now()
-	m.view = ViewHome
-	m.selected = 0
+	m.mode = ModeAccount
+	m.view = ViewEditor
+	m.currentSlate = nil
 	m.usernameInput.SetValue("")
 	m.passwordInput.SetValue("")
-	m.loading = true
-	m.loadingMsg = "syncing slates..."
+	m.statusMsg = fmt.Sprintf("welcome, %s!", msg.username)
+	m.statusTime = time.Now()
+	m.textarea.Focus()
 
-	// Pull cloud slates after login
-	return m, m.pullCloudSlates()
+	// Pull cloud slates
+	return m, tea.Batch(textarea.Blink, m.pullCloudSlates())
 }
 
-func (m *Model) pullCloudSlates() tea.Cmd {
-	return func() tea.Msg {
-		// Get list of all slates
-		cloudSlates, err := m.client.ListSlates()
-		if err != nil {
-			return cloudSyncMsg{err: err}
-		}
+// ============================================================================
+// REGISTER VIEW
+// ============================================================================
 
-		var slates []*store.Slate
-		for _, cs := range cloudSlates {
-			// Fetch full content for each slate
-			full, err := m.client.GetSlate(cs.ID)
-			if err != nil {
-				continue // Skip slates we can't fetch
+func (m Model) viewRegister() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render(" create account ") + "\n\n")
+
+	// Username
+	b.WriteString(LabelStyle.Render("username") + "\n")
+	if m.inputFocus == 0 {
+		b.WriteString(FocusedInputStyle.Render(m.usernameInput.View()) + "\n\n")
+	} else {
+		b.WriteString(InputStyle.Render(m.usernameInput.View()) + "\n\n")
+	}
+
+	// Email
+	b.WriteString(LabelStyle.Render("email") + "\n")
+	if m.inputFocus == 1 {
+		b.WriteString(FocusedInputStyle.Render(m.emailInput.View()) + "\n\n")
+	} else {
+		b.WriteString(InputStyle.Render(m.emailInput.View()) + "\n\n")
+	}
+
+	// Password
+	b.WriteString(LabelStyle.Render("password") + "\n")
+	if m.inputFocus == 2 {
+		b.WriteString(FocusedInputStyle.Render(m.passwordInput.View()) + "\n\n")
+	} else {
+		b.WriteString(InputStyle.Render(m.passwordInput.View()) + "\n\n")
+	}
+
+	if m.loginError != "" {
+		b.WriteString(ErrorStyle.Render(m.loginError) + "\n\n")
+	}
+
+	if m.loading {
+		b.WriteString(m.spinner.View() + " creating account...\n\n")
+	}
+
+	b.WriteString(HelpStyle.Render("tab next • enter create • esc back"))
+
+	box := DialogStyle.Width(50).Render(b.String())
+	return Centered(m.width, m.height, box)
+}
+
+func (m *Model) updateRegister(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "tab", "down":
+		m.inputFocus = (m.inputFocus + 1) % 3
+		m.usernameInput.Blur()
+		m.emailInput.Blur()
+		m.passwordInput.Blur()
+		switch m.inputFocus {
+		case 0:
+			m.usernameInput.Focus()
+		case 1:
+			m.emailInput.Focus()
+		case 2:
+			m.passwordInput.Focus()
+		}
+		return m, textinput.Blink
+	case "shift+tab", "up":
+		m.inputFocus = (m.inputFocus + 2) % 3
+		m.usernameInput.Blur()
+		m.emailInput.Blur()
+		m.passwordInput.Blur()
+		switch m.inputFocus {
+		case 0:
+			m.usernameInput.Focus()
+		case 1:
+			m.emailInput.Focus()
+		case 2:
+			m.passwordInput.Focus()
+		}
+		return m, textinput.Blink
+	case "enter":
+		return m.doRegister()
+	case "esc":
+		m.view = ViewWelcome
+		m.usernameInput.SetValue("")
+		m.emailInput.SetValue("")
+		m.passwordInput.SetValue("")
+		m.loginError = ""
+		m.selected = 2
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		switch m.inputFocus {
+		case 0:
+			m.usernameInput, cmd = m.usernameInput.Update(msg)
+		case 1:
+			m.emailInput, cmd = m.emailInput.Update(msg)
+		case 2:
+			m.passwordInput, cmd = m.passwordInput.Update(msg)
+		}
+		return m, cmd
+	}
+}
+
+func (m *Model) doRegister() (tea.Model, tea.Cmd) {
+	user := strings.TrimSpace(m.usernameInput.Value())
+	email := strings.TrimSpace(m.emailInput.Value())
+	pass := m.passwordInput.Value()
+
+	if user == "" {
+		m.loginError = "please enter username"
+		return m, nil
+	}
+	if email == "" {
+		m.loginError = "please enter email"
+		return m, nil
+	}
+	if pass == "" {
+		m.loginError = "please enter password"
+		return m, nil
+	}
+	if len(pass) < 8 {
+		m.loginError = "password must be at least 8 characters"
+		return m, nil
+	}
+
+	m.loading = true
+	m.loginError = ""
+
+	return m, func() tea.Msg {
+		resp, err := m.client.Register(user, email, pass)
+		if err != nil {
+			return registerResultMsg{err: err}
+		}
+		return registerResultMsg{
+			success:  true,
+			username: resp.User.Username,
+			token:    resp.Token,
+		}
+	}
+}
+
+func (m *Model) handleRegisterResult(msg registerResultMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+
+	if msg.err != nil {
+		m.loginError = msg.err.Error()
+		return m, nil
+	}
+
+	m.config.SetCredentials(msg.token, msg.username)
+	m.config.CompleteFirstRun()
+	m.client.SetToken(msg.token)
+	m.mode = ModeAccount
+	m.view = ViewEditor
+	m.currentSlate = nil
+	m.usernameInput.SetValue("")
+	m.emailInput.SetValue("")
+	m.passwordInput.SetValue("")
+	m.statusMsg = fmt.Sprintf("welcome, %s!", msg.username)
+	m.statusTime = time.Now()
+	m.textarea.Focus()
+
+	return m, textarea.Blink
+}
+
+// ============================================================================
+// EDITOR VIEW - Built-in editor
+// ============================================================================
+
+func (m Model) viewEditor() string {
+	var b strings.Builder
+
+	// Calculate available width
+	editorWidth := min(m.width-4, 100)
+
+	// Title bar
+	title := "untitled"
+	if m.currentSlate != nil {
+		title = m.currentSlate.Title
+		if title == "" {
+			title = "untitled"
+		}
+	} else if m.titleInput.Value() != "" {
+		title = m.titleInput.Value()
+	}
+
+	// Status indicators
+	var status string
+	if m.mode == ModeAccount {
+		status = SuccessStyle.Render("●") + " " + DimStyle.Render(m.config.Username)
+	} else {
+		status = DimStyle.Render("● local")
+	}
+
+	// Word count
+	content := m.textarea.Value()
+	words := len(strings.Fields(content))
+	wordCount := DimStyle.Render(fmt.Sprintf("%d words", words))
+
+	// Header line
+	header := LogoStyle.Render(title)
+	headerLine := header + strings.Repeat(" ", max(0, editorWidth-len(title)-20)) + status
+	b.WriteString(headerLine + "\n")
+	b.WriteString(strings.Repeat("─", editorWidth) + "\n")
+
+	// Editor
+	b.WriteString(m.textarea.View() + "\n")
+
+	// Footer
+	b.WriteString(strings.Repeat("─", editorWidth) + "\n")
+
+	// Status line
+	statusLine := wordCount
+	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
+		statusLine = SuccessStyle.Render("✓ " + m.statusMsg)
+	}
+	if m.errorMsg != "" {
+		statusLine = ErrorStyle.Render(m.errorMsg)
+		m.errorMsg = ""
+	}
+
+	help := HelpStyle.Render("esc menu")
+	footerLine := statusLine + strings.Repeat(" ", max(0, editorWidth-len(statusLine)-len(help)+10)) + help
+	b.WriteString(footerLine)
+
+	return AppStyle.Render(b.String())
+}
+
+func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Check for escape to open menu
+	if msg.String() == "esc" {
+		// Save current content first
+		m.saveCurrentSlate()
+		m.view = ViewMenu
+		m.selected = 0
+		return m, nil
+	}
+
+	// Handle ctrl+s for manual save
+	if msg.String() == "ctrl+s" {
+		m.saveCurrentSlate()
+		m.statusMsg = "saved"
+		m.statusTime = time.Now()
+
+		// Sync to cloud if logged in
+		if m.mode == ModeAccount && m.currentSlate != nil {
+			return m, m.syncSlateToCloud(m.currentSlate)
+		}
+		return m, nil
+	}
+
+	// Update textarea
+	var cmd tea.Cmd
+	m.textarea, cmd = m.textarea.Update(msg)
+
+	// Schedule auto-save after typing stops (debounced)
+	return m, tea.Batch(cmd, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return autoSaveMsg{}
+	}))
+}
+
+func (m *Model) doAutoSave() (tea.Model, tea.Cmd) {
+	// Only auto-save if content has changed
+	content := m.textarea.Value()
+	if content == "" {
+		return m, nil
+	}
+
+	// Get title from first line or use "untitled"
+	lines := strings.SplitN(content, "\n", 2)
+	title := strings.TrimSpace(lines[0])
+	if title == "" {
+		title = "untitled"
+	}
+
+	// Don't save if nothing has changed
+	if m.currentSlate != nil && m.currentSlate.Content == content {
+		return m, nil
+	}
+
+	m.saveCurrentSlate()
+
+	// Sync to cloud if in account mode
+	if m.mode == ModeAccount && m.currentSlate != nil {
+		return m, m.syncSlateToCloud(m.currentSlate)
+	}
+
+	return m, nil
+}
+
+func (m *Model) saveCurrentSlate() {
+	content := m.textarea.Value()
+	if content == "" {
+		return
+	}
+
+	// Extract title from first line
+	lines := strings.SplitN(content, "\n", 2)
+	title := strings.TrimSpace(lines[0])
+	if title == "" {
+		title = "untitled"
+	}
+
+	if m.currentSlate == nil {
+		// Create new slate
+		m.currentSlate = m.store.Create(title, content)
+	} else {
+		// Update existing
+		m.store.Update(m.currentSlate.ID, title, content)
+		m.currentSlate = m.store.Get(m.currentSlate.ID)
+	}
+
+	m.slates = m.store.List()
+	m.lastSave = time.Now()
+}
+
+// ============================================================================
+// SLATES VIEW - List of slates (like web)
+// ============================================================================
+
+func (m Model) viewSlates() string {
+	var b strings.Builder
+
+	// Header
+	header := TitleStyle.Render(" my slates ")
+	newBtn := ButtonStyle.Render("+ new")
+	headerLine := header + "  " + newBtn
+	b.WriteString(headerLine + "\n\n")
+
+	if m.searching {
+		b.WriteString(FocusedInputStyle.Render(m.searchInput.View()) + "\n\n")
+	}
+
+	if len(m.slates) == 0 {
+		b.WriteString(DimStyle.Render("no slates yet. press n to create one.") + "\n")
+	} else {
+		// List slates in web-style format
+		listWidth := min(m.width-8, 80)
+
+		for i, slate := range m.slates {
+			cursor := "  "
+			style := ListItemStyle
+			if i == m.selected {
+				cursor = CursorStyle.Render("▸ ")
+				style = SelectedListStyle
 			}
 
-			createdAt, _ := time.Parse(time.RFC3339, cs.CreatedAt)
-			updatedAt, _ := time.Parse(time.RFC3339, cs.UpdatedAt)
+			// Title
+			title := slate.Title
+			if title == "" {
+				title = "untitled"
+			}
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
 
-			slates = append(slates, &store.Slate{
-				ID:          fmt.Sprintf("cloud-%d", cs.ID),
-				Title:       full.Title,
-				Content:     full.Content,
-				WordCount:   full.WordCount,
-				CreatedAt:   createdAt,
-				UpdatedAt:   updatedAt,
-				CloudID:     cs.ID,
-				IsPublished: cs.IsPublished == 1,
-				ShareID:     cs.ShareID,
-				Synced:      true,
-			})
+			// Word count and time
+			wordStr := fmt.Sprintf("%d words", slate.WordCount)
+			timeStr := formatTimeAgo(slate.UpdatedAt)
+
+			// Status badges
+			var badges string
+			if slate.IsPublished {
+				badges += " " + PublishedBadgeStyle.Render("public")
+			}
+			if slate.Synced && m.mode == ModeAccount {
+				badges += " " + SyncedBadgeStyle.Render("synced")
+			}
+
+			// Build line
+			meta := DimStyle.Render(fmt.Sprintf("%s  %s", wordStr, timeStr))
+			line := style.Render(fmt.Sprintf("%-40s", title)) + "  " + meta + badges
+
+			// Ensure line fits
+			if len(line) > listWidth {
+				line = line[:listWidth-3] + "..."
+			}
+
+			b.WriteString(cursor + line + "\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(HelpStyle.Render("↑/↓ select • enter open • n new • d delete • / search • esc back"))
+
+	return AppStyle.Render(b.String())
+}
+
+func (m *Model) updateSlates(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.searching {
+		switch msg.String() {
+		case "esc":
+			m.searching = false
+			m.searchInput.SetValue("")
+			m.slates = m.store.List()
+			return m, nil
+		case "enter":
+			m.searching = false
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			// Filter slates
+			query := m.searchInput.Value()
+			if query != "" {
+				m.slates = m.store.Search(query)
+			} else {
+				m.slates = m.store.List()
+			}
+			m.selected = 0
+			return m, cmd
+		}
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.selected > 0 {
+			m.selected--
+		}
+	case "down", "j":
+		if m.selected < len(m.slates)-1 {
+			m.selected++
+		}
+	case "enter":
+		if len(m.slates) > 0 && m.selected < len(m.slates) {
+			m.currentSlate = m.slates[m.selected]
+			m.textarea.SetValue(m.currentSlate.Content)
+			m.view = ViewEditor
+			m.textarea.Focus()
+			return m, textarea.Blink
+		}
+	case "n":
+		m.currentSlate = nil
+		m.textarea.SetValue("")
+		m.view = ViewEditor
+		m.textarea.Focus()
+		return m, textarea.Blink
+	case "d":
+		if len(m.slates) > 0 && m.selected < len(m.slates) {
+			slate := m.slates[m.selected]
+			m.confirmMsg = fmt.Sprintf("delete \"%s\"?", slate.Title)
+			m.confirmAction = func() {
+				m.store.Delete(slate.ID)
+				if m.mode == ModeAccount && slate.CloudID > 0 {
+					m.client.DeleteSlate(slate.CloudID)
+				}
+				m.slates = m.store.List()
+				if m.selected >= len(m.slates) && m.selected > 0 {
+					m.selected--
+				}
+			}
+			m.view = ViewConfirm
+		}
+	case "/":
+		m.searching = true
+		m.searchInput.Focus()
+		return m, textinput.Blink
+	case "esc":
+		m.view = ViewMenu
+		m.selected = 0
+		return m, nil
+	}
+	return m, nil
+}
+
+// ============================================================================
+// MENU VIEW - Quick menu (esc from editor)
+// ============================================================================
+
+func (m Model) viewMenu() string {
+	var b strings.Builder
+
+	b.WriteString(TitleStyle.Render(" menu ") + "\n\n")
+
+	items := []struct {
+		label string
+		desc  string
+	}{
+		{"new slate", "create new note"},
+		{"my slates", fmt.Sprintf("%d notes", len(m.slates))},
+	}
+
+	if m.mode == ModeAccount {
+		items = append(items,
+			struct{ label, desc string }{"sync", "sync with cloud"},
+			struct{ label, desc string }{"logout", m.config.Username},
+		)
+	} else {
+		items = append(items,
+			struct{ label, desc string }{"login", "sync to cloud"},
+		)
+	}
+
+	items = append(items,
+		struct{ label, desc string }{"settings", "export, update"},
+		struct{ label, desc string }{"quit", ""},
+	)
+
+	for i, item := range items {
+		cursor := "  "
+		style := MenuItemStyle
+		if i == m.selected {
+			cursor = CursorStyle.Render("▸ ")
+			style = SelectedStyle
 		}
 
-		return cloudSyncMsg{slates: slates}
+		line := style.Render(item.label)
+		if item.desc != "" {
+			line += "  " + DimStyle.Render(item.desc)
+		}
+		b.WriteString(cursor + line + "\n")
 	}
+
+	// Status
+	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
+		b.WriteString("\n" + SuccessStyle.Render("✓ " + m.statusMsg))
+	}
+
+	b.WriteString("\n\n" + HelpStyle.Render("↑/↓ select • enter choose • esc back to editor"))
+
+	box := DialogStyle.Width(45).Render(b.String())
+	return Centered(m.width, m.height, box)
+}
+
+func (m *Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	menuLen := 5
+	if m.mode == ModeAccount {
+		menuLen = 6
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.selected > 0 {
+			m.selected--
+		}
+	case "down", "j":
+		if m.selected < menuLen-1 {
+			m.selected++
+		}
+	case "enter":
+		return m.handleMenuSelect()
+	case "esc":
+		m.view = ViewEditor
+		m.textarea.Focus()
+		return m, textarea.Blink
+	case "q":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m *Model) handleMenuSelect() (tea.Model, tea.Cmd) {
+	idx := m.selected
+
+	if m.mode == ModeAccount {
+		switch idx {
+		case 0: // New slate
+			m.currentSlate = nil
+			m.textarea.SetValue("")
+			m.view = ViewEditor
+			m.textarea.Focus()
+			return m, textarea.Blink
+		case 1: // My slates
+			m.view = ViewSlates
+			m.selected = 0
+			m.slates = m.store.List()
+		case 2: // Sync
+			m.loading = true
+			m.loadingMsg = "syncing..."
+			return m, m.syncSlates()
+		case 3: // Logout
+			m.config.ClearCredentials()
+			m.client.SetToken("")
+			m.mode = ModeLocal
+			m.statusMsg = "logged out"
+			m.statusTime = time.Now()
+			m.selected = 0
+		case 4: // Settings
+			m.view = ViewSettings
+			m.selected = 0
+		case 5: // Quit
+			return m, tea.Quit
+		}
+	} else {
+		switch idx {
+		case 0: // New slate
+			m.currentSlate = nil
+			m.textarea.SetValue("")
+			m.view = ViewEditor
+			m.textarea.Focus()
+			return m, textarea.Blink
+		case 1: // My slates
+			m.view = ViewSlates
+			m.selected = 0
+			m.slates = m.store.List()
+		case 2: // Login
+			m.view = ViewLogin
+			m.selected = 0
+			m.usernameInput.Focus()
+			return m, textinput.Blink
+		case 3: // Settings
+			m.view = ViewSettings
+			m.selected = 0
+		case 4: // Quit
+			return m, tea.Quit
+		}
+	}
+	return m, nil
 }
 
 // ============================================================================
@@ -1012,11 +1212,9 @@ func (m Model) viewSettings() string {
 		label string
 		value string
 	}{
-		{"editor", m.config.GetEditor()},
 		{"export all slates", ""},
 	}
 
-	// Add update option
 	if m.updateAvailable {
 		items = append(items, struct{ label, value string }{"update", "v" + m.latestVersion + " available"})
 	} else {
@@ -1024,10 +1222,6 @@ func (m Model) viewSettings() string {
 	}
 
 	items = append(items, struct{ label, value string }{"back", ""})
-
-	if items[0].value == "" {
-		items[0].value = "(not set)"
-	}
 
 	for i, item := range items {
 		cursor := "  "
@@ -1044,14 +1238,10 @@ func (m Model) viewSettings() string {
 		b.WriteString(cursor + line + "\n")
 	}
 
-	if m.updating {
-		b.WriteString("\n" + m.spinner.View() + " updating...")
-	}
+	b.WriteString("\n" + HelpStyle.Render("↑/↓ select • enter choose • esc back"))
 
-	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("↑/↓ select • enter choose • esc back"))
-
-	return AppStyle.Render(b.String())
+	box := DialogStyle.Width(45).Render(b.String())
+	return Centered(m.width, m.height, box)
 }
 
 func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1061,44 +1251,33 @@ func (m *Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected--
 		}
 	case "down", "j":
-		if m.selected < 3 {
+		if m.selected < 2 {
 			m.selected++
 		}
 	case "enter":
 		switch m.selected {
-		case 0: // editor
-			m.view = ViewSetupEditor
-			m.editorSelection = 0
-			// Find current editor in list
-			current := m.config.GetEditor()
-			for i, e := range m.editors {
-				if e == current {
-					m.editorSelection = i
-					break
-				}
-			}
-		case 1: // export
+		case 0: // Export
 			m.view = ViewExport
-			m.exportInput.SetValue("~/Documents/justtype")
 			m.exportInput.Focus()
 			return m, textinput.Blink
-		case 2: // update
+		case 1: // Update
 			if m.updateAvailable {
-				m.updating = true
+				m.loading = true
+				m.loadingMsg = "updating..."
 				return m, func() tea.Msg {
 					err := updater.Update()
-					return updateDoneMsg{err: err}
+					if err != nil {
+						return updateCheckMsg{err: err}
+					}
+					return updateCheckMsg{available: false}
 				}
-			} else {
-				// Check for updates
-				return m, checkForUpdate()
 			}
-		case 3: // back
-			m.view = ViewHome
+		case 2: // Back
+			m.view = ViewMenu
 			m.selected = 0
 		}
-	case "esc", "q":
-		m.view = ViewHome
+	case "esc":
+		m.view = ViewMenu
 		m.selected = 0
 	}
 	return m, nil
@@ -1112,45 +1291,39 @@ func (m Model) viewExport() string {
 	var b strings.Builder
 
 	b.WriteString(TitleStyle.Render(" export slates ") + "\n\n")
-	b.WriteString(SubtitleStyle.Render("export all slates as .txt files") + "\n\n")
-
-	b.WriteString(LabelStyle.Render("export path") + "\n")
+	b.WriteString(LabelStyle.Render("export directory:") + "\n")
 	b.WriteString(FocusedInputStyle.Render(m.exportInput.View()) + "\n\n")
-
-	b.WriteString(DimStyle.Render(fmt.Sprintf("%d slates will be exported", len(m.store.List()))) + "\n\n")
-
-	if m.errorMsg != "" {
-		b.WriteString(ErrorStyle.Render(m.errorMsg) + "\n\n")
-	}
-
+	b.WriteString(DimStyle.Render(fmt.Sprintf("will export %d slates as .txt files", len(m.slates))) + "\n\n")
 	b.WriteString(HelpStyle.Render("enter export • esc cancel"))
 
-	content := WelcomeBoxStyle.Width(55).Render(b.String())
-	return Centered(m.width, m.height, content)
+	box := DialogStyle.Width(55).Render(b.String())
+	return Centered(m.width, m.height, box)
 }
 
 func (m *Model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		path := m.exportInput.Value()
+		if path == "" {
+			path = "~/Documents/justtype"
+		}
+		// Expand ~
 		if strings.HasPrefix(path, "~/") {
 			home, _ := os.UserHomeDir()
 			path = home + path[1:]
 		}
-
 		err := m.store.ExportAll(path)
 		if err != nil {
-			m.errorMsg = err.Error()
-			return m, nil
+			m.errorMsg = "export failed: " + err.Error()
+		} else {
+			m.statusMsg = fmt.Sprintf("exported %d slates to %s", len(m.slates), path)
+			m.statusTime = time.Now()
 		}
-
-		m.statusMsg = fmt.Sprintf("exported %d slates to %s", len(m.store.List()), path)
-		m.statusTime = time.Now()
 		m.view = ViewSettings
-		m.errorMsg = ""
+		m.selected = 0
 	case "esc":
 		m.view = ViewSettings
-		m.errorMsg = ""
+		m.selected = 0
 	default:
 		var cmd tea.Cmd
 		m.exportInput, cmd = m.exportInput.Update(msg)
@@ -1164,182 +1337,39 @@ func (m *Model) updateExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ============================================================================
 
 func (m Model) viewConfirm() string {
-	content := m.confirmMsg + "\n\n"
-	content += ButtonStyle.Render("y yes") + "  " + ButtonDimStyle.Render("n no")
+	var b strings.Builder
 
-	box := DialogStyle.Render(content)
+	b.WriteString(WarningStyle.Render("⚠ confirm") + "\n\n")
+	b.WriteString(m.confirmMsg + "\n\n")
+	b.WriteString(HelpStyle.Render("y confirm • n cancel"))
+
+	box := DialogStyle.Width(40).Render(b.String())
 	return Centered(m.width, m.height, box)
 }
 
 func (m *Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "y", "Y", "enter":
+	case "y", "enter":
 		if m.confirmAction != nil {
 			m.confirmAction()
 		}
 		m.view = ViewSlates
+		m.confirmMsg = ""
 		m.confirmAction = nil
-	case "n", "N", "esc":
+	case "n", "esc":
 		m.view = ViewSlates
+		m.confirmMsg = ""
 		m.confirmAction = nil
 	}
 	return m, nil
 }
 
 // ============================================================================
-// LOADING VIEW
+// CLOUD SYNC HELPERS
 // ============================================================================
 
-func (m Model) viewLoading() string {
-	content := m.spinner.View() + " " + m.loadingMsg
-	return Centered(m.width, m.height, content)
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-func (m *Model) createNewSlate() (tea.Model, tea.Cmd) {
-	slate := m.store.Create("untitled", "")
-	m.currentSlate = slate
-	m.editorTitle = slate.Title
-	m.editorContent = slate.Content
-	m.editorModified = false
-	m.view = ViewEditor
-	return m, nil
-}
-
-func (m *Model) editSlate(slate *store.Slate) (tea.Model, tea.Cmd) {
-	m.currentSlate = slate
-	m.editorTitle = slate.Title
-	m.editorContent = slate.Content
-	m.editorModified = false
-	m.view = ViewEditor
-	return m, nil
-}
-
-type editorDoneMsg struct {
-	path string
-	err  error
-}
-
-func (m *Model) openEditor() (tea.Model, tea.Cmd) {
-	editor := m.config.GetEditor()
-	if editor == "" {
-		m.errorMsg = "no editor configured - go to settings"
-		return m, nil
-	}
-
-	// Create temp file
-	tmpFile, err := os.CreateTemp("", "justtype-*.md")
-	if err != nil {
-		m.errorMsg = err.Error()
-		return m, nil
-	}
-
-	// Write content
-	content := m.editorTitle + "\n\n" + m.editorContent
-	tmpFile.WriteString(content)
-	tmpFile.Close()
-
-	c := exec.Command(editor, tmpFile.Name())
-	return m, tea.ExecProcess(c, func(err error) tea.Msg {
-		return editorDoneMsg{path: tmpFile.Name(), err: err}
-	})
-}
-
-func (m *Model) handleEditorDone(msg editorDoneMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.errorMsg = msg.err.Error()
-		os.Remove(msg.path)
-		return m, nil
-	}
-
-	data, err := os.ReadFile(msg.path)
-	os.Remove(msg.path)
-
-	if err != nil {
-		m.errorMsg = err.Error()
-		return m, nil
-	}
-
-	content := string(data)
-	lines := strings.SplitN(content, "\n", 2)
-
-	if len(lines) > 0 {
-		m.editorTitle = strings.TrimSpace(lines[0])
-	}
-	if len(lines) > 1 {
-		m.editorContent = strings.TrimSpace(lines[1])
-	}
-	m.editorModified = true
-
-	return m, nil
-}
-
-func (m *Model) saveSlate() (tea.Model, tea.Cmd) {
-	if m.currentSlate == nil {
-		return m, nil
-	}
-
-	m.store.Update(m.currentSlate.ID, m.editorTitle, m.editorContent)
-	m.currentSlate = m.store.Get(m.currentSlate.ID)
-	m.editorModified = false
-	m.statusMsg = "saved"
-	m.statusTime = time.Now()
-
-	// Auto-sync to cloud if logged in
-	if m.config.IsLoggedIn() {
-		return m, m.syncSlateToCloud(m.currentSlate)
-	}
-
-	return m, nil
-}
-
-func (m *Model) syncSlateToCloud(slate *store.Slate) tea.Cmd {
+func (m *Model) pullCloudSlates() tea.Cmd {
 	return func() tea.Msg {
-		if slate.CloudID > 0 {
-			// Update existing cloud slate
-			err := m.client.UpdateSlate(slate.CloudID, slate.Title, slate.Content)
-			if err != nil {
-				return cloudSaveMsg{slateID: slate.ID, err: err}
-			}
-			return cloudSaveMsg{slateID: slate.ID, cloudID: slate.CloudID}
-		} else {
-			// Create new cloud slate
-			cloudSlate, err := m.client.CreateSlate(slate.Title, slate.Content)
-			if err != nil {
-				return cloudSaveMsg{slateID: slate.ID, err: err}
-			}
-			return cloudSaveMsg{slateID: slate.ID, cloudID: cloudSlate.ID}
-		}
-	}
-}
-
-func (m *Model) syncSlates() (tea.Model, tea.Cmd) {
-	if !m.config.IsLoggedIn() {
-		m.errorMsg = "please login first"
-		return m, nil
-	}
-
-	m.loading = true
-	m.loadingMsg = "syncing..."
-
-	return m, func() tea.Msg {
-		// First, push local unsynced slates
-		for _, slate := range m.store.List() {
-			if !slate.Synced && slate.CloudID == 0 {
-				cloudSlate, err := m.client.CreateSlate(slate.Title, slate.Content)
-				if err == nil {
-					m.store.SetCloudID(slate.ID, cloudSlate.ID)
-				}
-			} else if !slate.Synced && slate.CloudID > 0 {
-				m.client.UpdateSlate(slate.CloudID, slate.Title, slate.Content)
-				m.store.SetCloudID(slate.ID, slate.CloudID)
-			}
-		}
-
-		// Then, pull cloud slates
 		cloudSlates, err := m.client.ListSlates()
 		if err != nil {
 			return cloudSyncMsg{err: err}
@@ -1373,19 +1403,117 @@ func (m *Model) syncSlates() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *Model) syncSlateToCloud(slate *store.Slate) tea.Cmd {
+	return func() tea.Msg {
+		if slate.CloudID > 0 {
+			err := m.client.UpdateSlate(slate.CloudID, slate.Title, slate.Content)
+			if err != nil {
+				return cloudSaveMsg{slateID: slate.ID, err: err}
+			}
+			return cloudSaveMsg{slateID: slate.ID, cloudID: slate.CloudID}
+		} else {
+			cloudSlate, err := m.client.CreateSlate(slate.Title, slate.Content)
+			if err != nil {
+				return cloudSaveMsg{slateID: slate.ID, err: err}
+			}
+			return cloudSaveMsg{slateID: slate.ID, cloudID: cloudSlate.ID}
+		}
+	}
+}
+
+func (m *Model) syncSlates() tea.Cmd {
+	return func() tea.Msg {
+		// Push local unsynced slates
+		for _, slate := range m.store.List() {
+			if !slate.Synced && slate.CloudID == 0 {
+				cloudSlate, err := m.client.CreateSlate(slate.Title, slate.Content)
+				if err == nil {
+					m.store.SetCloudID(slate.ID, cloudSlate.ID)
+				}
+			} else if !slate.Synced && slate.CloudID > 0 {
+				m.client.UpdateSlate(slate.CloudID, slate.Title, slate.Content)
+				m.store.SetCloudID(slate.ID, slate.CloudID)
+			}
+		}
+
+		// Pull cloud slates
+		cloudSlates, err := m.client.ListSlates()
+		if err != nil {
+			return cloudSyncMsg{err: err}
+		}
+
+		var slates []*store.Slate
+		for _, cs := range cloudSlates {
+			full, err := m.client.GetSlate(cs.ID)
+			if err != nil {
+				continue
+			}
+
+			createdAt, _ := time.Parse(time.RFC3339, cs.CreatedAt)
+			updatedAt, _ := time.Parse(time.RFC3339, cs.UpdatedAt)
+
+			slates = append(slates, &store.Slate{
+				ID:          fmt.Sprintf("cloud-%d", cs.ID),
+				Title:       full.Title,
+				Content:     full.Content,
+				WordCount:   full.WordCount,
+				CreatedAt:   createdAt,
+				UpdatedAt:   updatedAt,
+				CloudID:     cs.ID,
+				IsPublished: cs.IsPublished == 1,
+				ShareID:     cs.ShareID,
+				Synced:      true,
+			})
+		}
+
+		return cloudSyncMsg{slates: slates}
+	}
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
 func formatTimeAgo(t time.Time) string {
 	diff := time.Since(t)
 
-	switch {
-	case diff < time.Minute:
-		return "now"
-	case diff < time.Hour:
-		return fmt.Sprintf("%dm", int(diff.Minutes()))
-	case diff < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(diff.Hours()))
-	case diff < 7*24*time.Hour:
-		return fmt.Sprintf("%dd", int(diff.Hours()/24))
-	default:
-		return t.Format("Jan 2")
+	if diff < time.Minute {
+		return "just now"
 	}
+	if diff < time.Hour {
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "1 min ago"
+		}
+		return fmt.Sprintf("%d mins ago", mins)
+	}
+	if diff < 24*time.Hour {
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	}
+	if diff < 48*time.Hour {
+		return "yesterday"
+	}
+	days := int(diff.Hours() / 24)
+	if days < 7 {
+		return fmt.Sprintf("%d days ago", days)
+	}
+	return t.Format("Jan 2")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

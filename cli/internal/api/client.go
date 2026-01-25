@@ -109,6 +109,31 @@ func (c *Client) Login(username, password string) (*LoginResponse, error) {
 	return &result, nil
 }
 
+func (c *Client) Register(username, email, password string) (*LoginResponse, error) {
+	resp, err := c.doRequest("POST", "/api/auth/register", map[string]string{
+		"username": username,
+		"email":    email,
+		"password": password,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		var errResp struct{ Error string `json:"error"` }
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		if errResp.Error != "" {
+			return nil, fmt.Errorf("%s", errResp.Error)
+		}
+		return nil, fmt.Errorf("registration failed")
+	}
+
+	var result LoginResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	return &result, nil
+}
+
 func (c *Client) Verify() (*User, error) {
 	resp, err := c.doRequest("GET", "/api/auth/verify", nil)
 	if err != nil {
