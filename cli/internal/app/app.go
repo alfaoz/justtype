@@ -224,7 +224,7 @@ func (app *App) checkAndUpdate() {
 		errMsg := err.Error()
 		var message string
 		if strings.Contains(errMsg, "permission denied") {
-			message = fmt.Sprintf("Update available: %s → %s\n\nCan't auto-update (permission denied).\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", info.CurrentVersion, info.LatestVersion)
+			message = fmt.Sprintf("Update available: %s → %s\n\nInstalled in system directory (needs sudo).\n\nReinstall to ~/.local/bin for auto-updates:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", info.CurrentVersion, info.LatestVersion)
 		} else {
 			message = fmt.Sprintf("Update failed: %v\n\nRun this command to update:\ncurl -fsSL https://justtype.io/cli/install.sh | bash", err)
 		}
