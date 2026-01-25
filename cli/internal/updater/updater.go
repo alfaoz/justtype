@@ -118,8 +118,8 @@ func Update() error {
 		return fmt.Errorf("binary not found in archive")
 	}
 
-	// Write to temp file first
-	tmpFile, err := os.CreateTemp(filepath.Dir(execPath), "justtype-update-*")
+	// Write to system temp directory (always writable)
+	tmpFile, err := os.CreateTemp("", "justtype-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -138,14 +138,41 @@ func Update() error {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Replace old binary
-	// On Unix, we can rename over the running binary
-	if err := os.Rename(tmpPath, execPath); err != nil {
+	// Try to replace the binary directly first
+	err = os.Rename(tmpPath, execPath)
+	if err != nil {
+		// Rename failed (likely cross-device or permission issue)
+		// Try copying instead
+		err = copyFile(tmpPath, execPath)
 		os.Remove(tmpPath)
-		return fmt.Errorf("failed to replace binary: %w", err)
+		if err != nil {
+			// Check if it's a permission error
+			if os.IsPermission(err) {
+				return fmt.Errorf("permission denied. run: sudo curl -fsSL https://justtype.io/cli/install.sh | sudo bash")
+			}
+			return fmt.Errorf("failed to replace binary: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// copyFile copies src to dst, overwriting dst if it exists
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // GetVersion returns the current version
