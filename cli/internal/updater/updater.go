@@ -15,7 +15,7 @@ import (
 
 const (
 	BaseURL        = "https://justtype.io/cli"
-	CurrentVersion = "1.4.1"
+	CurrentVersion = "1.4.2"
 )
 
 type UpdateInfo struct {

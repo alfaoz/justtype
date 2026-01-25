@@ -756,67 +756,82 @@ func (m *Model) handleRegisterResult(msg registerResultMsg) (tea.Model, tea.Cmd)
 }
 
 // ============================================================================
-// EDITOR VIEW - Built-in editor
+// EDITOR VIEW - Built-in editor (matches web UI)
 // ============================================================================
 
 func (m Model) viewEditor() string {
-	// Get title
-	title := "untitled"
-	if m.currentSlate != nil && m.currentSlate.Title != "" {
-		title = m.currentSlate.Title
-	}
-
 	// Word count
 	content := m.textarea.Value()
 	words := len(strings.Fields(content))
 
-	// Status indicator
-	var modeStr string
-	if m.mode == ModeAccount {
-		modeStr = SuccessStyle.Render("●") + " " + m.config.Username
-	} else {
-		modeStr = DimStyle.Render("●") + " local"
+	// Calculate centered textarea dimensions
+	maxTextWidth := 80
+	textWidth := min(m.width-8, maxTextWidth)
+	textHeight := m.height - 4 // leave room for footer
+
+	// Update textarea size
+	m.textarea.SetWidth(textWidth)
+	m.textarea.SetHeight(textHeight)
+
+	// Center the textarea horizontally
+	leftPadding := (m.width - textWidth) / 2
+	if leftPadding < 0 {
+		leftPadding = 0
 	}
 
+	// Build the centered textarea
+	textareaView := m.textarea.View()
+
+	// Pad each line to center it
+	lines := strings.Split(textareaView, "\n")
+	var centeredLines []string
+	for _, line := range lines {
+		centeredLines = append(centeredLines, strings.Repeat(" ", leftPadding)+line)
+	}
+	centeredTextarea := strings.Join(centeredLines, "\n")
+
+	// Build footer
+	var footerParts []string
+
+	// Word count
+	wordStr := fmt.Sprintf("%d words", words)
+	footerParts = append(footerParts, DimStyle.Render(wordStr))
+
 	// Status message
-	var statusStr string
 	if m.statusMsg != "" && time.Since(m.statusTime) < 3*time.Second {
-		statusStr = SuccessStyle.Render(" ✓ " + m.statusMsg)
+		footerParts = append(footerParts, SuccessStyle.Render("✓ "+m.statusMsg))
 	} else if m.errorMsg != "" {
-		statusStr = ErrorStyle.Render(" " + m.errorMsg)
+		footerParts = append(footerParts, ErrorStyle.Render(m.errorMsg))
 		m.errorMsg = ""
 	}
 
-	// Build header: title on left, mode on right
-	headerStyle := lipgloss.NewStyle().
-		Foreground(white).
-		Background(purpleDim).
-		Padding(0, 2).
-		Width(m.width)
+	// Mode indicator
+	if m.mode == ModeAccount {
+		footerParts = append(footerParts, DimStyle.Render(m.config.Username))
+	} else {
+		footerParts = append(footerParts, DimStyle.Render("local"))
+	}
 
-	titlePart := LogoStyle.Render(title)
-	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(titlePart)-lipgloss.Width(modeStr)-6))
-	header := headerStyle.Render(titlePart + spacer + modeStr)
+	// Help
+	footerParts = append(footerParts, DimStyle.Render("esc menu"))
 
-	// Build footer: word count, status, help
-	footerStyle := lipgloss.NewStyle().
-		Foreground(gray).
-		Background(black).
-		Padding(0, 2).
-		Width(m.width)
+	footer := strings.Join(footerParts, DimStyle.Render("  ·  "))
 
-	wordStr := fmt.Sprintf("%d words", words)
-	helpStr := "esc menu · ctrl+s save"
-	footerSpacer := strings.Repeat(" ", max(0, m.width-len(wordStr)-len(helpStr)-lipgloss.Width(statusStr)-6))
-	footer := footerStyle.Render(wordStr + statusStr + footerSpacer + DimStyle.Render(helpStr))
+	// Center footer
+	footerPadding := (m.width - lipgloss.Width(footer)) / 2
+	if footerPadding < 0 {
+		footerPadding = 0
+	}
+	centeredFooter := strings.Repeat(" ", footerPadding) + footer
 
-	// Textarea takes remaining space
-	editorHeight := m.height - 2 // header + footer
-	m.textarea.SetWidth(m.width - 2)
-	m.textarea.SetHeight(editorHeight)
+	// Fill remaining vertical space to push footer to bottom
+	contentHeight := len(lines)
+	emptyLines := m.height - contentHeight - 2
+	if emptyLines < 0 {
+		emptyLines = 0
+	}
 
-	// Combine
-	return header + "\n" + m.textarea.View() + "\n" + footer
+	return centeredTextarea + strings.Repeat("\n", emptyLines) + "\n" + centeredFooter
 }
 
 func (m *Model) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
