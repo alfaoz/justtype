@@ -1099,20 +1099,36 @@ app.post('/api/cli/approve', authenticateToken, createRateLimitMiddleware('appro
       return res.status(404).json({ error: 'Invalid or expired code' });
     }
 
-    // Approve it
+    // Check if encryption key is cached
+    let encryptionKey = getCachedEncryptionKey(req.user.id);
+
+    // If key not cached, user needs to log in again
+    if (!encryptionKey) {
+      // For Google users, try to decrypt stored key
+      if (req.user.encrypted_key) {
+        try {
+          encryptionKey = decryptEncryptionKey(req.user.encrypted_key);
+          cacheEncryptionKey(req.user.id, encryptionKey);
+        } catch (err) {
+          console.error('Failed to decrypt Google user encryption key:', err);
+        }
+      }
+
+      // If still no key, require re-login
+      if (!encryptionKey) {
+        return res.status(401).json({
+          error: 'Session expired. Please log in again to authorize the CLI.',
+          code: 'PASSWORD_REQUIRED'
+        });
+      }
+    }
+
+    // Approve the device
     db.prepare(`
       UPDATE cli_device_codes
       SET approved = 1, user_id = ?
       WHERE user_code = ?
     `).run(req.user.id, user_code);
-
-    // IMPORTANT: Copy encryption key from browser session to user's cache
-    // This allows CLI to decrypt slates without needing the password
-    const cachedKey = getCachedEncryptionKey(req.user.id);
-    if (cachedKey) {
-      // Key already cached from web login, ensure it stays cached for CLI
-      cacheEncryptionKey(req.user.id, cachedKey);
-    }
 
     res.json({ success: true });
   } catch (error) {

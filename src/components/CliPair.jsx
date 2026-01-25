@@ -35,6 +35,14 @@ export function CliPair({ token, username, onLogin }) {
           console.log('Response data:', data);
 
           if (!response.ok) {
+            // Check if authentication is needed (session expired, encryption key missing, etc)
+            if (data.code === 'PASSWORD_REQUIRED' || response.status === 401) {
+              console.log('Authentication required, showing login modal');
+              setLoading(false);
+              onLogin(); // Show login modal
+              return;
+            }
+
             setError(data.error || 'failed to authorize');
             setLoading(false);
             return;
@@ -49,7 +57,7 @@ export function CliPair({ token, username, onLogin }) {
         }
       })();
     }
-  }, [initialCode, token]);
+  }, [initialCode, token, onLogin]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -69,6 +77,14 @@ export function CliPair({ token, username, onLogin }) {
       const data = await response.json();
 
       if (!response.ok) {
+        // Check if authentication is needed (session expired, encryption key missing, etc)
+        if (data.code === 'PASSWORD_REQUIRED' || response.status === 401) {
+          console.log('Authentication required, showing login modal');
+          setLoading(false);
+          onLogin(); // Show login modal
+          return;
+        }
+
         setError(data.error || 'failed to authorize');
         setLoading(false);
         return;
