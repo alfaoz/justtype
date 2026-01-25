@@ -9,16 +9,19 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/justtype/cli/internal/updater"
 )
 
 // CloudStorage is cloud-first with minimal local caching
 type CloudStorage struct {
-	apiURL      string
-	token       string
-	username    string
-	client      *http.Client
-	tempDir     string
-	currentFile string // temp file for current slate
+	apiURL        string
+	token         string
+	username      string
+	client        *http.Client
+	tempDir       string
+	currentFile   string // temp file for current slate
+	latestVersion string // latest CLI version from server
 }
 
 // NewCloud creates cloud storage
@@ -114,13 +117,16 @@ func (cs *CloudStorage) List() ([]*Slate, error) {
 	// Fetch metadata only from cloud
 	req, _ := http.NewRequest("GET", cs.apiURL+"/api/slates", nil)
 	req.Header.Set("Authorization", "Bearer "+cs.token)
-	req.Header.Set("User-Agent", "justtype-cli/2.2")
+	req.Header.Set("User-Agent", "justtype-cli/2.3")
+	cs.addVersionHeader(req)
 
 	resp, err := cs.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	cs.checkVersionHeader(resp)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to list slates: %d", resp.StatusCode)
@@ -203,7 +209,8 @@ func (cs *CloudStorage) Close() error {
 func (cs *CloudStorage) fetchOne(cloudID int) (*Slate, error) {
 	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/slates/%d", cs.apiURL, cloudID), nil)
 	req.Header.Set("Authorization", "Bearer "+cs.token)
-	req.Header.Set("User-Agent", "justtype-cli/2.2")
+	req.Header.Set("User-Agent", "justtype-cli/2.3")
+	cs.addVersionHeader(req)
 
 	resp, err := cs.client.Do(req)
 	if err != nil {
@@ -211,7 +218,18 @@ func (cs *CloudStorage) fetchOne(cloudID int) (*Slate, error) {
 	}
 	defer resp.Body.Close()
 
+	cs.checkVersionHeader(resp)
+
 	if resp.StatusCode != http.StatusOK {
+		// Check if it's an encryption key error
+		body, _ := io.ReadAll(resp.Body)
+		var errResp struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Code == "ENCRYPTION_KEY_MISSING" {
+			return nil, fmt.Errorf("SESSION_EXPIRED")
+		}
 		return nil, fmt.Errorf("failed to fetch slate: %d", resp.StatusCode)
 	}
 
@@ -356,4 +374,20 @@ func (cs *CloudStorage) deleteTempFile() error {
 	tempFile := filepath.Join(cs.tempDir, "current.json")
 	cs.currentFile = ""
 	return os.Remove(tempFile)
+}
+
+// GetLatestVersion returns the latest version from server (if checked)
+func (cs *CloudStorage) GetLatestVersion() string {
+	return cs.latestVersion
+}
+
+// addVersionHeader adds CLI version to request and checks response for latest version
+func (cs *CloudStorage) addVersionHeader(req *http.Request) {
+	req.Header.Set("X-CLI-Version", updater.GetVersion())
+}
+
+func (cs *CloudStorage) checkVersionHeader(resp *http.Response) {
+	if latestVersion := resp.Header.Get("X-Latest-Version"); latestVersion != "" {
+		cs.latestVersion = latestVersion
+	}
 }

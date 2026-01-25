@@ -13,7 +13,10 @@ func (app *App) showSlates() {
 	list := tview.NewList()
 	list.ShowSecondaryText(true)
 
-	// Fetch slates from cloud (not cached)
+	// Clear cached slates to ensure fresh data
+	app.slates = nil
+
+	// Fetch slates from API (always fresh)
 	if app.storage != nil {
 		list.AddItem("loading slates...", "", 0, nil)
 
@@ -28,14 +31,18 @@ func (app *App) showSlates() {
 
 			app.slates = slates
 
+			// Check for updates (throttled)
+			app.checkForUpdates()
+
 			app.tviewApp.QueueUpdateDraw(func() {
 				list.Clear()
 				app.populateSlatesList(list)
 			})
 		}()
+	} else {
+		// No storage configured
+		list.AddItem("no storage configured", "login to sync or setup local storage", 0, nil)
 	}
-
-	app.populateSlatesList(list)
 
 	list.SetBorder(true).
 		SetTitle(" my slates ").
@@ -108,7 +115,40 @@ func (app *App) populateSlatesList(list *tview.List) {
 		// Capture slate in closure
 		s := slate
 		list.AddItem(title, subtitle, 0, func() {
-			app.showEditor(s)
+			// Load slate content (may require re-login if key expired)
+			go func() {
+				loadedSlate, err := app.storage.Load(s.ID)
+				if err != nil {
+					app.tviewApp.QueueUpdateDraw(func() {
+						// Check if session expired
+						if err.Error() == "SESSION_EXPIRED" {
+							modal := tview.NewModal().
+								SetText("Session expired. Re-login to continue?").
+								AddButtons([]string{"Re-login", "Cancel"}).
+								SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+									app.pages.RemovePage("session-expired")
+									if buttonIndex == 0 {
+										// Re-login
+										app.showAuth()
+									}
+								}).
+								SetBackgroundColor(colorBackground).
+								SetTextColor(colorForeground).
+								SetButtonBackgroundColor(colorPurple).
+								SetButtonTextColor(colorForeground)
+
+							app.pages.AddPage("session-expired", modal, true, true)
+						} else {
+							app.showError(fmt.Sprintf("Failed to load slate: %v", err))
+						}
+					})
+					return
+				}
+
+				app.tviewApp.QueueUpdateDraw(func() {
+					app.showEditor(loadedSlate)
+				})
+			}()
 		})
 	}
 }

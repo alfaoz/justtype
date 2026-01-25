@@ -455,6 +455,23 @@ app.use((err, req, res, next) => {
 // Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
 app.set('trust proxy', true);
 
+// CLI version checking middleware - respond with latest version when CLI sends its version
+app.use((req, res, next) => {
+  const cliVersion = req.header('X-CLI-Version');
+  if (cliVersion) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const versionFile = path.join(__dirname, '..', 'public', 'cli', 'version.txt');
+      const latestVersion = fs.readFileSync(versionFile, 'utf8').trim();
+      res.setHeader('X-Latest-Version', latestVersion);
+    } catch (err) {
+      // Silently ignore errors reading version file
+    }
+  }
+  next();
+});
+
 // Serve terms and privacy text files
 const path = require('path');
 const fs = require('fs');
@@ -1088,6 +1105,14 @@ app.post('/api/cli/approve', authenticateToken, createRateLimitMiddleware('appro
       SET approved = 1, user_id = ?
       WHERE user_code = ?
     `).run(req.user.id, user_code);
+
+    // IMPORTANT: Copy encryption key from browser session to user's cache
+    // This allows CLI to decrypt slates without needing the password
+    const cachedKey = getCachedEncryptionKey(req.user.id);
+    if (cachedKey) {
+      // Key already cached from web login, ensure it stays cached for CLI
+      cacheEncryptionKey(req.user.id, cachedKey);
+    }
 
     res.json({ success: true });
   } catch (error) {

@@ -72,17 +72,30 @@ func (app *App) showSettings() {
 
 func (app *App) confirmLogout() {
 	modal := tview.NewModal().
-		SetText("logout and switch to local storage?").
-		AddButtons([]string{"Logout", "Cancel"}).
+		SetText("logout?").
+		AddButtons([]string{"Logout & Exit", "Logout & Use Local", "Cancel"}).
 		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 			app.pages.RemovePage("confirm-logout")
 			if buttonIndex == 0 {
-				// Logout
+				// Logout and exit (like fresh install)
 				app.Close()
 				app.token = ""
 				app.username = ""
 				app.isCloud = false
 				app.storage = nil
+				app.slates = nil
+				app.currentSlate = nil
+				app.saveConfig()
+				app.tviewApp.Stop()
+			} else if buttonIndex == 1 {
+				// Logout and switch to local storage
+				app.Close()
+				app.token = ""
+				app.username = ""
+				app.isCloud = false
+				app.storage = nil
+				app.slates = nil
+				app.currentSlate = nil
 				app.saveConfig()
 				app.setupLocal()
 			}

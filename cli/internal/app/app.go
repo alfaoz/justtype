@@ -45,6 +45,10 @@ type App struct {
 	isDirty    bool
 	saveStatus string // "saved", "saving...", ""
 
+	// Update checking
+	lastUpdateCheck time.Time
+	updateAvailable string // version string if update available
+
 	// UI components (created on demand)
 	editor       *tview.TextArea
 	menuModal    *tview.Modal
@@ -270,6 +274,63 @@ func (app *App) checkAndUpdate() {
 
 		app.pages.AddPage("update-success", successModal, true, true)
 	})
+}
+
+func (app *App) checkForUpdates() {
+	// Throttle: only check once per 24 hours
+	if time.Since(app.lastUpdateCheck) < 24*time.Hour {
+		return
+	}
+
+	// Get latest version from cloud storage (if available)
+	if cs, ok := app.storage.(*storage.CloudStorage); ok {
+		latestVersion := cs.GetLatestVersion()
+		if latestVersion != "" && latestVersion != updater.GetVersion() {
+			app.lastUpdateCheck = time.Now()
+			app.updateAvailable = latestVersion
+
+			// Show update notification
+			app.tviewApp.QueueUpdateDraw(func() {
+				modal := tview.NewModal().
+					SetText(fmt.Sprintf("Update available: %s → %s\n\nUpdate now?", updater.GetVersion(), latestVersion)).
+					AddButtons([]string{"Update", "Later"}).
+					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+						app.pages.RemovePage("update-available")
+						if buttonIndex == 0 {
+							// Trigger update
+							go func() {
+								if err := updater.Update(); err != nil {
+									app.tviewApp.QueueUpdateDraw(func() {
+										app.showError(fmt.Sprintf("Update failed: %v", err))
+									})
+								} else {
+									app.tviewApp.QueueUpdateDraw(func() {
+										successModal := tview.NewModal().
+											SetText("Updated! Please restart justtype.").
+											AddButtons([]string{"Quit"}).
+											SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+												app.tviewApp.Stop()
+											}).
+											SetBackgroundColor(colorBackground).
+											SetTextColor(colorGreen).
+											SetButtonBackgroundColor(colorPurple).
+											SetButtonTextColor(colorForeground)
+
+										app.pages.AddPage("update-success", successModal, true, true)
+									})
+								}
+							}()
+						}
+					}).
+					SetBackgroundColor(colorBackground).
+					SetTextColor(colorForeground).
+					SetButtonBackgroundColor(colorPurple).
+					SetButtonTextColor(colorForeground)
+
+				app.pages.AddPage("update-available", modal, true, true)
+			})
+		}
+	}
 }
 
 func (app *App) Close() {
