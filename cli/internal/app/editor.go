@@ -92,10 +92,10 @@ func (app *App) showEditor(slate *storage.Slate) {
 			return nil
 		}
 
-		// ? shows help
-		if event.Rune() == '?' {
+		// Ctrl+K opens command palette
+		if event.Key() == tcell.KeyCtrlK {
 			app.saveNow()
-			app.showHelp()
+			app.showCommandPalette()
 			return nil
 		}
 
@@ -129,7 +129,7 @@ func (app *App) updateFooter(footer *tview.TextView) {
 	}
 
 	// Help
-	parts = append(parts, "[#666666]esc menu · ? help[-]")
+	parts = append(parts, "[#666666]esc menu · ctrl+k commands[-]")
 
 	footer.SetText(joinParts(parts))
 }

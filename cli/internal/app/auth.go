@@ -29,16 +29,16 @@ func (app *App) showAuth() {
 	title.SetBorder(false).SetBackgroundColor(colorBackground)
 
 	instructions := tview.NewTextView().
-		SetText("visit: " + dcr.VerificationURI).
+		SetText("opening browser...").
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(colorForeground)
 	instructions.SetBorder(false).SetBackgroundColor(colorBackground)
 
 	code := tview.NewTextView().
-		SetText(dcr.UserCode).
+		SetText("code: " + dcr.UserCode).
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(colorPurple)
-	code.SetBorder(true).SetBackgroundColor(colorBackground)
+	code.SetBorder(false).SetBackgroundColor(colorBackground)
 
 	status := tview.NewTextView().
 		SetText("● waiting for authorization...").
@@ -89,8 +89,8 @@ func (app *App) showAuth() {
 
 	app.pages.AddPage(PageAuth, centered, true, true)
 
-	// Auto-open browser (best effort)
-	go openBrowser(dcr.VerificationURI)
+	// Auto-open browser with code pre-filled
+	go openBrowser(dcr.VerificationURI + "?code=" + dcr.UserCode)
 
 	// Start polling for token in background
 	go func() {

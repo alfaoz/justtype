@@ -1,11 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 
 export function CliPair({ token, username, onLogin }) {
-  const [code, setCode] = useState('');
+  // Read code from URL params
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialCode = urlParams.get('code') || '';
+
+  const [code, setCode] = useState(initialCode);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Auto-submit if code is pre-filled
+  useEffect(() => {
+    if (initialCode && token && initialCode.length >= 6 && !loading && !success) {
+      setLoading(true);
+      // Auto-submit after a brief delay
+      const timer = setTimeout(async () => {
+        try {
+          const response = await fetch(`${API_URL}/cli/approve`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ user_code: initialCode.toUpperCase().trim() })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            setError(data.error || 'failed to authorize');
+            setLoading(false);
+            return;
+          }
+
+          setSuccess(true);
+          setLoading(false);
+        } catch (err) {
+          setError('network error');
+          setLoading(false);
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [initialCode, token, loading, success]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -60,9 +99,8 @@ export function CliPair({ token, username, onLogin }) {
     return (
       <div className="min-h-screen bg-[#111111] flex items-center justify-center p-4 font-mono">
         <div className="max-w-md w-full text-center">
-          <div className="text-6xl mb-4">✓</div>
           <h1 className="text-xl text-[#10B981] mb-4">authorized!</h1>
-          <p className="text-[#666666]">you can now return to your terminal</p>
+          <p className="text-[#666666]">return to your terminal - cli will connect in a moment</p>
         </div>
       </div>
     );

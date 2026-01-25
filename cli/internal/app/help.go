@@ -10,6 +10,7 @@ func (app *App) showHelp() {
 	helpText := `[purple]justtype cli v` + updater.GetVersion() + `[-]
 
 [white]editor[-]
+  ctrl+k        command palette
   esc           open menu
   ctrl+s        force save
 
@@ -28,11 +29,15 @@ func (app *App) showHelp() {
   d             delete slate
   esc           back to editor
 
+[white]help screen[-]
+  esc           back to editor
+  q             back to menu
+
 [white]workflow[-]
   1. write in editor (auto-saves after 1 second)
   2. press esc → all slates
   3. select your slate → press p to publish
-  4. copy share URL
+  4. copy share URL from modal
 
 [dim]local mode: publishing requires cloud sync[-]`
 
@@ -48,7 +53,13 @@ func (app *App) showHelp() {
 
 	// Handle keys
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc || event.Rune() == 'q' {
+		if event.Key() == tcell.KeyEsc {
+			app.pages.RemovePage("help")
+			app.tviewApp.SetFocus(app.editor)
+			return nil
+		}
+		if event.Rune() == 'q' {
+			app.pages.RemovePage("help")
 			app.showMenu()
 			return nil
 		}
@@ -60,7 +71,7 @@ func (app *App) showHelp() {
 		AddItem(nil, 0, 1, false).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(nil, 0, 1, false).
-			AddItem(textView, 26, 0, true).
+			AddItem(textView, 30, 0, true).
 			AddItem(nil, 0, 1, false), 60, 0, true).
 		AddItem(nil, 0, 1, false)
 
