@@ -200,6 +200,10 @@ func (c *Client) CreateSlate(title, content string) (*Slate, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("unauthorized: session expired")
+	}
+
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to create slate")
 	}
@@ -218,6 +222,10 @@ func (c *Client) UpdateSlate(id int, title, content string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("unauthorized: session expired")
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to update slate")

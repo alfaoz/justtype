@@ -334,7 +334,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case cloudSaveMsg:
-		if msg.err == nil && msg.cloudID > 0 {
+		if msg.err != nil {
+			// Check if session expired
+			if strings.Contains(msg.err.Error(), "401") || strings.Contains(msg.err.Error(), "unauthorized") {
+				m.confirmMsg = "session expired. re-login to continue?"
+				m.confirmAction = func() {
+					m.mode = ModeLocal
+					m.config.ClearCredentials()
+					m.client.SetToken("")
+					m.view = ViewLogin
+					m.usernameInput.Focus()
+				}
+				m.view = ViewConfirm
+			} else {
+				m.statusMsg = fmt.Sprintf("save error: %v", msg.err)
+				m.statusTime = time.Now()
+			}
+		} else if msg.cloudID > 0 {
 			m.store.SetCloudID(msg.slateID, msg.cloudID)
 			if m.currentSlate != nil && m.currentSlate.ID == msg.slateID {
 				m.currentSlate = m.store.Get(msg.slateID)
