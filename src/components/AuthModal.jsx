@@ -14,6 +14,7 @@ export function AuthModal({ onClose, onAuth }) {
   const [registeredEmail, setRegisteredEmail] = useState('');
   const [pendingAuthData, setPendingAuthData] = useState(null);
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [showLoadingAnimation, setShowLoadingAnimation] = useState(false);
   const turnstileTokenRef = useRef('');
   const turnstileWidgetId = useRef(null);
   const forgotPasswordWidgetId = useRef(null);
@@ -133,6 +134,9 @@ export function AuthModal({ onClose, onAuth }) {
     try {
       // Wait for Turnstile token if not ready yet
       if (!turnstileTokenRef.current) {
+        // Show spinning animation after 50ms delay
+        const animationTimeout = setTimeout(() => setShowLoadingAnimation(true), 50);
+
         // Try executing if needed
         if (window.turnstile && turnstileWidgetId.current !== null) {
           window.turnstile.execute(turnstileWidgetId.current);
@@ -145,11 +149,17 @@ export function AuthModal({ onClose, onAuth }) {
           attempts++;
         }
 
+        clearTimeout(animationTimeout);
+        setShowLoadingAnimation(false);
+
         // Check if we have a token after waiting
         if (!turnstileTokenRef.current) {
+          setLoading(false);
           throw new Error('verification in progress. please try again in a moment.');
         }
       }
+
+      setShowLoadingAnimation(true);
 
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
       const body = isLogin
@@ -203,6 +213,7 @@ export function AuthModal({ onClose, onAuth }) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setShowLoadingAnimation(false);
     }
   };
 
@@ -281,6 +292,9 @@ export function AuthModal({ onClose, onAuth }) {
     try {
       // Wait for Turnstile token if not ready yet
       if (!turnstileTokenRef.current) {
+        // Show spinning animation after 50ms delay
+        const animationTimeout = setTimeout(() => setShowLoadingAnimation(true), 50);
+
         // Try executing if needed
         if (window.turnstile && forgotPasswordWidgetId.current !== null) {
           window.turnstile.execute(forgotPasswordWidgetId.current);
@@ -293,11 +307,17 @@ export function AuthModal({ onClose, onAuth }) {
           attempts++;
         }
 
+        clearTimeout(animationTimeout);
+        setShowLoadingAnimation(false);
+
         // Check if we have a token after waiting
         if (!turnstileTokenRef.current) {
+          setLoading(false);
           throw new Error('verification in progress. please try again in a moment.');
         }
       }
+
+      setShowLoadingAnimation(true);
 
       const response = await fetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
@@ -333,6 +353,7 @@ export function AuthModal({ onClose, onAuth }) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setShowLoadingAnimation(false);
     }
   };
 
@@ -407,7 +428,7 @@ export function AuthModal({ onClose, onAuth }) {
               type="submit"
               disabled={loading}
               className={`w-full py-2 transition-all duration-300 mt-6 ${
-                loading
+                showLoadingAnimation
                   ? 'auth-button-loading text-white cursor-wait'
                   : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
               }`}
@@ -676,7 +697,7 @@ export function AuthModal({ onClose, onAuth }) {
             type="submit"
             disabled={loading}
             className={`w-full py-2 transition-all duration-300 mt-6 ${
-              loading
+              showLoadingAnimation
                 ? 'auth-button-loading text-white cursor-wait'
                 : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
             }`}
