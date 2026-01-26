@@ -427,10 +427,10 @@ export function AuthModal({ onClose, onAuth }) {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-2 transition-all duration-300 mt-6 ${
+              className={`w-full border py-2 transition-all duration-300 mt-6 ${
                 showLoadingAnimation
-                  ? 'auth-button-loading text-white cursor-wait'
-                  : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
+                  ? 'auth-button-loading border-transparent text-white cursor-wait'
+                  : 'border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
               }`}
             >
               send reset code
@@ -696,10 +696,10 @@ export function AuthModal({ onClose, onAuth }) {
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-2 transition-all duration-300 mt-6 ${
+            className={`w-full border py-2 transition-all duration-300 mt-6 ${
               showLoadingAnimation
-                ? 'auth-button-loading text-white cursor-wait'
-                : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
+                ? 'auth-button-loading border-transparent text-white cursor-wait'
+                : 'border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
             }`}
           >
             {isLogin ? strings.auth.login.submit : strings.auth.signup.submit}
