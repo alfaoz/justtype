@@ -474,6 +474,22 @@ const strings = {
     button: 'back to writing'
   },
 
+  slateNotFound: {
+    messages: [
+      "nope. that's not a real slate. nice try though.",
+      "that share link doesn't exist. typo much?",
+      "never heard of that slate. you sure you got it right?",
+      "are you sure someone gave you the right link?",
+      "slate? what slate? i don't see any slate. and even if there was one, which there isn't, it definitely wouldn't be here. who told you there was a slate?",
+      "crickets...",
+      "nope. nada. zilch. no slate by that name.",
+      "just you, me, and... no slate. awkward.",
+      "*crickets*",
+      "there you are! we also lost this slate. please let us know if you find it."
+    ],
+    button: 'back to writing'
+  },
+
   // nudges
   nudges: {
     loginHeader: 'save your work →',

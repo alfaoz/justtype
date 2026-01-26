@@ -6,6 +6,7 @@ export function PublicViewer() {
   const [slate, setSlate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [copied, setCopied] = useState(false);
@@ -130,7 +131,11 @@ export function PublicViewer() {
     try {
       const response = await fetch(`${API_URL}/public/slates/${shareId}`);
       if (!response.ok) {
-        throw new Error('Slate not found or no longer published');
+        // Pick a random message from the array
+        const messages = strings.slateNotFound.messages;
+        const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+        setErrorMessage(randomMessage);
+        throw new Error('Slate not found');
       }
       const data = await response.json();
       setSlate(data);
@@ -156,12 +161,18 @@ export function PublicViewer() {
 
   if (error || !slate) {
     return (
-      <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex items-center justify-center font-mono">
-        <div className="text-center">
-          <p className="text-red-500 mb-4">{error || 'Slate not found'}</p>
-          <a href="/" className="text-white hover:underline">
-            go to just type
-          </a>
+      <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex items-center justify-center p-4">
+        <div className="max-w-md w-full text-center">
+          <div className="text-6xl md:text-8xl text-[#333] mb-8 font-light">404</div>
+          <p className="text-lg md:text-xl text-[#808080] mb-8 leading-relaxed">
+            {errorMessage || 'slate not found'}
+          </p>
+          <button
+            onClick={() => window.location.href = '/'}
+            className="bg-[#1a1a1a] border border-[#333] text-white px-8 py-3 rounded hover:bg-[#222] hover:border-[#444] transition-all text-sm"
+          >
+            {strings.slateNotFound.button}
+          </button>
         </div>
       </div>
     );
