@@ -14,19 +14,92 @@ export function AuthModal({ onClose, onAuth }) {
   const [registeredEmail, setRegisteredEmail] = useState('');
   const [pendingAuthData, setPendingAuthData] = useState(null);
   const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileWidgetId = useRef(null);
+  const forgotPasswordWidgetId = useRef(null);
   const turnstileRef = useRef(null);
   const forgotPasswordTurnstileRef = useRef(null);
 
-  // Set up Turnstile callback
+  // Initialize Turnstile widget when modal opens
   useEffect(() => {
-    window.onTurnstileSuccess = (token) => {
-      setTurnstileToken(token);
+    const initTurnstile = () => {
+      if (window.turnstile && turnstileRef.current && !turnstileWidgetId.current) {
+        try {
+          turnstileWidgetId.current = window.turnstile.render(turnstileRef.current, {
+            sitekey: import.meta.env.VITE_TURNSTILE_SITE_KEY,
+            theme: 'dark',
+            size: 'invisible',
+            callback: (token) => {
+              setTurnstileToken(token);
+            },
+          });
+        } catch (err) {
+          console.error('Turnstile render error:', err);
+        }
+      }
     };
 
+    // Wait for Turnstile script to load
+    if (window.turnstile) {
+      initTurnstile();
+    } else {
+      const checkInterval = setInterval(() => {
+        if (window.turnstile) {
+          clearInterval(checkInterval);
+          initTurnstile();
+        }
+      }, 100);
+
+      return () => clearInterval(checkInterval);
+    }
+
     return () => {
-      delete window.onTurnstileSuccess;
+      if (turnstileWidgetId.current !== null && window.turnstile) {
+        try {
+          window.turnstile.remove(turnstileWidgetId.current);
+        } catch (err) {
+          // Widget already removed
+        }
+        turnstileWidgetId.current = null;
+      }
     };
   }, []);
+
+  // Initialize forgot password Turnstile
+  useEffect(() => {
+    if (!showForgotPassword) return;
+
+    const initTurnstile = () => {
+      if (window.turnstile && forgotPasswordTurnstileRef.current && !forgotPasswordWidgetId.current) {
+        try {
+          forgotPasswordWidgetId.current = window.turnstile.render(forgotPasswordTurnstileRef.current, {
+            sitekey: import.meta.env.VITE_TURNSTILE_SITE_KEY,
+            theme: 'dark',
+            size: 'invisible',
+            callback: (token) => {
+              setTurnstileToken(token);
+            },
+          });
+        } catch (err) {
+          console.error('Turnstile render error:', err);
+        }
+      }
+    };
+
+    if (window.turnstile) {
+      initTurnstile();
+    }
+
+    return () => {
+      if (forgotPasswordWidgetId.current !== null && window.turnstile) {
+        try {
+          window.turnstile.remove(forgotPasswordWidgetId.current);
+        } catch (err) {
+          // Widget already removed
+        }
+        forgotPasswordWidgetId.current = null;
+      }
+    };
+  }, [showForgotPassword]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,10 +115,15 @@ export function AuthModal({ onClose, onAuth }) {
 
     try {
       // Execute Turnstile if no token yet
-      if (!turnstileToken && window.turnstile && turnstileRef.current) {
-        window.turnstile.execute(turnstileRef.current);
-        // Wait briefly for token to be set by callback
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!turnstileToken && window.turnstile && turnstileWidgetId.current !== null) {
+        window.turnstile.execute(turnstileWidgetId.current);
+        // Wait for token to be set by callback
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Check if we have a token
+      if (!turnstileToken) {
+        throw new Error('Verification failed. Please refresh and try again.');
       }
 
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
@@ -64,8 +142,8 @@ export function AuthModal({ onClose, onAuth }) {
 
       if (!response.ok) {
         // Reset Turnstile on error
-        if (window.turnstile && turnstileRef.current) {
-          window.turnstile.reset(turnstileRef.current);
+        if (window.turnstile && turnstileWidgetId.current !== null) {
+          window.turnstile.reset(turnstileWidgetId.current);
           setTurnstileToken('');
         }
         throw new Error(data.error || 'Authentication failed');
@@ -170,10 +248,15 @@ export function AuthModal({ onClose, onAuth }) {
 
     try {
       // Execute Turnstile if no token yet
-      if (!turnstileToken && window.turnstile && forgotPasswordTurnstileRef.current) {
-        window.turnstile.execute(forgotPasswordTurnstileRef.current);
-        // Wait briefly for token to be set by callback
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!turnstileToken && window.turnstile && forgotPasswordWidgetId.current !== null) {
+        window.turnstile.execute(forgotPasswordWidgetId.current);
+        // Wait for token to be set by callback
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      // Check if we have a token
+      if (!turnstileToken) {
+        throw new Error('Verification failed. Please refresh and try again.');
       }
 
       const response = await fetch(`${API_URL}/auth/forgot-password`, {
@@ -186,8 +269,8 @@ export function AuthModal({ onClose, onAuth }) {
 
       if (!response.ok) {
         // Reset Turnstile on error
-        if (window.turnstile && forgotPasswordTurnstileRef.current) {
-          window.turnstile.reset(forgotPasswordTurnstileRef.current);
+        if (window.turnstile && forgotPasswordWidgetId.current !== null) {
+          window.turnstile.reset(forgotPasswordWidgetId.current);
           setTurnstileToken('');
         }
         throw new Error(data.error || 'Failed to send reset code');
@@ -271,14 +354,7 @@ export function AuthModal({ onClose, onAuth }) {
               <div className="text-red-500 text-sm">{error}</div>
             )}
 
-            <div
-              ref={forgotPasswordTurnstileRef}
-              className="cf-turnstile"
-              data-sitekey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
-              data-callback="onTurnstileSuccess"
-              data-theme="dark"
-              data-size="invisible"
-            ></div>
+            <div ref={forgotPasswordTurnstileRef}></div>
 
             <button
               type="submit"
@@ -519,14 +595,7 @@ export function AuthModal({ onClose, onAuth }) {
             <div className="text-red-500 text-sm">{error}</div>
           )}
 
-          <div
-            ref={turnstileRef}
-            className="cf-turnstile"
-            data-sitekey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
-            data-callback="onTurnstileSuccess"
-            data-theme="dark"
-            data-size="invisible"
-          ></div>
+          <div ref={turnstileRef}></div>
 
           <button
             type="submit"
