@@ -1084,6 +1084,7 @@ func (m Model) viewMenu() string {
 		label string
 		desc  string
 	}{
+		{"go back", ""},
 		{"new slate", "create new note"},
 		{"my slates", fmt.Sprintf("%d notes", len(m.slates))},
 	}
@@ -1091,7 +1092,6 @@ func (m Model) viewMenu() string {
 	if m.mode == ModeAccount {
 		items = append(items,
 			struct{ label, desc string }{"sync", "sync with cloud"},
-			struct{ label, desc string }{"logout", m.config.Username},
 		)
 	} else {
 		items = append(items,
@@ -1101,6 +1101,15 @@ func (m Model) viewMenu() string {
 
 	items = append(items,
 		struct{ label, desc string }{"settings", "export, update"},
+	)
+
+	if m.mode == ModeAccount {
+		items = append(items,
+			struct{ label, desc string }{"logout", m.config.Username},
+		)
+	}
+
+	items = append(items,
 		struct{ label, desc string }{"quit", ""},
 	)
 
@@ -1131,9 +1140,9 @@ func (m Model) viewMenu() string {
 }
 
 func (m *Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	menuLen := 5
+	menuLen := 6
 	if m.mode == ModeAccount {
-		menuLen = 6
+		menuLen = 7
 	}
 
 	switch msg.String() {
@@ -1162,54 +1171,62 @@ func (m *Model) handleMenuSelect() (tea.Model, tea.Cmd) {
 
 	if m.mode == ModeAccount {
 		switch idx {
-		case 0: // New slate
+		case 0: // Go back
+			m.view = ViewSlates
+			m.selected = 0
+			m.slates = m.store.List()
+		case 1: // New slate
 			m.currentSlate = nil
 			m.textarea.SetValue("")
 			m.view = ViewEditor
 			m.textarea.Focus()
 			return m, textarea.Blink
-		case 1: // My slates
+		case 2: // My slates
 			m.view = ViewSlates
 			m.selected = 0
 			m.slates = m.store.List()
-		case 2: // Sync
+		case 3: // Sync
 			m.loading = true
 			m.loadingMsg = "syncing..."
 			return m, m.syncSlates()
-		case 3: // Logout
+		case 4: // Settings
+			m.view = ViewSettings
+			m.selected = 0
+		case 5: // Logout
 			m.config.ClearCredentials()
 			m.client.SetToken("")
 			m.mode = ModeLocal
 			m.statusMsg = "logged out"
 			m.statusTime = time.Now()
 			m.selected = 0
-		case 4: // Settings
-			m.view = ViewSettings
-			m.selected = 0
-		case 5: // Quit
+		case 6: // Quit
 			return m, tea.Quit
 		}
 	} else {
 		switch idx {
-		case 0: // New slate
+		case 0: // Go back
+			m.view = ViewSlates
+			m.selected = 0
+			m.slates = m.store.List()
+		case 1: // New slate
 			m.currentSlate = nil
 			m.textarea.SetValue("")
 			m.view = ViewEditor
 			m.textarea.Focus()
 			return m, textarea.Blink
-		case 1: // My slates
+		case 2: // My slates
 			m.view = ViewSlates
 			m.selected = 0
 			m.slates = m.store.List()
-		case 2: // Login
+		case 3: // Login
 			m.view = ViewLogin
 			m.selected = 0
 			m.usernameInput.Focus()
 			return m, textinput.Blink
-		case 3: // Settings
+		case 4: // Settings
 			m.view = ViewSettings
 			m.selected = 0
-		case 4: // Quit
+		case 5: // Quit
 			return m, tea.Quit
 		}
 	}

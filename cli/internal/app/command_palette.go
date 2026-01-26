@@ -120,6 +120,12 @@ func (app *App) showQuitMenu() {
 		SetTitleAlign(tview.AlignLeft).
 		SetBackgroundColor(colorBackground)
 
+	// Add quit first
+	list.AddItem("quit", "exit justtype", 'q', func() {
+		app.pages.RemovePage("quit_menu")
+		app.confirmQuit()
+	})
+
 	// Add logout option if cloud mode
 	if app.isCloud {
 		list.AddItem("logout", "switch to local storage", 'l', func() {
@@ -128,14 +134,11 @@ func (app *App) showQuitMenu() {
 		})
 	}
 
-	list.AddItem("quit", "exit justtype", 'q', func() {
+	// Add cancel last
+	list.AddItem("cancel", "back to editor", 'c', func() {
 		app.pages.RemovePage("quit_menu")
-		app.confirmQuit()
-	}).
-		AddItem("cancel", "back to editor", 'c', func() {
-			app.pages.RemovePage("quit_menu")
-			app.tviewApp.SetFocus(app.editor)
-		})
+		app.tviewApp.SetFocus(app.editor)
+	})
 
 	list.SetSelectedBackgroundColor(colorPurple)
 	list.SetSelectedTextColor(colorBackground)
