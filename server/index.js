@@ -43,6 +43,43 @@ if (!process.env.RESEND_API_KEY) {
   console.warn('WARNING: RESEND_API_KEY not set - email features will not work');
 }
 
+if (!process.env.TURNSTILE_SECRET_KEY) {
+  console.error('FATAL: TURNSTILE_SECRET_KEY not set in .env file');
+  process.exit(1);
+}
+
+// Cloudflare Turnstile verification middleware
+async function verifyTurnstileToken(req, res, next) {
+  const turnstileToken = req.body.turnstile_token;
+
+  if (!turnstileToken) {
+    return res.status(400).json({ error: 'Turnstile token required' });
+  }
+
+  try {
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        secret: process.env.TURNSTILE_SECRET_KEY,
+        response: turnstileToken,
+        remoteip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+      return res.status(403).json({ error: 'Turnstile verification failed' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Turnstile verification error:', error);
+    return res.status(500).json({ error: 'Verification service unavailable' });
+  }
+}
+
 // Generate short share IDs (e.g., "a3bK9qL")
 const generateShareId = customAlphabet('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 8);
 
@@ -787,7 +824,7 @@ const requireEncryptionKey = (req, res, next) => {
 // ============ AUTH ROUTES ============
 
 // Register
-app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req, res) => {
+app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('register'), async (req, res) => {
   let { username, password, email, termsAccepted } = req.body;
 
   if (!username || !password || !email) {
@@ -871,7 +908,7 @@ app.post('/api/auth/register', createRateLimitMiddleware('register'), async (req
 });
 
 // Login
-app.post('/api/auth/login', createRateLimitMiddleware('login'), async (req, res) => {
+app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('login'), async (req, res) => {
   let { username, password } = req.body;
 
   if (!username || !password) {
@@ -1359,7 +1396,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 });
 
 // Request password reset
-app.post('/api/auth/forgot-password', createRateLimitMiddleware('forgotPassword'), async (req, res) => {
+app.post('/api/auth/forgot-password', verifyTurnstileToken, createRateLimitMiddleware('forgotPassword'), async (req, res) => {
   const { email } = req.body;
 
   if (!email) {

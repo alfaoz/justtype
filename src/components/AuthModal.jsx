@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 
@@ -13,6 +13,20 @@ export function AuthModal({ onClose, onAuth }) {
   const [resetEmail, setResetEmail] = useState('');
   const [registeredEmail, setRegisteredEmail] = useState('');
   const [pendingAuthData, setPendingAuthData] = useState(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef(null);
+  const forgotPasswordTurnstileRef = useRef(null);
+
+  // Set up Turnstile callback
+  useEffect(() => {
+    window.onTurnstileSuccess = (token) => {
+      setTurnstileToken(token);
+    };
+
+    return () => {
+      delete window.onTurnstileSuccess;
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,10 +41,17 @@ export function AuthModal({ onClose, onAuth }) {
     const termsAccepted = formData.get('terms') === 'on';
 
     try {
+      // Execute Turnstile if no token yet
+      if (!turnstileToken && window.turnstile && turnstileRef.current) {
+        window.turnstile.execute(turnstileRef.current);
+        // Wait briefly for token to be set by callback
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
       const body = isLogin
-        ? { username, password }
-        : { username, password, email, termsAccepted };
+        ? { username, password, turnstile_token: turnstileToken }
+        : { username, password, email, termsAccepted, turnstile_token: turnstileToken };
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -42,6 +63,11 @@ export function AuthModal({ onClose, onAuth }) {
       const data = await response.json();
 
       if (!response.ok) {
+        // Reset Turnstile on error
+        if (window.turnstile && turnstileRef.current) {
+          window.turnstile.reset(turnstileRef.current);
+          setTurnstileToken('');
+        }
         throw new Error(data.error || 'Authentication failed');
       }
 
@@ -143,15 +169,27 @@ export function AuthModal({ onClose, onAuth }) {
     const email = formData.get('email');
 
     try {
+      // Execute Turnstile if no token yet
+      if (!turnstileToken && window.turnstile && forgotPasswordTurnstileRef.current) {
+        window.turnstile.execute(forgotPasswordTurnstileRef.current);
+        // Wait briefly for token to be set by callback
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
       const response = await fetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, turnstile_token: turnstileToken }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // Reset Turnstile on error
+        if (window.turnstile && forgotPasswordTurnstileRef.current) {
+          window.turnstile.reset(forgotPasswordTurnstileRef.current);
+          setTurnstileToken('');
+        }
         throw new Error(data.error || 'Failed to send reset code');
       }
 
@@ -232,6 +270,15 @@ export function AuthModal({ onClose, onAuth }) {
             {error && (
               <div className="text-red-500 text-sm">{error}</div>
             )}
+
+            <div
+              ref={forgotPasswordTurnstileRef}
+              className="cf-turnstile"
+              data-sitekey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
+              data-callback="onTurnstileSuccess"
+              data-theme="dark"
+              data-size="invisible"
+            ></div>
 
             <button
               type="submit"
@@ -471,6 +518,15 @@ export function AuthModal({ onClose, onAuth }) {
           {error && (
             <div className="text-red-500 text-sm">{error}</div>
           )}
+
+          <div
+            ref={turnstileRef}
+            className="cf-turnstile"
+            data-sitekey={import.meta.env.VITE_TURNSTILE_SITE_KEY}
+            data-callback="onTurnstileSuccess"
+            data-theme="dark"
+            data-size="invisible"
+          ></div>
 
           <button
             type="submit"

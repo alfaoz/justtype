@@ -12,12 +12,19 @@ class RateLimiter {
 
   // Loose limits - focused on abuse prevention, not normal usage restriction
   limits = {
+    // Auth operations (IP-based)
+    register: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
+    login: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 per 15 minutes per IP
+    forgotPassword: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
+    // Slate operations (user-based)
     createSlate: { max: 50, windowMs: 60 * 60 * 1000 }, // 50 per hour (reasonable for creates)
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
     deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
+    // Admin and public operations (IP-based)
     adminAuth: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 attempts per 15 minutes (IP-based)
     viewPublicSlate: { max: 100, windowMs: 60 * 1000 }, // 100 per minute per IP (generous for normal viewing)
+    // CLI operations
     approveDevice: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 approvals per 15 minutes
     requestDeviceCode: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 device code requests per 15 minutes (IP-based)
     pollToken: { max: 120, windowMs: 15 * 60 * 1000 }, // 120 polls per 15 minutes (CLI polls every 5s for max 10 min)
@@ -116,9 +123,9 @@ const rateLimiter = new RateLimiter();
 
 function createRateLimitMiddleware(operation) {
   return (req, res, next) => {
-    // For admin auth and public endpoints, use IP address instead of user ID
+    // Use IP-based limiting for unauthenticated auth operations
     let identifier;
-    if (operation === 'adminAuth' || operation === 'viewPublicSlate') {
+    if (['register', 'login', 'forgotPassword', 'adminAuth', 'viewPublicSlate', 'requestDeviceCode'].includes(operation)) {
       // Get IP address - handle X-Forwarded-For with comma-separated IPs
       let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
 
