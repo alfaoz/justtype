@@ -406,7 +406,11 @@ export function AuthModal({ onClose, onAuth }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full border border-[#333] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
+              className={`w-full py-2 transition-all duration-300 mt-6 ${
+                loading
+                  ? 'auth-button-loading text-white cursor-wait'
+                  : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
+              }`}
             >
               send reset code
             </button>
@@ -644,10 +648,38 @@ export function AuthModal({ onClose, onAuth }) {
 
           <div ref={turnstileRef}></div>
 
+          <style>{`
+            @keyframes rotate-gradient {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+            .auth-button-loading {
+              position: relative;
+              border: 1px solid transparent;
+              background: #1a1a1a;
+            }
+            .auth-button-loading::before {
+              content: '';
+              position: absolute;
+              top: -2px;
+              left: -2px;
+              right: -2px;
+              bottom: -2px;
+              background: conic-gradient(from 0deg, #333, #999, #333);
+              border-radius: inherit;
+              z-index: -1;
+              animation: rotate-gradient 2s linear infinite;
+            }
+          `}</style>
+
           <button
             type="submit"
             disabled={loading}
-            className="w-full border border-[#333] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
+            className={`w-full py-2 transition-all duration-300 mt-6 ${
+              loading
+                ? 'auth-button-loading text-white cursor-wait'
+                : 'border border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50'
+            }`}
           >
             {isLogin ? strings.auth.login.submit : strings.auth.signup.submit}
           </button>
