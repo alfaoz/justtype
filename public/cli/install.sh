@@ -70,17 +70,33 @@ fi
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
 
-    # Detect shell config file
+    # Detect shell config file based on current shell
     SHELL_CONFIG=""
-    if [ -n "$ZSH_VERSION" ]; then
-        SHELL_CONFIG="$HOME/.zshrc"
-    elif [ -n "$BASH_VERSION" ]; then
-        SHELL_CONFIG="$HOME/.bashrc"
-    elif [ -f "$HOME/.zshrc" ]; then
-        SHELL_CONFIG="$HOME/.zshrc"
-    elif [ -f "$HOME/.bashrc" ]; then
-        SHELL_CONFIG="$HOME/.bashrc"
-    fi
+    CURRENT_SHELL=$(basename "$SHELL")
+
+    case "$CURRENT_SHELL" in
+        zsh)
+            SHELL_CONFIG="$HOME/.zshrc"
+            ;;
+        bash)
+            # Check for .bash_profile on macOS, .bashrc on Linux
+            if [[ "$OS" == "darwin" && -f "$HOME/.bash_profile" ]]; then
+                SHELL_CONFIG="$HOME/.bash_profile"
+            else
+                SHELL_CONFIG="$HOME/.bashrc"
+            fi
+            ;;
+        *)
+            # Fallback: check what exists
+            if [ -f "$HOME/.zshrc" ]; then
+                SHELL_CONFIG="$HOME/.zshrc"
+            elif [ -f "$HOME/.bash_profile" ]; then
+                SHELL_CONFIG="$HOME/.bash_profile"
+            elif [ -f "$HOME/.bashrc" ]; then
+                SHELL_CONFIG="$HOME/.bashrc"
+            fi
+            ;;
+    esac
 
     if [ -n "$SHELL_CONFIG" ]; then
         # Check if PATH export already exists in config (check for both literal path and $HOME)
@@ -90,21 +106,37 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
             echo "" >> "$SHELL_CONFIG"
             echo "# Added by justtype installer" >> "$SHELL_CONFIG"
             echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_CONFIG"
+            echo ""
             echo "✓ Updated $SHELL_CONFIG"
             echo ""
-            echo "Restart your shell or run:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  IMPORTANT: Restart your terminal or run:"
             echo "  source $SHELL_CONFIG"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            NEEDS_RELOAD=true
         fi
     else
-        echo "⚠ $INSTALL_DIR is not in your PATH"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "WARNING: $INSTALL_DIR is not in your PATH"
         echo ""
         echo "Add this to your shell config:"
         echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        NEEDS_RELOAD=true
     fi
 fi
 
 echo ""
-echo "✓ justtype installed to $INSTALL_DIR"
-echo ""
-echo "  Run 'justtype' to start writing"
+if [ "$NEEDS_RELOAD" = true ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "✓ justtype installed to $INSTALL_DIR"
+    echo ""
+    echo "  Restart your terminal, then run:"
+    echo "     justtype"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+    echo "✓ justtype installed to $INSTALL_DIR"
+    echo ""
+    echo "  Run 'justtype' to start writing"
+fi
 echo ""
