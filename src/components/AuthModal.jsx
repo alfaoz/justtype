@@ -14,6 +14,7 @@ export function AuthModal({ onClose, onAuth }) {
   const [registeredEmail, setRegisteredEmail] = useState('');
   const [pendingAuthData, setPendingAuthData] = useState(null);
   const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileTokenRef = useRef('');
   const turnstileWidgetId = useRef(null);
   const forgotPasswordWidgetId = useRef(null);
   const turnstileRef = useRef(null);
@@ -30,8 +31,16 @@ export function AuthModal({ onClose, onAuth }) {
             size: 'invisible',
             callback: (token) => {
               setTurnstileToken(token);
+              turnstileTokenRef.current = token;
             },
           });
+
+          // Execute immediately after rendering so token is ready
+          setTimeout(() => {
+            if (turnstileWidgetId.current !== null && window.turnstile) {
+              window.turnstile.execute(turnstileWidgetId.current);
+            }
+          }, 100);
         } catch (err) {
           console.error('Turnstile render error:', err);
         }
@@ -77,8 +86,16 @@ export function AuthModal({ onClose, onAuth }) {
             size: 'invisible',
             callback: (token) => {
               setTurnstileToken(token);
+              turnstileTokenRef.current = token;
             },
           });
+
+          // Execute immediately after rendering so token is ready
+          setTimeout(() => {
+            if (forgotPasswordWidgetId.current !== null && window.turnstile) {
+              window.turnstile.execute(forgotPasswordWidgetId.current);
+            }
+          }, 100);
         } catch (err) {
           console.error('Turnstile render error:', err);
         }
@@ -114,22 +131,30 @@ export function AuthModal({ onClose, onAuth }) {
     const termsAccepted = formData.get('terms') === 'on';
 
     try {
-      // Execute Turnstile if no token yet
-      if (!turnstileToken && window.turnstile && turnstileWidgetId.current !== null) {
-        window.turnstile.execute(turnstileWidgetId.current);
-        // Wait for token to be set by callback
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
+      // Wait for Turnstile token if not ready yet
+      if (!turnstileTokenRef.current) {
+        // Try executing if needed
+        if (window.turnstile && turnstileWidgetId.current !== null) {
+          window.turnstile.execute(turnstileWidgetId.current);
+        }
 
-      // Check if we have a token
-      if (!turnstileToken) {
-        throw new Error('Verification failed. Please refresh and try again.');
+        // Wait up to 3 seconds for token, checking every 500ms
+        let attempts = 0;
+        while (!turnstileTokenRef.current && attempts < 6) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          attempts++;
+        }
+
+        // Check if we have a token after waiting
+        if (!turnstileTokenRef.current) {
+          throw new Error('verification in progress. please try again in a moment.');
+        }
       }
 
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
       const body = isLogin
-        ? { username, password, turnstile_token: turnstileToken }
-        : { username, password, email, termsAccepted, turnstile_token: turnstileToken };
+        ? { username, password, turnstile_token: turnstileTokenRef.current || turnstileToken }
+        : { username, password, email, termsAccepted, turnstile_token: turnstileTokenRef.current || turnstileToken };
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -145,6 +170,13 @@ export function AuthModal({ onClose, onAuth }) {
         if (window.turnstile && turnstileWidgetId.current !== null) {
           window.turnstile.reset(turnstileWidgetId.current);
           setTurnstileToken('');
+          turnstileTokenRef.current = '';
+          // Re-execute for next attempt
+          setTimeout(() => {
+            if (window.turnstile && turnstileWidgetId.current !== null) {
+              window.turnstile.execute(turnstileWidgetId.current);
+            }
+          }, 100);
         }
         throw new Error(data.error || 'Authentication failed');
       }
@@ -247,22 +279,30 @@ export function AuthModal({ onClose, onAuth }) {
     const email = formData.get('email');
 
     try {
-      // Execute Turnstile if no token yet
-      if (!turnstileToken && window.turnstile && forgotPasswordWidgetId.current !== null) {
-        window.turnstile.execute(forgotPasswordWidgetId.current);
-        // Wait for token to be set by callback
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
+      // Wait for Turnstile token if not ready yet
+      if (!turnstileTokenRef.current) {
+        // Try executing if needed
+        if (window.turnstile && forgotPasswordWidgetId.current !== null) {
+          window.turnstile.execute(forgotPasswordWidgetId.current);
+        }
 
-      // Check if we have a token
-      if (!turnstileToken) {
-        throw new Error('Verification failed. Please refresh and try again.');
+        // Wait up to 3 seconds for token, checking every 500ms
+        let attempts = 0;
+        while (!turnstileTokenRef.current && attempts < 6) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          attempts++;
+        }
+
+        // Check if we have a token after waiting
+        if (!turnstileTokenRef.current) {
+          throw new Error('verification in progress. please try again in a moment.');
+        }
       }
 
       const response = await fetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, turnstile_token: turnstileToken }),
+        body: JSON.stringify({ email, turnstile_token: turnstileTokenRef.current || turnstileToken }),
       });
 
       const data = await response.json();
@@ -272,6 +312,13 @@ export function AuthModal({ onClose, onAuth }) {
         if (window.turnstile && forgotPasswordWidgetId.current !== null) {
           window.turnstile.reset(forgotPasswordWidgetId.current);
           setTurnstileToken('');
+          turnstileTokenRef.current = '';
+          // Re-execute for next attempt
+          setTimeout(() => {
+            if (window.turnstile && forgotPasswordWidgetId.current !== null) {
+              window.turnstile.execute(forgotPasswordWidgetId.current);
+            }
+          }, 100);
         }
         throw new Error(data.error || 'Failed to send reset code');
       }
