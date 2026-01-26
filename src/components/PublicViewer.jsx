@@ -163,7 +163,7 @@ export function PublicViewer() {
     return (
       <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
-          <div className="text-6xl md:text-8xl text-[#333] mb-8 font-light">404</div>
+          <div className="text-4xl md:text-5xl text-[#333] mb-8 font-light">slate not found</div>
           <p className="text-lg md:text-xl text-[#808080] mb-8 leading-relaxed">
             {errorMessage || 'slate not found'}
           </p>
