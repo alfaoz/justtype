@@ -198,7 +198,30 @@ func (app *App) saveNow() {
 	if app.storage != nil {
 		err := app.storage.Save(app.currentSlate)
 		if err != nil {
-			app.saveStatus = fmt.Sprintf("error: %v", err)
+			// Check if session expired
+			if err.Error() == "SESSION_EXPIRED" {
+				app.tviewApp.QueueUpdateDraw(func() {
+					modal := tview.NewModal().
+						SetText("session expired. re-login to continue?").
+						AddButtons([]string{"re-login", "cancel"}).
+						SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+							app.pages.RemovePage("session-expired")
+							if buttonIndex == 0 {
+								// Re-login
+								app.showAuth()
+							}
+						}).
+						SetBackgroundColor(colorBackground).
+						SetTextColor(colorForeground).
+						SetButtonBackgroundColor(colorPurple).
+						SetButtonTextColor(colorForeground)
+
+					app.pages.AddPage("session-expired", modal, true, true)
+				})
+				app.saveStatus = ""
+			} else {
+				app.saveStatus = fmt.Sprintf("error: %v", err)
+			}
 			app.isDirty = true // Keep dirty flag since save failed
 			return
 		}

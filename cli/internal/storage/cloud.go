@@ -105,6 +105,11 @@ func (cs *CloudStorage) Save(slate *Slate) error {
 		return nil
 	}
 
+	// Check if session expired (401 Unauthorized)
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("SESSION_EXPIRED")
+	}
+
 	return fmt.Errorf("save failed: %d", resp.StatusCode)
 }
 
