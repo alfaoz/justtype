@@ -1131,16 +1131,6 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               {strings.writer.buttons.about}
             </button>
 
-            <button
-              onClick={() => {
-                window.history.pushState({}, '', '/feedback');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              }}
-              className="hover:text-white transition-colors duration-200"
-            >
-              {strings.writer.buttons.feedback}
-            </button>
-
             {token && (
               <div className="relative flex items-center gap-3">
                 {/* Public status indicator */}
@@ -1462,7 +1452,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               <p>{strings.writer.about.description}</p>
               <p className="text-xs">{strings.writer.about.encryption}</p>
               <p className="text-xs">
-                read our <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.terms}</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.privacy}</a>, or learn more about the <a href="/project" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.project}</a> on <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">github</a>.
+                read our <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.terms}</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.privacy}</a>, or learn more about the <a href="/project" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.project}</a> on <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">github</a>. got thoughts? <button onClick={() => { setShowAboutModal(false); window.history.pushState({}, '', '/feedback'); window.dispatchEvent(new PopStateEvent('popstate')); }} className="text-white hover:underline transition-colors">send us feedback</button>.
               </p>
               <p className="text-xs">
                 by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">alfaoz</a>
