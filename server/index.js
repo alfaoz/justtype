@@ -590,7 +590,15 @@ Object.entries(systemSlatesMeta).forEach(([route, meta]) => {
   });
 });
 
-// Serve CLI binaries from public/cli directory (must be BEFORE dist serving)
+// Handle /cli page (exact match) - serve React app
+app.get('/cli', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+});
+
+// Serve CLI binaries from public/cli directory (for /cli/*)
 app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
   maxAge: '1h',
   setHeaders: (res, filePath) => {
@@ -885,6 +893,9 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
 
     // Set HttpOnly cookie for secure auth
     res.cookie('justtype_token', token, getAuthCookieOptions());
+
+    // Fire signup automations
+    fireSignupAutomations(result.lastInsertRowid, username);
 
     res.status(201).json({
       user: {
@@ -2209,9 +2220,10 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
       details: { page, limit, total }
     });
 
-    // Mask emails for privacy - admins don't need to see full emails
+    // Send both masked and full emails - admin can reveal via triple-click
     const maskedUsers = users.map(user => ({
       ...user,
+      emailFull: user.email,
       email: maskEmail(user.email)
     }));
 
@@ -2699,6 +2711,427 @@ app.post('/api/admin/stripe-action', authenticateAdmin, async (req, res) => {
   } catch (error) {
     console.error('Stripe action error:', error);
     res.status(500).json({ error: 'Action failed' });
+  }
+});
+
+// ============ NOTIFICATION ROUTES ============
+
+// Helper: check if a user matches notification filters
+function userMatchesFilters(notification, userStats) {
+  const n = notification;
+  if (n.filter_user_ids) {
+    const ids = n.filter_user_ids.split(',').map(id => parseInt(id.trim()));
+    if (!ids.includes(userStats.id)) return false;
+  }
+  if (n.filter_min_slates != null && n.filter_min_slates !== '' && userStats.slate_count < Number(n.filter_min_slates)) return false;
+  if (n.filter_max_slates != null && n.filter_max_slates !== '' && userStats.slate_count > Number(n.filter_max_slates)) return false;
+  if (n.filter_plan && n.filter_plan !== '') {
+    const userPlan = userStats.supporter_tier || 'free';
+    if (n.filter_plan !== userPlan) return false;
+  }
+  if (n.filter_verified_only && !userStats.email_verified) return false;
+  if (n.filter_min_views != null && n.filter_min_views !== '' && (userStats.max_view_count || 0) < Number(n.filter_min_views)) return false;
+  return true;
+}
+
+// Get notifications for current user (with filtering and read status)
+app.get('/api/notifications', authenticateToken, (req, res) => {
+  try {
+    const userStats = db.prepare(`
+      SELECT u.id, u.supporter_tier, u.email_verified,
+        (SELECT COUNT(*) FROM slates WHERE user_id = u.id) as slate_count,
+        (SELECT MAX(view_count) FROM slates WHERE user_id = u.id) as max_view_count
+      FROM users u WHERE u.id = ?
+    `).get(req.user.id);
+
+    const allNotifications = db.prepare(`
+      SELECT n.id, n.type, n.title, n.message, n.link, n.created_at,
+        n.filter_min_slates, n.filter_max_slates, n.filter_plan,
+        n.filter_verified_only, n.filter_min_views, n.filter_user_ids,
+        CASE WHEN nr.id IS NOT NULL THEN 1 ELSE 0 END as is_read
+      FROM notifications n
+      LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = ?
+      ORDER BY n.created_at DESC
+      LIMIT 100
+    `).all(req.user.id);
+
+    const filtered = allNotifications.filter(n => userMatchesFilters(n, userStats));
+
+    // Strip filter fields from response
+    const notifications = filtered.map(({ filter_min_slates, filter_max_slates, filter_plan, filter_verified_only, filter_min_views, filter_user_ids, ...rest }) => rest);
+
+    res.json({ notifications });
+  } catch (error) {
+    console.error('Fetch notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// Mark notification as read
+app.post('/api/notifications/:id/read', authenticateToken, (req, res) => {
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO notification_reads (user_id, notification_id)
+      VALUES (?, ?)
+    `).run(req.user.id, req.params.id);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark read error:', error);
+    res.status(500).json({ error: 'Failed to mark as read' });
+  }
+});
+
+// Admin: create notification
+app.post('/api/admin/notifications', authenticateAdmin, (req, res) => {
+  const { title, message, link, type, filter_min_slates, filter_max_slates, filter_plan, filter_verified_only, filter_min_views, filter_user_ids } = req.body;
+
+  if (!title || !message) {
+    return res.status(400).json({ error: 'Title and message are required' });
+  }
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO notifications (type, title, message, link, filter_min_slates, filter_max_slates, filter_plan, filter_verified_only, filter_min_views, filter_user_ids)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      type || 'global', title, message, link || null,
+      filter_min_slates || null, filter_max_slates || null, filter_plan || null,
+      filter_verified_only ? 1 : 0, filter_min_views || null, filter_user_ids || null
+    );
+    logAdminAction('create_notification', {
+      details: { id: result.lastInsertRowid, title, type: type || 'global' },
+      ipAddress: req.adminIp || req.ip
+    });
+    res.json({ id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('Create notification error:', error);
+    res.status(500).json({ error: 'Failed to create notification' });
+  }
+});
+
+// Admin: get all notifications with analytics
+app.get('/api/admin/notifications', authenticateAdmin, (req, res) => {
+  try {
+    const notifications = db.prepare(`
+      SELECT n.*,
+        (SELECT COUNT(*) FROM notification_reads WHERE notification_id = n.id) as read_count
+      FROM notifications n
+      ORDER BY n.created_at DESC
+    `).all();
+
+    // Calculate eligible count for each notification
+    const users = db.prepare(`
+      SELECT u.id, u.supporter_tier, u.email_verified,
+        (SELECT COUNT(*) FROM slates WHERE user_id = u.id) as slate_count,
+        (SELECT MAX(view_count) FROM slates WHERE user_id = u.id) as max_view_count
+      FROM users u
+    `).all();
+
+    const result = notifications.map(n => {
+      const eligible = users.filter(u => userMatchesFilters(n, u)).length;
+      return {
+        ...n,
+        total_eligible: eligible,
+        read_percentage: eligible > 0 ? Math.round((n.read_count / eligible) * 100) : 0
+      };
+    });
+
+    res.json({ notifications: result });
+  } catch (error) {
+    console.error('Fetch notifications error:', error);
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// Admin: delete notification
+app.delete('/api/admin/notifications/:id', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM notification_reads WHERE notification_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM notifications WHERE id = ?').run(req.params.id);
+    logAdminAction('delete_notification', {
+      details: { id: req.params.id },
+      ipAddress: req.adminIp || req.ip
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete notification error:', error);
+    res.status(500).json({ error: 'Failed to delete notification' });
+  }
+});
+
+// Admin: preview eligible user count for filters
+app.post('/api/admin/notifications/preview', authenticateAdmin, (req, res) => {
+  try {
+    const users = db.prepare(`
+      SELECT u.id, u.supporter_tier, u.email_verified,
+        (SELECT COUNT(*) FROM slates WHERE user_id = u.id) as slate_count,
+        (SELECT MAX(view_count) FROM slates WHERE user_id = u.id) as max_view_count
+      FROM users u
+    `).all();
+
+    const eligible = users.filter(u => userMatchesFilters(req.body, u)).length;
+    res.json({ eligible, total: users.length });
+  } catch (error) {
+    console.error('Preview error:', error);
+    res.status(500).json({ error: 'Failed to preview' });
+  }
+});
+
+// ============ AUTOMATION ROUTES ============
+
+// Admin: get all automation rules
+app.get('/api/admin/automations', authenticateAdmin, (req, res) => {
+  try {
+    const automations = db.prepare(`
+      SELECT a.*,
+        (SELECT COUNT(*) FROM automation_log WHERE automation_id = a.id) as times_fired
+      FROM notification_automations a
+      ORDER BY a.created_at DESC
+    `).all();
+    res.json({ automations });
+  } catch (error) {
+    console.error('Fetch automations error:', error);
+    res.status(500).json({ error: 'Failed to fetch automations' });
+  }
+});
+
+// Admin: create automation rule
+app.post('/api/admin/automations', authenticateAdmin, (req, res) => {
+  const { event_type, threshold, title, message, link } = req.body;
+
+  if (!event_type || !threshold || !title || !message) {
+    return res.status(400).json({ error: 'event_type, threshold, title, and message are required' });
+  }
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO notification_automations (event_type, threshold, title, message, link)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(event_type, threshold, title, message, link || null);
+    logAdminAction('create_automation', {
+      details: { id: result.lastInsertRowid, event_type, threshold },
+      ipAddress: req.adminIp || req.ip
+    });
+    res.json({ id: result.lastInsertRowid });
+  } catch (error) {
+    console.error('Create automation error:', error);
+    res.status(500).json({ error: 'Failed to create automation' });
+  }
+});
+
+// Admin: toggle automation enabled/disabled
+app.put('/api/admin/automations/:id', authenticateAdmin, (req, res) => {
+  const { enabled } = req.body;
+  try {
+    db.prepare('UPDATE notification_automations SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update automation error:', error);
+    res.status(500).json({ error: 'Failed to update automation' });
+  }
+});
+
+// Admin: delete automation rule
+app.delete('/api/admin/automations/:id', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM automation_log WHERE automation_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM notification_automations WHERE id = ?').run(req.params.id);
+    logAdminAction('delete_automation', {
+      details: { id: req.params.id },
+      ipAddress: req.adminIp || req.ip
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete automation error:', error);
+    res.status(500).json({ error: 'Failed to delete automation' });
+  }
+});
+
+// ============ AUTOMATION ENGINE ============
+
+function runAutomations() {
+  try {
+    const automations = db.prepare('SELECT * FROM notification_automations WHERE enabled = 1').all();
+
+    for (const auto of automations) {
+      let matches = [];
+
+      switch (auto.event_type) {
+        case 'slate_views': {
+          // Find slates that crossed the view threshold, not yet logged
+          matches = db.prepare(`
+            SELECT s.id as slate_id, s.user_id, s.title as slate_title, s.view_count, u.username
+            FROM slates s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.view_count >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM automation_log
+                WHERE automation_id = ? AND user_id = s.user_id AND slate_id = s.id
+              )
+          `).all(auto.threshold, auto.id);
+          break;
+        }
+        case 'slate_count': {
+          // Find users whose total slate count crossed the threshold
+          matches = db.prepare(`
+            SELECT u.id as user_id, u.username, COUNT(s.id) as slate_count
+            FROM users u
+            JOIN slates s ON s.user_id = u.id
+            GROUP BY u.id
+            HAVING slate_count >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM automation_log
+                WHERE automation_id = ? AND user_id = u.id AND slate_id IS NULL
+              )
+          `).all(auto.threshold, auto.id);
+          break;
+        }
+        case 'account_age_days': {
+          // Find users whose account age crossed the threshold
+          matches = db.prepare(`
+            SELECT u.id as user_id, u.username,
+              CAST((julianday('now') - julianday(u.created_at)) AS INTEGER) as age_days
+            FROM users u
+            WHERE CAST((julianday('now') - julianday(u.created_at)) AS INTEGER) >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM automation_log
+                WHERE automation_id = ? AND user_id = u.id AND slate_id IS NULL
+              )
+          `).all(auto.threshold, auto.id);
+          break;
+        }
+        case 'published_count': {
+          // Find users whose published slate count crossed the threshold
+          matches = db.prepare(`
+            SELECT u.id as user_id, u.username, COUNT(s.id) as published_count
+            FROM users u
+            JOIN slates s ON s.user_id = u.id AND s.is_published = 1
+            GROUP BY u.id
+            HAVING published_count >= ?
+              AND NOT EXISTS (
+                SELECT 1 FROM automation_log
+                WHERE automation_id = ? AND user_id = u.id AND slate_id IS NULL
+              )
+          `).all(auto.threshold, auto.id);
+          break;
+        }
+      }
+
+      for (const match of matches) {
+        // Substitute placeholders in title and message
+        let title = auto.title
+          .replace(/\{username\}/g, match.username || '')
+          .replace(/\{slate_title\}/g, match.slate_title || '')
+          .replace(/\{view_count\}/g, match.view_count || '')
+          .replace(/\{slate_count\}/g, match.slate_count || '')
+          .replace(/\{published_count\}/g, match.published_count || '');
+        let message = auto.message
+          .replace(/\{username\}/g, match.username || '')
+          .replace(/\{slate_title\}/g, match.slate_title || '')
+          .replace(/\{view_count\}/g, match.view_count || '')
+          .replace(/\{slate_count\}/g, match.slate_count || '')
+          .replace(/\{published_count\}/g, match.published_count || '');
+
+        // Create targeted notification for this user
+        const notifResult = db.prepare(`
+          INSERT INTO notifications (type, title, message, link, filter_user_ids)
+          VALUES ('automated', ?, ?, ?, ?)
+        `).run(title, message, auto.link || null, String(match.user_id));
+
+        // Log that this automation fired
+        db.prepare(`
+          INSERT OR IGNORE INTO automation_log (automation_id, user_id, slate_id)
+          VALUES (?, ?, ?)
+        `).run(auto.id, match.user_id, match.slate_id || null);
+      }
+    }
+  } catch (error) {
+    console.error('Automation engine error:', error);
+  }
+}
+
+// Fire signup automations for a new user (called from registration route)
+function fireSignupAutomations(userId, username) {
+  try {
+    const automations = db.prepare(
+      "SELECT * FROM notification_automations WHERE enabled = 1 AND event_type = 'on_signup'"
+    ).all();
+
+    for (const auto of automations) {
+      // Check not already fired (shouldn't happen, but safety)
+      const already = db.prepare(
+        'SELECT 1 FROM automation_log WHERE automation_id = ? AND user_id = ?'
+      ).get(auto.id, userId);
+      if (already) continue;
+
+      let title = auto.title.replace(/\{username\}/g, username);
+      let message = auto.message.replace(/\{username\}/g, username);
+
+      db.prepare(`
+        INSERT INTO notifications (type, title, message, link, filter_user_ids)
+        VALUES ('automated', ?, ?, ?, ?)
+      `).run(title, message, auto.link || null, String(userId));
+
+      db.prepare(`
+        INSERT OR IGNORE INTO automation_log (automation_id, user_id, slate_id)
+        VALUES (?, ?, NULL)
+      `).run(auto.id, userId);
+    }
+  } catch (error) {
+    console.error('Signup automation error:', error);
+  }
+}
+
+// Run automations every hour
+setInterval(runAutomations, 60 * 60 * 1000);
+// Also run once on startup after a short delay
+setTimeout(runAutomations, 10000);
+
+// ============ FEEDBACK ROUTES ============
+
+// Submit feedback (authenticated users only)
+app.post('/api/feedback', authenticateToken, (req, res) => {
+  const { message, contact_email } = req.body;
+
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO feedback (user_id, username, message, contact_email)
+      VALUES (?, ?, ?, ?)
+    `).run(req.user.id, req.user.username, message.trim(), contact_email || null);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Submit feedback error:', error);
+    res.status(500).json({ error: 'Failed to submit feedback' });
+  }
+});
+
+// Admin: get all feedback
+app.get('/api/admin/feedback', authenticateAdmin, (req, res) => {
+  try {
+    const feedback = db.prepare(`
+      SELECT * FROM feedback ORDER BY created_at DESC
+    `).all();
+    res.json({ feedback });
+  } catch (error) {
+    console.error('Fetch feedback error:', error);
+    res.status(500).json({ error: 'Failed to fetch feedback' });
+  }
+});
+
+// Admin: delete feedback
+app.delete('/api/admin/feedback/:id', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM feedback WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete feedback error:', error);
+    res.status(500).json({ error: 'Failed to delete feedback' });
   }
 });
 

@@ -330,6 +330,80 @@ try {
     CREATE INDEX IF NOT EXISTS idx_cli_device_codes_expires_at ON cli_device_codes(expires_at);
   `);
   console.log('✓ CLI device codes table initialized');
+
+  // Drop old empty announcement tables if they exist
+  db.exec(`DROP TABLE IF EXISTS announcement_reads;`);
+  db.exec(`DROP TABLE IF EXISTS announcements;`);
+
+  // Create notification system tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL DEFAULT 'global',
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      link TEXT,
+      filter_min_slates INTEGER,
+      filter_max_slates INTEGER,
+      filter_plan TEXT,
+      filter_verified_only BOOLEAN DEFAULT 0,
+      filter_min_views INTEGER,
+      filter_user_ids TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_reads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      notification_id INTEGER NOT NULL,
+      read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+      UNIQUE(user_id, notification_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notification_reads_user ON notification_reads(user_id);
+
+    CREATE TABLE IF NOT EXISTS notification_automations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      threshold INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      link TEXT,
+      enabled BOOLEAN DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS automation_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      automation_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      slate_id INTEGER,
+      fired_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (automation_id) REFERENCES notification_automations(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(automation_id, user_id, slate_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_automation_log_automation ON automation_log(automation_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_log_user ON automation_log(user_id);
+  `);
+  console.log('✓ Notification system tables initialized');
+
+  // Create feedback table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      username TEXT,
+      message TEXT NOT NULL,
+      contact_email TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+  `);
+  console.log('✓ Feedback table initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

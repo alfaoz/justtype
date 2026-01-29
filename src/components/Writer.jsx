@@ -40,7 +40,7 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   const themeFileInputRef = useRef(null);
-  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'off'); // 'off' | 'on' | 'auto'
+  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'auto'); // 'off' | 'on' | 'auto'
   const [showCounter, setShowCounter] = useState(() => localStorage.getItem('justtype-show-counter') !== 'false');
   const autoZenTimeoutRef = useRef(null);
   const autoZenActiveRef = useRef(false);
@@ -1131,6 +1131,16 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
               {strings.writer.buttons.about}
             </button>
 
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/feedback');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+              className="hover:text-white transition-colors duration-200"
+            >
+              {strings.writer.buttons.feedback}
+            </button>
+
             {token && (
               <div className="relative flex items-center gap-3">
                 {/* Public status indicator */}
@@ -1445,8 +1455,8 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
 
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowAboutModal(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full my-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => setShowAboutModal(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
             <div className="space-y-4 text-sm text-[#a0a0a0]">
               <p>{strings.writer.about.description}</p>

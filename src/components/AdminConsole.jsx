@@ -80,7 +80,7 @@ export function AdminConsole() {
   // Tab state - get initial tab from URL
   const getInitialTab = () => {
     const path = window.location.pathname;
-    const match = path.match(/\/holyfuckwhereami\/(overview|users|logs|health|sentry)/);
+    const match = path.match(/\/holyfuckwhereami\/(overview|users|logs|health|sentry|announcements|feedback)/);
     return match ? match[1] : 'overview';
   };
   const [activeTab, setActiveTab] = useState(getInitialTab());
@@ -95,6 +95,20 @@ export function AdminConsole() {
   const [logsPagination, setLogsPagination] = useState({ page: 1 });
   const [errorLogs, setErrorLogs] = useState('');
   const [stripeData, setStripeData] = useState(null);
+
+  // Notification state
+  const [adminNotifications, setAdminNotifications] = useState([]);
+  const [newNotification, setNewNotification] = useState({ title: '', message: '', link: '', type: 'global', filter_min_slates: '', filter_max_slates: '', filter_plan: '', filter_verified_only: false, filter_min_views: '', filter_user_ids: '' });
+  const [previewCount, setPreviewCount] = useState(null);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Automation state
+  const [automations, setAutomations] = useState([]);
+  const [newAutomation, setNewAutomation] = useState({ event_type: 'slate_views', threshold: '', title: '', message: '', link: '' });
+  const [showAutomations, setShowAutomations] = useState(false);
+
+  // Feedback state
+  const [feedbackList, setFeedbackList] = useState([]);
 
   // Search state
   const [userSearch, setUserSearch] = useState('');
@@ -148,6 +162,194 @@ export function AdminConsole() {
       case 'sentry':
         fetchErrorLogs();
         break;
+      case 'announcements':
+        fetchAdminNotifications();
+        fetchAutomations();
+        break;
+      case 'feedback':
+        fetchFeedback();
+        break;
+    }
+  };
+
+  const fetchAdminNotifications = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/admin/notifications`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAdminNotifications(data.notifications || []);
+      }
+    } catch (err) {
+      setError('failed to fetch notifications');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewEligible = async (filters) => {
+    try {
+      const cleaned = {
+        filter_min_slates: filters.filter_min_slates ? parseInt(filters.filter_min_slates) : null,
+        filter_max_slates: filters.filter_max_slates ? parseInt(filters.filter_max_slates) : null,
+        filter_min_views: filters.filter_min_views ? parseInt(filters.filter_min_views) : null,
+        filter_plan: filters.filter_plan || null,
+        filter_verified_only: filters.filter_verified_only || false,
+        filter_user_ids: filters.filter_user_ids || null
+      };
+      const response = await fetch(`${API_URL}/admin/notifications/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify(cleaned)
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setPreviewCount(data);
+      }
+    } catch (err) {
+      // silent
+    }
+  };
+
+  const createNotification = async (e) => {
+    e.preventDefault();
+    if (!newNotification.title || !newNotification.message) return;
+    const payload = {
+      ...newNotification,
+      filter_min_slates: newNotification.filter_min_slates ? parseInt(newNotification.filter_min_slates) : null,
+      filter_max_slates: newNotification.filter_max_slates ? parseInt(newNotification.filter_max_slates) : null,
+      filter_min_views: newNotification.filter_min_views ? parseInt(newNotification.filter_min_views) : null,
+      filter_verified_only: newNotification.filter_verified_only || false,
+      filter_plan: newNotification.filter_plan || null,
+      filter_user_ids: newNotification.filter_user_ids || null
+    };
+    try {
+      const response = await fetch(`${API_URL}/admin/notifications`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) {
+        setNewNotification({ title: '', message: '', link: '', type: 'global', filter_min_slates: '', filter_max_slates: '', filter_plan: '', filter_verified_only: false, filter_min_views: '', filter_user_ids: '' });
+        setPreviewCount(null);
+        setShowFilters(false);
+        fetchAdminNotifications();
+      }
+    } catch (err) {
+      setError('failed to create notification');
+    }
+  };
+
+  const deleteNotification = async (id) => {
+    try {
+      await fetch(`${API_URL}/admin/notifications/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      fetchAdminNotifications();
+    } catch (err) {
+      setError('failed to delete notification');
+    }
+  };
+
+  const fetchAutomations = async () => {
+    try {
+      const response = await fetch(`${API_URL}/admin/automations`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAutomations(data.automations || []);
+      }
+    } catch (err) {
+      setError('failed to fetch automations');
+    }
+  };
+
+  const createAutomation = async (e) => {
+    e.preventDefault();
+    const threshold = newAutomation.event_type === 'on_signup' ? 1 : newAutomation.threshold;
+    if (!newAutomation.event_type || !threshold || !newAutomation.title || !newAutomation.message) return;
+    try {
+      const response = await fetch(`${API_URL}/admin/automations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ ...newAutomation, threshold: parseInt(threshold) })
+      });
+      if (response.ok) {
+        setNewAutomation({ event_type: 'slate_views', threshold: '', title: '', message: '', link: '' });
+        fetchAutomations();
+      }
+    } catch (err) {
+      setError('failed to create automation');
+    }
+  };
+
+  const toggleAutomation = async (id, enabled) => {
+    try {
+      await fetch(`${API_URL}/admin/automations/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminToken}`
+        },
+        body: JSON.stringify({ enabled: !enabled })
+      });
+      fetchAutomations();
+    } catch (err) {
+      setError('failed to toggle automation');
+    }
+  };
+
+  const deleteAutomation = async (id) => {
+    try {
+      await fetch(`${API_URL}/admin/automations/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      fetchAutomations();
+    } catch (err) {
+      setError('failed to delete automation');
+    }
+  };
+
+  const fetchFeedback = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/admin/feedback`, {
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setFeedbackList(data.feedback || []);
+      }
+    } catch (err) {
+      setError('failed to fetch feedback');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteFeedback = async (id) => {
+    try {
+      await fetch(`${API_URL}/admin/feedback/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      fetchFeedback();
+    } catch (err) {
+      setError('failed to delete feedback');
     }
   };
 
@@ -480,7 +682,7 @@ export function AdminConsole() {
 
         {/* Tabs */}
         <div className="flex gap-4 mb-6 border-b border-[#333] overflow-x-auto">
-          {['overview', 'users', 'stripe', 'logs', 'health', 'sentry'].map((tab) => (
+          {['overview', 'users', 'stripe', 'logs', 'health', 'sentry', 'announcements', 'feedback'].map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -547,6 +749,294 @@ export function AdminConsole() {
 
         {activeTab === 'sentry' && (
           <SentryTab errorLogs={errorLogs} loading={loading} onRefresh={fetchErrorLogs} />
+        )}
+
+        {activeTab === 'announcements' && (
+          <div>
+            {/* Create notification form */}
+            <form onSubmit={createNotification} className="mb-6 space-y-3">
+              <div className="flex gap-2">
+                <select
+                  value={newNotification.type}
+                  onChange={e => {
+                    const type = e.target.value;
+                    setNewNotification(prev => ({ ...prev, type }));
+                    setShowFilters(type === 'targeted');
+                  }}
+                  className="bg-[#111] border border-[#333] rounded px-3 py-2 text-sm text-white"
+                >
+                  <option value="global">global</option>
+                  <option value="targeted">targeted</option>
+                </select>
+                <input
+                  type="text"
+                  value={newNotification.title}
+                  onChange={e => setNewNotification(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="title"
+                  className="flex-1 bg-[#111] border border-[#333] rounded px-3 py-2 text-sm text-white placeholder-[#555]"
+                />
+              </div>
+              <textarea
+                value={newNotification.message}
+                onChange={e => setNewNotification(prev => ({ ...prev, message: e.target.value }))}
+                placeholder="message"
+                rows={2}
+                className="w-full bg-[#111] border border-[#333] rounded px-3 py-2 text-sm text-white placeholder-[#555] resize-none"
+              />
+              <input
+                type="text"
+                value={newNotification.link}
+                onChange={e => setNewNotification(prev => ({ ...prev, link: e.target.value }))}
+                placeholder="link (optional, e.g. /account or https://...)"
+                className="w-full bg-[#111] border border-[#333] rounded px-3 py-2 text-sm text-white placeholder-[#555]"
+              />
+
+              {/* Targeting filters */}
+              {showFilters && (
+                <div className="border border-[#333] rounded p-3 space-y-2 bg-[#0a0a0a]">
+                  <p className="text-xs text-[#666] mb-2">filters (leave blank for no filter)</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      value={newNotification.filter_min_slates}
+                      onChange={e => setNewNotification(prev => ({ ...prev, filter_min_slates: e.target.value }))}
+                      placeholder="min slates"
+                      className="bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                    <input
+                      type="number"
+                      value={newNotification.filter_max_slates}
+                      onChange={e => setNewNotification(prev => ({ ...prev, filter_max_slates: e.target.value }))}
+                      placeholder="max slates"
+                      className="bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                    <select
+                      value={newNotification.filter_plan}
+                      onChange={e => setNewNotification(prev => ({ ...prev, filter_plan: e.target.value }))}
+                      className="bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white"
+                    >
+                      <option value="">any plan</option>
+                      <option value="free">free</option>
+                      <option value="one_time">one-time supporter</option>
+                      <option value="quarterly">quarterly supporter</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={newNotification.filter_min_views}
+                      onChange={e => setNewNotification(prev => ({ ...prev, filter_min_views: e.target.value }))}
+                      placeholder="min slate views"
+                      className="bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-[#888]">
+                    <input
+                      type="checkbox"
+                      checked={newNotification.filter_verified_only}
+                      onChange={e => setNewNotification(prev => ({ ...prev, filter_verified_only: e.target.checked }))}
+                      className="rounded"
+                    />
+                    verified email only
+                  </label>
+                  <input
+                    type="text"
+                    value={newNotification.filter_user_ids}
+                    onChange={e => setNewNotification(prev => ({ ...prev, filter_user_ids: e.target.value }))}
+                    placeholder="specific user IDs (comma-separated)"
+                    className="w-full bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => previewEligible(newNotification)}
+                    className="text-xs text-[#888] hover:text-white transition-colors"
+                  >
+                    preview reach →
+                  </button>
+                  {previewCount && (
+                    <p className="text-xs text-green-400">{previewCount.eligible} / {previewCount.total} users eligible</p>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="bg-white text-black px-4 py-2 rounded text-sm hover:bg-[#e5e5e5] transition-colors"
+              >
+                send notification
+              </button>
+            </form>
+
+            {/* Notification list */}
+            <h3 className="text-sm text-[#888] mb-3">sent notifications</h3>
+            {loading ? (
+              <p className="text-[#666] text-sm">loading...</p>
+            ) : adminNotifications.length === 0 ? (
+              <p className="text-[#666] text-sm">no notifications yet</p>
+            ) : (
+              <div className="space-y-3 mb-8">
+                {adminNotifications.map(n => (
+                  <div key={n.id} className="bg-[#111] border border-[#333] rounded p-4 flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-white text-sm font-medium">{n.title}</p>
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${n.type === 'global' ? 'bg-blue-900/50 text-blue-400' : n.type === 'automated' ? 'bg-purple-900/50 text-purple-400' : 'bg-orange-900/50 text-orange-400'}`}>
+                          {n.type}
+                        </span>
+                      </div>
+                      <p className="text-[#888] text-xs mt-1">{n.message}</p>
+                      {n.link && <p className="text-[#555] text-xs mt-1">→ {n.link}</p>}
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className="text-[#555] text-xs">{new Date(n.created_at).toLocaleString()}</span>
+                        <span className="text-xs text-green-400">{n.read_count} / {n.total_eligible} read ({n.read_percentage}%)</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => deleteNotification(n.id)}
+                      className="text-red-400 hover:text-red-300 text-xs ml-4 flex-shrink-0"
+                    >
+                      delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Automations section */}
+            <div className="border-t border-[#333] pt-6">
+              <button
+                onClick={() => setShowAutomations(!showAutomations)}
+                className="text-sm text-[#888] hover:text-white transition-colors mb-4"
+              >
+                {showAutomations ? '▼' : '▶'} automations ({automations.length})
+              </button>
+
+              {showAutomations && (
+                <div>
+                  <form onSubmit={createAutomation} className="mb-4 space-y-2">
+                    <div className="flex gap-2">
+                      <select
+                        value={newAutomation.event_type}
+                        onChange={e => setNewAutomation(prev => ({ ...prev, event_type: e.target.value }))}
+                        className="bg-[#111] border border-[#333] rounded px-3 py-2 text-xs text-white"
+                      >
+                        <option value="on_signup">on signup</option>
+                        <option value="slate_views">slate reaches X views</option>
+                        <option value="slate_count">user creates X slates</option>
+                        <option value="published_count">user publishes X slates</option>
+                        <option value="account_age_days">account turns X days old</option>
+                      </select>
+                      {newAutomation.event_type !== 'on_signup' && (
+                        <input
+                          type="number"
+                          value={newAutomation.threshold}
+                          onChange={e => setNewAutomation(prev => ({ ...prev, threshold: e.target.value }))}
+                          placeholder="threshold"
+                          className="w-24 bg-[#111] border border-[#333] rounded px-3 py-2 text-xs text-white placeholder-[#555]"
+                        />
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={newAutomation.title}
+                      onChange={e => setNewAutomation(prev => ({ ...prev, title: e.target.value }))}
+                      placeholder="title — use {username}, {slate_title}, {view_count}, {slate_count}"
+                      className="w-full bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                    <input
+                      type="text"
+                      value={newAutomation.message}
+                      onChange={e => setNewAutomation(prev => ({ ...prev, message: e.target.value }))}
+                      placeholder="message — use {username}, {slate_title}, {view_count}, {slate_count}"
+                      className="w-full bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                    <input
+                      type="text"
+                      value={newAutomation.link}
+                      onChange={e => setNewAutomation(prev => ({ ...prev, link: e.target.value }))}
+                      placeholder="link (optional)"
+                      className="w-full bg-[#111] border border-[#333] rounded px-3 py-1.5 text-xs text-white placeholder-[#555]"
+                    />
+                    <button
+                      type="submit"
+                      className="bg-white text-black px-3 py-1.5 rounded text-xs hover:bg-[#e5e5e5] transition-colors"
+                    >
+                      create automation
+                    </button>
+                  </form>
+
+                  {automations.length === 0 ? (
+                    <p className="text-[#666] text-xs">no automations</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {automations.map(a => (
+                        <div key={a.id} className="bg-[#111] border border-[#333] rounded p-3 flex justify-between items-start">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-white text-xs font-medium">{a.title}</p>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${a.enabled ? 'bg-green-900/50 text-green-400' : 'bg-[#333] text-[#666]'}`}>
+                                {a.enabled ? 'active' : 'paused'}
+                              </span>
+                            </div>
+                            <p className="text-[#888] text-xs mt-1">{a.message}</p>
+                            <p className="text-[#555] text-xs mt-1">
+                              {a.event_type} ≥ {a.threshold} · fired {a.times_fired || 0} times
+                            </p>
+                          </div>
+                          <div className="flex gap-2 ml-4 flex-shrink-0">
+                            <button
+                              onClick={() => toggleAutomation(a.id, a.enabled)}
+                              className="text-xs text-[#888] hover:text-white transition-colors"
+                            >
+                              {a.enabled ? 'pause' : 'enable'}
+                            </button>
+                            <button
+                              onClick={() => deleteAutomation(a.id)}
+                              className="text-red-400 hover:text-red-300 text-xs"
+                            >
+                              delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {activeTab === 'feedback' && (
+          <div>
+            {loading ? (
+              <p className="text-[#666] text-sm">loading...</p>
+            ) : feedbackList.length === 0 ? (
+              <p className="text-[#666] text-sm">no feedback yet</p>
+            ) : (
+              <div className="space-y-3">
+                {feedbackList.map(f => (
+                  <div key={f.id} className="bg-[#111] border border-[#333] rounded p-4 flex justify-between items-start">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-white text-sm font-medium">{f.username || 'unknown'}</span>
+                        {f.contact_email && (
+                          <a href={`mailto:${f.contact_email}`} className="text-xs text-blue-400 hover:text-blue-300">
+                            {f.contact_email}
+                          </a>
+                        )}
+                      </div>
+                      <p className="text-[#888] text-sm whitespace-pre-wrap">{f.message}</p>
+                      <p className="text-[#555] text-xs mt-2">{new Date(f.created_at).toLocaleString()}</p>
+                    </div>
+                    <button
+                      onClick={() => deleteFeedback(f.id)}
+                      className="text-red-400 hover:text-red-300 text-xs ml-4 flex-shrink-0"
+                    >
+                      delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -836,6 +1326,30 @@ function OverviewTab({ b2Stats, healthMetrics }) {
 
 // Users Tab Component
 function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser, onChangePlan, searchQuery, onSearchChange }) {
+  const [revealedEmails, setRevealedEmails] = useState({});
+  const clickCountRef = React.useRef({});
+  const clickTimerRef = React.useRef({});
+
+  const handleEmailClick = (userId) => {
+    const now = Date.now();
+    const prev = clickCountRef.current[userId];
+
+    if (prev && now - prev.time < 400) {
+      prev.count += 1;
+      prev.time = now;
+    } else {
+      clickCountRef.current[userId] = { count: 1, time: now };
+    }
+
+    clearTimeout(clickTimerRef.current[userId]);
+    clickTimerRef.current[userId] = setTimeout(() => {
+      if (clickCountRef.current[userId]?.count >= 3) {
+        setRevealedEmails(prev => ({ ...prev, [userId]: !prev[userId] }));
+      }
+      clickCountRef.current[userId] = null;
+    }, 400);
+  };
+
   // Filter users based on search query
   const filteredUsers = users.filter(user => {
     if (!searchQuery) return true;
@@ -928,7 +1442,12 @@ function UsersTab({ users, pagination, loading, onPageChange, onDeleteUser, onCh
                 <tr key={user.id} className="border-b border-[#222] hover:bg-[#1a1a1a]">
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{user.id}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm text-white">{user.username}</td>
-                  <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{maskEmail(user.email)}</td>
+                  <td
+                    className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm cursor-default select-none"
+                    onClick={() => handleEmailClick(user.id)}
+                  >
+                    {revealedEmails[user.id] ? user.emailFull || user.email : maskEmail(user.email)}
+                  </td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">{user.email_verified ? '✓' : '✗'}</td>
                   <td className="py-2 md:py-3 px-2 md:px-4 text-xs md:text-sm">
                     <button

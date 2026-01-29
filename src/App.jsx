@@ -9,6 +9,8 @@ import { ManageSubscription } from './components/ManageSubscription';
 import { NotFound } from './components/NotFound';
 import { CommandPalette } from './components/CommandPalette';
 import { CliPair } from './components/CliPair';
+import { Cli } from './components/Cli';
+import { Feedback } from './components/Feedback';
 import { API_URL } from './config';
 import { strings } from './strings';
 
@@ -37,6 +39,10 @@ export default function App() {
   const blankSlateContentRef = useRef(''); // Preserve blank slate content when navigating
   const writerScrollRef = useRef(0); // Preserve writer scroll position
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const notificationRef = useRef(null);
 
   // Setup global login nudge trigger for Writer component
   useEffect(() => {
@@ -93,10 +99,66 @@ export default function App() {
     fetchUserData();
   }, []);
 
+  // Fetch notifications when authenticated
+  const fetchNotifications = async () => {
+    try {
+      const response = await fetch(`${API_URL}/notifications`, {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setNotifications(data.notifications || []);
+        setUnreadCount((data.notifications || []).filter(n => !n.is_read).length);
+      }
+    } catch (err) {
+      console.error('Failed to fetch notifications:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (token && token !== 'checking') {
+      fetchNotifications();
+    }
+  }, [token]);
+
+  // Close notifications dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (notificationRef.current && !notificationRef.current.contains(e.target)) {
+        setShowNotifications(false);
+      }
+    };
+    if (showNotifications) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showNotifications]);
+
+  // Mark all as read when opening notifications
+  const handleOpenNotifications = async () => {
+    setShowNotifications(!showNotifications);
+    if (!showNotifications && unreadCount > 0) {
+      // Mark all unread as read
+      const unread = notifications.filter(n => !n.is_read);
+      await Promise.all(unread.map(n =>
+        fetch(`${API_URL}/notifications/${n.id}/read`, {
+          method: 'POST',
+          credentials: 'include'
+        })
+      ));
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+      setUnreadCount(0);
+    }
+  };
+
   // Check if viewing public slate or admin console or specific slate
   useEffect(() => {
     const handleRoute = () => {
-      const path = window.location.pathname;
+      // Normalize path: remove trailing slash (except for root)
+      let path = window.location.pathname;
+      if (path.length > 1 && path.endsWith('/')) {
+        path = path.slice(0, -1);
+      }
       if (path.startsWith('/s/')) {
         setView('public');
       } else if (path.startsWith('/holyfuckwhereami')) {
@@ -138,6 +200,10 @@ export default function App() {
         setView('manage-subscription');
       } else if (path === '/pair') {
         setView('cli-pair');
+      } else if (path === '/cli') {
+        setView('cli-info');
+      } else if (path === '/feedback') {
+        setView('feedback');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -181,6 +247,16 @@ export default function App() {
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
+        if (showNotifications) {
+          e.preventDefault();
+          setShowNotifications(false);
+          return;
+        }
+        if (showAuthModal) {
+          e.preventDefault();
+          setShowAuthModal(false);
+          return;
+        }
         if (view === 'slates' || view === 'account') {
           e.preventDefault();
           // Navigate back to writer
@@ -197,7 +273,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [view]);
+  }, [view, showAuthModal, showNotifications]);
 
   // Cmd+K to open command palette
   useEffect(() => {
@@ -600,6 +676,16 @@ export default function App() {
     );
   }
 
+  // CLI Info
+  if (view === 'cli-info') {
+    return <Cli />;
+  }
+
+  // Feedback
+  if (view === 'feedback') {
+    return <Feedback token={token} username={username} email={email} />;
+  }
+
   return (
     <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
 
@@ -638,6 +724,20 @@ export default function App() {
         .animate-slide-down {
           animation: slideDown 0.2s ease-out;
         }
+        @keyframes modalOverlayIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes modalContentIn {
+          from { opacity: 0; transform: scale(0.95) translateY(10px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .animate-modal-overlay {
+          animation: modalOverlayIn 0.2s ease-out;
+        }
+        .animate-modal-content {
+          animation: modalContentIn 0.2s ease-out;
+        }
       `}</style>
 
       {/* HEADER */}
@@ -651,6 +751,57 @@ export default function App() {
         <div className="flex gap-3 md:gap-6 text-xs md:text-sm items-center">
           {token ? (
             <>
+              <div className="relative hidden sm:inline-flex items-center" ref={notificationRef}>
+                <button
+                  onClick={handleOpenNotifications}
+                  className="relative text-[#808080] hover:text-white transition-colors p-1"
+                  aria-label={strings.notifications.title}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z" />
+                  </svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute top-full right-0 mt-2 w-80 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl z-50 animate-modal-content">
+                    <div className="p-3 border-b border-[#333]">
+                      <span className="text-sm text-white">{strings.notifications.title}</span>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <p className="text-sm text-[#666] p-4 text-center">{strings.notifications.empty}</p>
+                      ) : (
+                        notifications.map(n => (
+                          <div
+                            key={n.id}
+                            className={`p-3 border-b border-[#222] last:border-b-0 hover:bg-[#222] transition-colors ${n.link ? 'cursor-pointer' : ''}`}
+                            onClick={() => {
+                              if (n.link) {
+                                if (n.link.startsWith('/')) {
+                                  window.history.pushState({}, '', n.link);
+                                  window.dispatchEvent(new PopStateEvent('popstate'));
+                                } else {
+                                  window.open(n.link, '_blank');
+                                }
+                                setShowNotifications(false);
+                              }
+                            }}
+                          >
+                            <p className="text-sm text-white font-medium">{n.title}</p>
+                            <p className="text-xs text-[#888] mt-1">{n.message}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-xs text-[#555]">{new Date(n.created_at).toLocaleDateString()}</span>
+                              {n.link && <span className="text-xs text-[#555]">→</span>}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
               <span className="text-[#808080] hidden sm:inline">{strings.app.welcome(username)}</span>
               <span className="text-[#333] hidden sm:inline">|</span>
               {/* Toggle button for writer/slates */}

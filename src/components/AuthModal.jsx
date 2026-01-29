@@ -586,8 +586,8 @@ export function AuthModal({ onClose, onAuth }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-modal-overlay" onClick={onClose}>
+      <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
         <h2 className="text-xl text-white mb-6">{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">

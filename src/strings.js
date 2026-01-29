@@ -54,6 +54,7 @@ const strings = {
     },
     buttons: {
       about: 'about',
+      feedback: 'feedback',
       publish: 'publish',
       published: 'published',
       save: 'save',
@@ -375,7 +376,9 @@ const strings = {
         overview: 'Overview',
         users: 'Users',
         logs: 'Logs',
-        health: 'Health'
+        health: 'Health',
+        announcements: 'Announcements',
+        feedback: 'Feedback'
       },
       stats: {
         title: 'stats',
@@ -488,6 +491,36 @@ const strings = {
       "there you are! we also lost this slate. please let us know if you find it."
     ],
     button: 'back to writing'
+  },
+
+  // feedback
+  feedback: {
+    title: 'feedback',
+    subtitle: (username) => `hey ${username}, what's on your mind?`,
+    placeholder: 'anything at all — bugs, ideas, or just say hi...',
+    emailLabel: 'reply to (optional)',
+    emailPlaceholder: 'your email',
+    submit: 'send',
+    sending: 'sending...',
+    cancel: 'back',
+    error: 'something went wrong, try again',
+    thankYou: {
+      title: 'thank you so much!',
+      message: 'your feedback means the world. seriously. it helps shape what justtype becomes.',
+      back: '← back to writing'
+    },
+    loggedOut: {
+      message: "we'd love to hear from you! send us an email at:",
+      email: 'hi@justtype.io',
+      orLogin: 'or log in to submit feedback directly'
+    }
+  },
+
+  // notifications
+  notifications: {
+    title: 'updates',
+    empty: 'no updates yet',
+    markAllRead: 'mark all as read'
   },
 
   // nudges
@@ -604,6 +637,18 @@ take care!
     emailSent: 'email sent!',
     passwordChanged: 'password changed!',
     emailChanged: 'email changed!'
+  },
+
+  // cli page
+  cli: {
+    tagline: 'justtype for your terminal',
+    description: 'works offline. login to sync.',
+    install: 'curl -fsSL https://justtype.io/cli/install.sh | bash',
+    copied: 'copied!',
+    copy: 'copy',
+    copyAction: 'click to copy',
+    platforms: 'linux and macos',
+    github: 'github'
   }
 };
 
