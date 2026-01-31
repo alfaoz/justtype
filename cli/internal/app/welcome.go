@@ -10,9 +10,12 @@ import (
 
 func (app *App) showWelcome() {
 	logo := `
-     ╦╦ ╦╔═╗╔╦╗╔╦╗╦ ╦╔═╗╔═╗
-     ║║ ║╚═╗ ║  ║ ╚╦╝╠═╝║╣
-    ╚╝╚═╝╚═╝ ╩  ╩  ╩ ╩  ╚═╝
+           _           _     _
+   _      (_)_   _ ___| |_  | |_ _   _ _ __   ___
+ _| |_    | | | | / __| __| | __| | | | '_ \ / _ \
+|_   _|   | | |_| \__ \ |_  | |_| |_| | |_) |  __/
+  |_|    _/ |\__,_|___/\__|  \__|\__, | .__/ \___|
+        |__/                     |___/|_|
 `
 
 	subtitle := "distraction-free writing"
@@ -49,7 +52,7 @@ func (app *App) showWelcome() {
 	content := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(nil, 0, 1, false).
-		AddItem(logoText, 4, 0, false).
+		AddItem(logoText, 7, 0, false).
 		AddItem(subtitleText, 1, 0, false).
 		AddItem(nil, 2, 0, false).
 		AddItem(list, 4, 0, true).

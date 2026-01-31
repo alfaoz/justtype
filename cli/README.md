@@ -3,21 +3,21 @@
 A beautiful terminal UI for distraction-free writing.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│      ╦╦ ╦╔═╗╔╦╗╔╦╗╦ ╦╔═╗╔═╗                          │
-│      ║║ ║╚═╗ ║  ║ ╚╦╝╠═╝║╣                           │
-│     ╚╝╚═╝╚═╝ ╩  ╩  ╩ ╩  ╚═╝                          │
-│              v1.3.0                                  │
-│                                                      │
-│   distraction-free writing for your terminal         │
-│                                                      │
-│   your notes are stored locally in ~/.justtype       │
-│   login to sync across devices                       │
-│                                                      │
-│            [ press enter to get started ]            │
-│                                                      │
-└──────────────────────────────────────────────────────┘
+           _           _     _
+   _      (_)_   _ ___| |_  | |_ _   _ _ __   ___
+ _| |_    | | | | / __| __| | __| | | | '_ \ / _ \
+|_   _|   | | |_| \__ \ |_  | |_| |_| | |_) |  __/
+  |_|    _/ |\__,_|___/\__|  \__|\__, | .__/ \___|
+        |__/                     |___/|_|
+
+              v1.3.0
+
+   distraction-free writing for your terminal
+
+   your notes are stored locally in ~/.justtype
+   login to sync across devices
+
+            [ press enter to get started ]
 ```
 
 ## Install
