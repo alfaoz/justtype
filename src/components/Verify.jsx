@@ -11,9 +11,6 @@ export function Verify() {
   const [computedJs, setComputedJs] = useState(null);
   const [computedCss, setComputedCss] = useState(null);
   const [error, setError] = useState(null);
-  const [showLocal, setShowLocal] = useState(false);
-  const [showBuild, setShowBuild] = useState(false);
-  const [showTrust, setShowTrust] = useState(false);
 
   useEffect(() => {
     verify();
@@ -66,17 +63,11 @@ export function Verify() {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  // Three-way match checks
-  const jsServerGh = manifest && github && manifest.jsHash === github.jsHash;
-  const cssServerGh = manifest && github && manifest.cssHash === github.cssHash;
-  const jsServerComputed = manifest && computedJs && manifest.jsHash === computedJs;
-  const cssServerComputed = manifest && computedCss && manifest.cssHash === computedCss;
-  const jsGhComputed = github && computedJs && github.jsHash === computedJs;
-  const cssGhComputed = github && computedCss && github.cssHash === computedCss;
-
-  const allMatch = jsServerGh && cssServerGh && jsServerComputed && cssServerComputed && jsGhComputed && cssGhComputed;
-  const anyMismatch = manifest && computedJs && computedCss && github && !allMatch;
-  const loading = !error && (!manifest || computedJs === null || computedCss === null);
+  const jsAllMatch = manifest && github && computedJs && manifest.jsHash === github.jsHash && github.jsHash === computedJs;
+  const cssAllMatch = manifest && github && computedCss && manifest.cssHash === github.cssHash && github.cssHash === computedCss;
+  const allMatch = jsAllMatch && cssAllMatch;
+  const done = manifest && computedJs && computedCss && (github || githubError);
+  const anyMismatch = done && !allMatch;
 
   const formatDate = (iso) => {
     const d = new Date(iso);
@@ -91,9 +82,9 @@ export function Verify() {
         </a>
       </header>
 
-      <main className="max-w-2xl mx-auto p-8 flex-grow w-full">
+      <main className="max-w-2xl mx-auto p-4 md:p-8 flex-grow w-full">
         <h1 className="text-xl text-white mb-2">{strings.verify.title}</h1>
-        <p className="text-sm text-[#888] mb-8">{strings.verify.description}</p>
+        <p className="text-sm text-[#666] mb-8">{strings.verify.description}</p>
 
         {error && (
           <div className="text-red-400 text-sm mb-6">{strings.verify.error}</div>
@@ -104,147 +95,123 @@ export function Verify() {
         )}
 
         {manifest && (
-          <div className="space-y-6">
-            {/* Status */}
-            <div className={`flex items-center gap-3 p-4 rounded border ${
-              loading || (!github && !githubError) ? 'border-[#333] text-[#888]' :
-              allMatch ? 'border-green-800/50 text-green-400' :
-              anyMismatch ? 'border-red-800/50 text-red-400' :
-              'border-[#333] text-[#888]'
+          <div className="space-y-8">
+
+            {/* Status banner */}
+            <div className={`text-sm py-3 px-4 rounded border ${
+              !done ? 'border-[#333] text-[#888]' :
+              allMatch ? 'border-green-800/30 bg-green-900/10 text-green-400' :
+              'border-red-800/30 bg-red-900/10 text-red-400'
             }`}>
-              {loading ? (
+              {!done ? (
                 <span className="animate-pulse">{strings.verify.computing}</span>
               ) : allMatch ? (
-                <>
-                  <span className="text-lg">&#10003;</span>
-                  <span className="text-sm">{strings.verify.verified}</span>
-                </>
-              ) : anyMismatch ? (
-                <>
-                  <span className="text-lg">&#10007;</span>
-                  <span className="text-sm">{strings.verify.mismatch}</span>
-                </>
+                <span>&#10003; {strings.verify.verified}</span>
               ) : (
-                <span className="text-sm animate-pulse">{strings.verify.computing}</span>
+                <span>&#10007; {strings.verify.mismatch}</span>
               )}
             </div>
 
-            {/* Version info */}
-            <div className="text-sm text-[#666]">
-              {strings.verify.version(manifest.version)}
-              <span className="mx-2">·</span>
-              {strings.verify.buildDate(formatDate(manifest.buildDate))}
+            {/* Meta row */}
+            <div className="flex items-center gap-4 text-xs text-[#666]">
+              <span>{strings.verify.version(manifest.version)}</span>
+              <span>{strings.verify.buildDate(formatDate(manifest.buildDate))}</span>
+              <a
+                href={`https://github.com/alfaoz/justtype/releases/tag/v${manifest.version}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-white transition-colors ml-auto"
+              >
+                {strings.verify.githubRelease} →
+              </a>
             </div>
 
-            {/* Three-way hash comparison */}
-            <div className="space-y-4">
-              <HashComparison
-                label={strings.verify.jsBundle}
-                file={manifest.jsFile}
-                server={manifest.jsHash}
-                gh={github?.jsHash}
-                ghError={githubError}
-                computed={computedJs}
-              />
-              <HashComparison
-                label={strings.verify.cssBundle}
-                file={manifest.cssFile}
-                server={manifest.cssHash}
-                gh={github?.cssHash}
-                ghError={githubError}
-                computed={computedCss}
-              />
-            </div>
+            {/* JS bundle */}
+            <HashSection
+              label={strings.verify.jsBundle}
+              file={manifest.jsFile}
+              server={manifest.jsHash}
+              gh={github?.jsHash}
+              ghError={githubError}
+              computed={computedJs}
+              allMatch={jsAllMatch}
+            />
 
-            {/* GitHub Actions info */}
-            <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-white">{strings.verify.github.label}</span>
-                {github && (
-                  <span className="text-xs text-green-400">&#10003;</span>
-                )}
-                {githubError && (
-                  <span className="text-xs text-red-400">&#10007;</span>
-                )}
+            {/* CSS bundle */}
+            <HashSection
+              label={strings.verify.cssBundle}
+              file={manifest.cssFile}
+              server={manifest.cssHash}
+              gh={github?.cssHash}
+              ghError={githubError}
+              computed={computedCss}
+              allMatch={cssAllMatch}
+            />
+
+            {/* GitHub actions source */}
+            <div className="pt-2 border-t border-[#222]">
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <span className="text-sm text-white">{strings.verify.github.label}</span>
+                  <p className="text-xs text-[#555] mt-1">{strings.verify.github.hostedOn}</p>
+                </div>
+                {github && <span className="text-xs text-green-400">&#10003;</span>}
+                {githubError && <span className="text-xs text-red-400">&#10007;</span>}
               </div>
-              <p className="text-xs text-[#555] mb-2">{strings.verify.github.hostedOn}</p>
               {githubError ? (
-                <p className="text-xs text-red-400/70">{strings.verify.github.error}</p>
+                <p className="text-xs text-red-400/60 pb-2">{strings.verify.github.error}</p>
               ) : (
-                <div className="flex gap-4">
-                  <a
-                    href={GITHUB_HASHES_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-[#888] hover:text-white transition-colors"
-                  >
+                <div className="flex gap-6 text-xs pb-2">
+                  <a href={GITHUB_HASHES_URL} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-white transition-colors">
                     {strings.verify.github.viewEndpoint} →
                   </a>
-                  <a
-                    href={GITHUB_WORKFLOW_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-[#888] hover:text-white transition-colors"
-                  >
+                  <a href={GITHUB_WORKFLOW_URL} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-white transition-colors">
                     {strings.verify.github.viewWorkflow} →
                   </a>
                 </div>
               )}
             </div>
 
-            {/* GitHub release link */}
-            <a
-              href={`https://github.com/alfaoz/justtype/releases/tag/v${manifest.version}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-sm text-[#888] hover:text-white transition-colors"
-            >
-              {strings.verify.githubRelease} →
-            </a>
-
-            {/* Trust model */}
-            <CollapsibleSection
-              title={strings.verify.trustModel.title}
-              open={showTrust}
-              onToggle={() => setShowTrust(!showTrust)}
-            >
-              <div className="space-y-3">
-                {['quick', 'independent', 'full'].map((level) => (
-                  <div key={level}>
-                    <span className="text-xs text-white">{strings.verify.trustModel[level].label}</span>
-                    <p className="text-xs text-[#666] mt-0.5">{strings.verify.trustModel[level].description}</p>
+            {/* Trust levels */}
+            <div className="pt-2 border-t border-[#222]">
+              <p className="text-sm text-white mb-4">{strings.verify.trustModel.title}</p>
+              <div className="space-y-4">
+                {['quick', 'independent', 'full'].map((level, i) => (
+                  <div key={level} className="flex gap-3">
+                    <span className="text-xs text-[#555] font-mono mt-0.5 shrink-0">{i + 1}.</span>
+                    <div>
+                      <span className="text-xs text-white">{strings.verify.trustModel[level].label}</span>
+                      <p className="text-xs text-[#555] mt-0.5">{strings.verify.trustModel[level].description}</p>
+                    </div>
                   </div>
                 ))}
               </div>
-            </CollapsibleSection>
+            </div>
 
-            {/* Local verification */}
-            <CollapsibleSection
-              title={strings.verify.localVerify.title}
-              open={showLocal}
-              onToggle={() => setShowLocal(!showLocal)}
-            >
-              <p className="text-xs text-[#666] mb-3">{strings.verify.localVerify.description}</p>
-              <div className="space-y-2">
-                <CodeBlock value={`curl -s https://justtype.io/assets/${manifest.jsFile} | sha256sum`} />
-                <CodeBlock value={`curl -s https://justtype.io/assets/${manifest.cssFile} | sha256sum`} />
-              </div>
-            </CollapsibleSection>
-
-            {/* Build it yourself */}
-            <CollapsibleSection
-              title={strings.verify.buildYourself.title}
-              open={showBuild}
-              onToggle={() => setShowBuild(!showBuild)}
-            >
-              <p className="text-xs text-[#666] mb-3">{strings.verify.buildYourself.description}</p>
-              <div className="space-y-2">
-                <CodeBlock value="git clone https://github.com/alfaoz/justtype.git" />
-                <CodeBlock value="cd justtype && npm ci && npm run build" />
-                <CodeBlock value="cat dist/build-manifest.json" />
-              </div>
+            {/* DIY section */}
+            <div className="pt-2 border-t border-[#222]">
+              <p className="text-sm text-white mb-2">{strings.verify.buildYourself.title}</p>
+              <p className="text-xs text-[#555] mb-3">{strings.verify.buildYourself.description}</p>
+              <pre className="text-xs text-[#888] font-mono bg-[#0a0a0a] border border-[#222] rounded p-4 overflow-x-auto leading-6">
+{`git clone https://github.com/alfaoz/justtype.git
+cd justtype
+npm ci
+npm run build
+cat dist/build-manifest.json`}
+              </pre>
               <p className="text-xs text-[#555] mt-3">{strings.verify.buildYourself.compare}</p>
-            </CollapsibleSection>
+            </div>
+
+            {/* Curl verify */}
+            <div className="pt-2 border-t border-[#222]">
+              <p className="text-sm text-white mb-2">{strings.verify.localVerify.title}</p>
+              <p className="text-xs text-[#555] mb-3">{strings.verify.localVerify.description}</p>
+              <pre className="text-xs text-[#888] font-mono bg-[#0a0a0a] border border-[#222] rounded p-4 overflow-x-auto leading-6">
+{`curl -s https://justtype.io/assets/${manifest.jsFile} | sha256sum
+curl -s https://justtype.io/assets/${manifest.cssFile} | sha256sum`}
+              </pre>
+            </div>
+
           </div>
         )}
       </main>
@@ -260,20 +227,20 @@ export function Verify() {
   );
 }
 
-function HashComparison({ label, file, server, gh, ghError, computed }) {
-  const allThree = server && gh && computed;
-  const allMatch = allThree && server === gh && gh === computed;
+function HashSection({ label, file, server, gh, ghError, computed, allMatch }) {
+  const s = strings.verify.sources;
 
-  const hashRow = (source, hash, refHash) => {
-    const match = hash && refHash && hash === refHash;
+  const Row = ({ source, hash, ref }) => {
+    const match = hash && ref && hash === ref;
     const pending = !hash;
     return (
-      <div className="flex gap-2 items-baseline">
-        <span className="text-xs text-[#666] w-20 shrink-0">{source}</span>
-        <code className={`text-xs font-mono break-all ${
-          pending ? 'text-[#555] animate-pulse' :
-          (refHash && !match) ? 'text-red-400/80' :
-          (refHash && match) ? 'text-green-400/80' :
+      <div className="flex items-center justify-between py-2 border-b border-[#222] last:border-0">
+        <span className="text-xs text-[#666] w-16 shrink-0">{source}</span>
+        <code className={`text-xs font-mono break-all text-right ${
+          pending ? 'text-[#444] animate-pulse' :
+          hash === 'unavailable' ? 'text-red-400/50' :
+          (ref && !match) ? 'text-red-400/80' :
+          (ref && match) ? 'text-green-400/70' :
           'text-[#888]'
         }`}>
           {hash || '...'}
@@ -283,64 +250,21 @@ function HashComparison({ label, file, server, gh, ghError, computed }) {
   };
 
   return (
-    <div className="bg-[#1a1a1a] border border-[#333] rounded p-4">
-      <div className="flex items-center justify-between mb-2">
+    <div>
+      <div className="flex items-center justify-between mb-1">
         <span className="text-sm text-white">{label}</span>
-        {allThree && (
+        {server && gh && computed && (
           <span className={`text-xs ${allMatch ? 'text-green-400' : 'text-red-400'}`}>
             {allMatch ? '\u2713' : '\u2717'}
           </span>
         )}
       </div>
-      <div className="text-xs text-[#555] mb-2">{file}</div>
-      <div className="space-y-1">
-        {hashRow(strings.verify.sources.server, server, computed)}
-        {hashRow(strings.verify.sources.github, ghError ? 'unavailable' : gh, server)}
-        {hashRow(strings.verify.sources.computed, computed, server)}
+      <p className="text-xs text-[#555] mb-2 font-mono">{file}</p>
+      <div>
+        <Row source={s.server} hash={server} ref={computed} />
+        <Row source={s.github} hash={ghError ? 'unavailable' : gh} ref={server} />
+        <Row source={s.computed} hash={computed} ref={server} />
       </div>
-    </div>
-  );
-}
-
-function CollapsibleSection({ title, open, onToggle, children }) {
-  return (
-    <div className="border border-[#333] rounded">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between p-4 text-sm text-[#888] hover:text-white transition-colors"
-      >
-        <span>{title}</span>
-        <span className="text-[#666]">{open ? '\u2212' : '+'}</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 border-t border-[#333] pt-3">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CodeBlock({ value }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {}
-  };
-
-  return (
-    <div className="bg-[#111] border border-[#333] rounded p-3 flex items-center justify-between gap-2">
-      <code className="text-xs text-[#888] font-mono break-all">{value}</code>
-      <button
-        onClick={handleCopy}
-        className="text-xs text-[#666] hover:text-white transition-colors shrink-0"
-      >
-        {copied ? 'copied' : 'copy'}
-      </button>
     </div>
   );
 }

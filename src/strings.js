@@ -795,7 +795,7 @@ take care!
     githubRelease: 'view release on github',
     github: {
       label: 'github actions hashes',
-      hostedOn: 'built by github actions from the public repo — not controlled by justtype servers',
+      hostedOn: 'built by github actions from the public repo, not controlled by justtype servers',
       viewEndpoint: 'view raw hashes',
       viewWorkflow: 'view workflow source',
       loading: 'fetching from github...',
