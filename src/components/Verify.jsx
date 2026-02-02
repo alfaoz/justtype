@@ -3,6 +3,7 @@ import { strings } from '../strings';
 
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 const GITHUB_WORKFLOW_URL = 'https://github.com/alfaoz/justtype/blob/master/.github/workflows/publish-hashes.yml';
+const GITHUB_RUNS_URL = 'https://api.github.com/repos/alfaoz/justtype/actions/workflows/publish-hashes.yml/runs?per_page=1';
 
 const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
@@ -14,12 +15,14 @@ export function Verify() {
   const [computedCss, setComputedCss] = useState(null);
   const [error, setError] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [actionsStatus, setActionsStatus] = useState(null); // 'running' | 'completed' | 'failed' | null
   const pollRef = useRef(null);
   const manifestRef = useRef(null);
 
   useEffect(() => {
     verify();
     fetchGithub();
+    fetchActionsStatus();
     return () => clearInterval(pollRef.current);
   }, []);
 
@@ -89,6 +92,23 @@ export function Verify() {
     }
   };
 
+  const fetchActionsStatus = async () => {
+    try {
+      const res = await fetch(GITHUB_RUNS_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+      const run = data.workflow_runs?.[0];
+      if (!run) return;
+      if (run.status === 'queued' || run.status === 'in_progress' || run.status === 'waiting') {
+        setActionsStatus('running');
+      } else if (run.conclusion === 'success') {
+        setActionsStatus('completed');
+      } else {
+        setActionsStatus('failed');
+      }
+    } catch {}
+  };
+
   const bufToHex = (buf) => {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
@@ -98,7 +118,10 @@ export function Verify() {
   const allMatch = jsAllMatch && cssAllMatch;
   const serverMatch = manifest && computedJs && computedCss && manifest.jsHash === computedJs && manifest.cssHash === computedCss;
   const done = manifest && computedJs && computedCss && (github || githubError);
-  const rebuilding = done && serverMatch && !allMatch;
+  const serverOkGithubOff = done && serverMatch && !allMatch;
+  const actionsRunning = serverOkGithubOff && (actionsStatus === 'running' || actionsStatus === null);
+  const actionsFailed = serverOkGithubOff && actionsStatus === 'failed';
+  const actionsCompletedMismatch = serverOkGithubOff && actionsStatus === 'completed';
   const realMismatch = done && !serverMatch;
 
   const toUnix = (iso) => Math.floor(new Date(iso).getTime() / 1000);
@@ -150,17 +173,27 @@ export function Verify() {
             <div className={`text-sm py-3 px-4 rounded border ${
               !done ? 'border-[#333] text-[#888]' :
               allMatch ? 'border-green-800/30 bg-green-900/10 text-green-400' :
-              rebuilding ? 'border-yellow-800/30 bg-yellow-900/10 text-yellow-400' :
+              actionsRunning ? 'border-yellow-800/30 bg-yellow-900/10 text-yellow-400' :
               'border-red-800/30 bg-red-900/10 text-red-400'
             }`}>
               {!done ? (
                 <span className="animate-pulse">{strings.verify.computing}</span>
               ) : allMatch ? (
                 <span>&#10003; {strings.verify.verified}</span>
-              ) : rebuilding ? (
+              ) : actionsRunning ? (
                 <span className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="animate-pulse">{strings.verify.rebuilding}</span>
+                  <span className="animate-pulse">{strings.verify.actionsRunning}</span>
                   <a href="/status" className="text-yellow-400/70 hover:text-yellow-300 underline underline-offset-2">check status</a>
+                </span>
+              ) : actionsFailed ? (
+                <span className="flex items-center justify-between flex-wrap gap-2">
+                  <span>{strings.verify.actionsFailed}</span>
+                  <a href="/status" className="opacity-70 hover:opacity-100 underline underline-offset-2">check status</a>
+                </span>
+              ) : actionsCompletedMismatch ? (
+                <span className="flex items-center justify-between flex-wrap gap-2">
+                  <span>&#10007; {strings.verify.actionsHashMismatch}</span>
+                  <a href="/status" className="opacity-70 hover:opacity-100 underline underline-offset-2">check status</a>
                 </span>
               ) : (
                 <span className="flex items-center justify-between flex-wrap gap-2">
@@ -220,7 +253,7 @@ export function Verify() {
                   <p className="text-xs text-[#555] mt-1">{strings.verify.github.hostedOn}</p>
                 </div>
                 {github && !polling && <span className="text-xs text-green-400">&#10003;</span>}
-                {polling && <span className="text-xs text-yellow-400 animate-pulse">rebuilding...</span>}
+                {polling && <span className="text-xs text-yellow-400 animate-pulse">{actionsStatus === 'running' ? 'actions running...' : actionsStatus === 'failed' ? 'actions failed' : 'waiting...'}</span>}
                 {githubError && !polling && <span className="text-xs text-red-400">&#10007;</span>}
               </div>
               {githubError ? (
