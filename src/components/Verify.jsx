@@ -99,9 +99,22 @@ export function Verify() {
   const done = manifest && computedJs && computedCss && (github || githubError);
   const anyMismatch = done && !allMatch;
 
-  const formatDate = (iso) => {
+  const toUnix = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+
+  const timeAgo = (iso) => {
+    const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
+  const formatFull = (iso) => {
     const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    return d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   };
 
   return (
@@ -146,7 +159,13 @@ export function Verify() {
             {/* Meta row */}
             <div className="flex items-center gap-4 text-xs text-[#666]">
               <span>{strings.verify.version(manifest.version)}</span>
-              <span>{strings.verify.buildDate(formatDate(manifest.buildDate))}</span>
+              <span className="group relative cursor-default">
+                <span className="font-mono">{toUnix(manifest.buildDate)}</span>
+                <span className="ml-1 text-[#555]">({timeAgo(manifest.buildDate)})</span>
+                <span className="absolute bottom-full left-0 mb-1 px-2 py-1 bg-[#1a1a1a] border border-[#333] rounded text-xs text-[#888] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  {formatFull(manifest.buildDate)}
+                </span>
+              </span>
               <a
                 href="https://github.com/alfaoz/justtype"
                 target="_blank"
