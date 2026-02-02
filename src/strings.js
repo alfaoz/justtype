@@ -792,7 +792,7 @@ take care!
     },
     version: (v) => `version ${v}`,
     buildDate: (d) => `built ${d}`,
-    githubRelease: 'view release on github',
+    githubSource: 'view source on github',
     github: {
       label: 'github actions hashes',
       hostedOn: 'built by github actions from the public repo, not controlled by justtype servers',

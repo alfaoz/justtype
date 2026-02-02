@@ -118,12 +118,12 @@ export function Verify() {
               <span>{strings.verify.version(manifest.version)}</span>
               <span>{strings.verify.buildDate(formatDate(manifest.buildDate))}</span>
               <a
-                href={`https://github.com/alfaoz/justtype/releases/tag/v${manifest.version}`}
+                href="https://github.com/alfaoz/justtype"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-white transition-colors ml-auto"
               >
-                {strings.verify.githubRelease} →
+                {strings.verify.githubSource} →
               </a>
             </div>
 

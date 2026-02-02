@@ -5,6 +5,7 @@ import { strings } from '../strings';
 import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme } from '../themes';
 import { encryptContent, decryptContent } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { VerifyBadge } from './VerifyBadge';
 
 export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
   const [content, setContent] = useState('');
@@ -1569,6 +1570,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               <p className="text-xs text-[#666] pt-2 border-t border-[#333]">
                 {strings.writer.about.version(VERSION)}
+                <span className="mx-1">·</span>
+                <VerifyBadge className="text-[#666]">verify</VerifyBadge>
               </p>
             </div>
             <button

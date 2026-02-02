@@ -6,6 +6,7 @@ import { VERSION } from '../version';
 import { generateSlateKey, generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, encryptContent, decryptContent } from '../crypto';
 import { saveSlateKey, getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
+import { VerifyBadge } from './VerifyBadge';
 
 export function AuthModal({ onClose, onAuth }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -1014,14 +1015,7 @@ export function AuthModal({ onClose, onAuth }) {
         <div className="mt-4 pt-3 border-t border-[#333] text-center text-xs text-[#555]">
           {strings.verify.authFooter(VERSION)}
           <span className="mx-1">·</span>
-          <a
-            href="/verify"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[#666] hover:text-[#999] transition-colors"
-          >
-            {strings.verify.authFooterVerify}
-          </a>
+          <VerifyBadge className="text-[#666]">{strings.verify.authFooterVerify}</VerifyBadge>
         </div>
       </div>
     </div>
