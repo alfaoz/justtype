@@ -27,6 +27,8 @@ export function Status() {
 
   const s = strings.status;
 
+  const utc = (d) => d && !d.endsWith('Z') && !d.includes('+') ? d + 'Z' : d;
+
   const severityColor = (sev) => ({ minor: '#eab308', major: '#f97316', critical: '#ef4444' }[sev] || '#666');
   const statusColor = (st) => ({
     investigating: 'bg-red-900/30 text-red-400',
@@ -48,7 +50,7 @@ export function Status() {
   const groupByDate = (incidents) => {
     const groups = {};
     for (const inc of incidents) {
-      const date = new Date(inc.resolved_at || inc.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const date = new Date(utc(inc.resolved_at || inc.created_at)).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       if (!groups[date]) groups[date] = [];
       groups[date].push(inc);
     }
@@ -56,7 +58,7 @@ export function Status() {
   };
 
   const timeAgo = (iso) => {
-    const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    const seconds = Math.floor((Date.now() - new Date(utc(iso)).getTime()) / 1000);
     if (seconds < 60) return `${seconds}s ago`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
@@ -174,7 +176,7 @@ export function Status() {
                                 <div className="ml-2 border-l border-[#333] pl-3 mt-2 space-y-2">
                                   {inc.updates.map(u => (
                                     <div key={u.id} className="text-xs">
-                                      <span className="text-[#555]">{new Date(u.created_at).toLocaleTimeString()}</span>
+                                      <span className="text-[#555]">{new Date(utc(u.created_at)).toLocaleTimeString()}</span>
                                       <span className="text-[#666] ml-2">[{s.statuses[u.status] || u.status}]</span>
                                       <p className="text-[#777] mt-0.5">{u.message}</p>
                                     </div>

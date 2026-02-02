@@ -155,9 +155,15 @@ export function Verify() {
               ) : allMatch ? (
                 <span>&#10003; {strings.verify.verified}</span>
               ) : rebuilding ? (
-                <span className="animate-pulse">{strings.verify.rebuilding}</span>
+                <span className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="animate-pulse">{strings.verify.rebuilding}</span>
+                  <a href="/status" className="text-yellow-400/70 hover:text-yellow-300 underline underline-offset-2">check status</a>
+                </span>
               ) : (
-                <span>&#10007; {strings.verify.mismatch}</span>
+                <span className="flex items-center justify-between flex-wrap gap-2">
+                  <span>&#10007; {strings.verify.mismatch}</span>
+                  <a href="/status" className="opacity-70 hover:opacity-100 underline underline-offset-2">check status</a>
+                </span>
               )}
             </div>
 
