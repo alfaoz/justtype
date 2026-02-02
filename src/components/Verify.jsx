@@ -96,8 +96,10 @@ export function Verify() {
   const jsAllMatch = manifest && github && computedJs && manifest.jsHash === github.jsHash && github.jsHash === computedJs;
   const cssAllMatch = manifest && github && computedCss && manifest.cssHash === github.cssHash && github.cssHash === computedCss;
   const allMatch = jsAllMatch && cssAllMatch;
+  const serverMatch = manifest && computedJs && computedCss && manifest.jsHash === computedJs && manifest.cssHash === computedCss;
   const done = manifest && computedJs && computedCss && (github || githubError);
-  const anyMismatch = done && !allMatch;
+  const rebuilding = done && serverMatch && !allMatch;
+  const realMismatch = done && !serverMatch;
 
   const toUnix = (iso) => Math.floor(new Date(iso).getTime() / 1000);
 
@@ -145,12 +147,15 @@ export function Verify() {
             <div className={`text-sm py-3 px-4 rounded border ${
               !done ? 'border-[#333] text-[#888]' :
               allMatch ? 'border-green-800/30 bg-green-900/10 text-green-400' :
+              rebuilding ? 'border-yellow-800/30 bg-yellow-900/10 text-yellow-400' :
               'border-red-800/30 bg-red-900/10 text-red-400'
             }`}>
               {!done ? (
                 <span className="animate-pulse">{strings.verify.computing}</span>
               ) : allMatch ? (
                 <span>&#10003; {strings.verify.verified}</span>
+              ) : rebuilding ? (
+                <span className="animate-pulse">{strings.verify.rebuilding}</span>
               ) : (
                 <span>&#10007; {strings.verify.mismatch}</span>
               )}

@@ -781,6 +781,7 @@ take care!
     description: 'verify that the code running on this site matches the open-source repository.',
     verified: 'all sources match',
     mismatch: 'mismatch detected',
+    rebuilding: 'server verified, waiting for github actions to rebuild...',
     computing: 'computing hashes...',
     error: 'failed to verify. try refreshing.',
     jsBundle: 'javascript bundle',
