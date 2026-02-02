@@ -69,7 +69,7 @@ export function Status() {
   };
 
   return (
-    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex flex-col" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] font-mono flex flex-col">
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
         body { font-family: 'JetBrains Mono', monospace; background-color: #111111; margin: 0; padding: 0; }
