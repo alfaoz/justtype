@@ -16,6 +16,8 @@ class RateLimiter {
     register: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
     login: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 per 15 minutes per IP
     forgotPassword: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
+    resetPassword: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 per 15 minutes per IP
+    resendVerification: { max: 1, windowMs: 60 * 1000 }, // 1 per 60 seconds per IP
     // Slate operations (user-based)
     createSlate: { max: 50, windowMs: 60 * 60 * 1000 }, // 50 per hour (reasonable for creates)
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
@@ -125,7 +127,7 @@ function createRateLimitMiddleware(operation) {
   return (req, res, next) => {
     // Use IP-based limiting for unauthenticated auth operations
     let identifier;
-    if (['register', 'login', 'forgotPassword', 'adminAuth', 'viewPublicSlate', 'requestDeviceCode'].includes(operation)) {
+    if (['register', 'login', 'forgotPassword', 'resetPassword', 'resendVerification', 'adminAuth', 'viewPublicSlate', 'requestDeviceCode'].includes(operation)) {
       // Get IP address - handle X-Forwarded-For with comma-separated IPs
       let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
 

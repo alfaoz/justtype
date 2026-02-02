@@ -11,7 +11,13 @@ import { CommandPalette } from './components/CommandPalette';
 import { CliPair } from './components/CliPair';
 import { Cli } from './components/Cli';
 import { Feedback } from './components/Feedback';
+import { Verify } from './components/Verify';
+import { RecoveryKeyModal } from './components/RecoveryKeyModal';
+import { PinSetupModal } from './components/PinSetupModal';
 import { API_URL } from './config';
+import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } from './crypto';
+import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
+import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
 
 export default function App() {
@@ -20,13 +26,19 @@ export default function App() {
   // We check if user might be logged in based on stored username
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
+  const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showRepublishModal, setShowRepublishModal] = useState(false);
   const [showGoogleSuccessModal, setShowGoogleSuccessModal] = useState(false);
   const [showGoogleErrorModal, setShowGoogleErrorModal] = useState(false);
+  const [pendingRecoveryPhrase, setPendingRecoveryPhrase] = useState(null);
+  const [recoveryKeyPending, setRecoveryKeyPending] = useState(false);
+  const [pendingMigrationKey, setPendingMigrationKey] = useState(null); // Google users needing PIN setup
+  const [showPinSetup, setShowPinSetup] = useState(false);
   const [googleErrorType, setGoogleErrorType] = useState('');
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState(null);
   const [authProvider, setAuthProvider] = useState(localStorage.getItem('justtype-auth-provider') || 'local');
@@ -71,15 +83,55 @@ export default function App() {
 
         if (response.ok) {
           const userData = await response.json();
+
+          // If user needs encryption migration, force re-login to trigger it
+          if (userData.requiresMigration) {
+            try {
+              await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+            } catch (e) { /* ignore */ }
+            setToken(null);
+            setUsername(null);
+            setEmail(null);
+            setEmailVerified(false);
+            localStorage.removeItem('justtype-username');
+            localStorage.removeItem('justtype-user-id');
+            localStorage.removeItem('justtype-email');
+            localStorage.removeItem('justtype-email-verified');
+            localStorage.removeItem('justtype-auth-provider');
+            setShowAuthModal(true);
+            return;
+          }
+
           setToken('authenticated'); // Confirm we're authenticated
           setUsername(userData.username);
+          setUserId(userData.id);
           setEmail(userData.email);
           setEmailVerified(userData.email_verified);
           setAuthProvider(userData.auth_provider || 'local');
           localStorage.setItem('justtype-auth-provider', userData.auth_provider || 'local');
           localStorage.setItem('justtype-username', userData.username);
+          localStorage.setItem('justtype-user-id', userData.id);
           localStorage.setItem('justtype-email', userData.email);
           localStorage.setItem('justtype-email-verified', userData.email_verified);
+
+          // If recovery key was never shown to user, redirect to account to regenerate
+          if (userData.recoveryKeyPending) {
+            setView('account');
+            setRecoveryKeyPending(true);
+          }
+
+          // Check if E2E user needs to unlock with PIN (missing IndexedDB key)
+          if (userData.e2eMigrated && userData.id) {
+            const existingKey = await getSlateKey(userData.id);
+            if (!existingKey) {
+              setShowPinSetup(true);
+            }
+          }
+
+          // Google user needing first-time PIN setup (not yet migrated)
+          if (userData.needsPinSetup) {
+            // They need to log in via Google OAuth to trigger migration first
+          }
         } else if (response.status === 401 || response.status === 403) {
           // Session is invalid, clear everything
           setToken(null);
@@ -87,6 +139,7 @@ export default function App() {
           setEmail(null);
           setEmailVerified(false);
           localStorage.removeItem('justtype-username');
+          localStorage.removeItem('justtype-user-id');
           localStorage.removeItem('justtype-email');
           localStorage.removeItem('justtype-email-verified');
           localStorage.removeItem('justtype-auth-provider');
@@ -204,6 +257,8 @@ export default function App() {
         setView('cli-info');
       } else if (path === '/feedback') {
         setView('feedback');
+      } else if (path === '/verify') {
+        setView('verify');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -343,22 +398,58 @@ export default function App() {
           body: JSON.stringify({ code: authCode })
         })
           .then(response => response.json())
-          .then(data => {
+          .then(async (data) => {
             if (data.user) {
-              setToken('authenticated'); // Marker only, actual auth is via cookie
+              setToken('authenticated');
               setUsername(data.user.username);
+              setUserId(data.user.id);
               setEmail(data.user.email);
               setEmailVerified(data.user.email_verified);
-              setAuthProvider('google');
-              localStorage.setItem('justtype-username', data.user.username);
-              localStorage.setItem('justtype-email', data.user.email);
-              localStorage.setItem('justtype-email-verified', data.user.email_verified);
-              localStorage.setItem('justtype-auth-provider', 'google');
               setShowAuthModal(false);
+              localStorage.setItem('justtype-user-id', data.user.id);
 
-              // Show welcome modal for new users
-              if (data.isNewUser) {
-                setShowGoogleSuccessModal(true);
+              // Handle E2E migration for Google users
+              if (data.migrationSlateKey) {
+                const keyBytes = Uint8Array.from(atob(data.migrationSlateKey), c => c.charCodeAt(0));
+                await saveSlateKey(data.user.id, keyBytes);
+                // Google users need to set a PIN to wrap their key
+                setPendingMigrationKey(keyBytes);
+                setShowPinSetup(true);
+              }
+
+              if (data.isNewUser && !data.migrationSlateKey) {
+                // New Google user: generate slate key, prompt for PIN
+                const { generateSlateKey } = await import('./crypto');
+                const newSlateKey = await generateSlateKey();
+                await saveSlateKey(data.user.id, newSlateKey);
+                setPendingMigrationKey(newSlateKey);
+                setShowPinSetup(true);
+              }
+
+              return fetch(`${API_URL}/auth/me`, { credentials: 'include' });
+            }
+          })
+          .then(response => response && response.json())
+          .then(async (userData) => {
+            if (userData && userData.username) {
+              setAuthProvider(userData.auth_provider || 'local');
+              localStorage.setItem('justtype-auth-provider', userData.auth_provider || 'local');
+              localStorage.setItem('justtype-username', userData.username);
+              localStorage.setItem('justtype-user-id', userData.id);
+              localStorage.setItem('justtype-email', userData.email);
+              localStorage.setItem('justtype-email-verified', userData.email_verified);
+
+              if (userData.recoveryKeyPending) {
+                setView('account');
+                setRecoveryKeyPending(true);
+              }
+
+              // Check if E2E user needs to unlock with PIN (missing IndexedDB key after storage clear)
+              if (userData.e2eMigrated && userData.id) {
+                const existingKey = await getSlateKey(userData.id);
+                if (!existingKey) {
+                  setShowPinSetup(true);
+                }
               }
             }
           })
@@ -383,20 +474,58 @@ export default function App() {
     }
   }, []); // Run once on mount, will detect URL params
 
-  const handleAuth = (authData) => {
+  const handleAuth = async (authData) => {
     // Token is now in HttpOnly cookie, we just track auth state
     setToken('authenticated');
     setUsername(authData.user.username);
+    setUserId(authData.user.id);
     setEmail(authData.user.email);
     setEmailVerified(authData.user.email_verified);
     // Only store non-sensitive user info in localStorage for display
     localStorage.setItem('justtype-username', authData.user.username);
+    localStorage.setItem('justtype-user-id', authData.user.id);
     localStorage.setItem('justtype-email', authData.user.email);
     localStorage.setItem('justtype-email-verified', authData.user.email_verified);
     setShowAuthModal(false);
+
+    // Show recovery key modal if provided (new signup or migration)
+    if (authData.recoveryPhrase) {
+      setPendingRecoveryPhrase(authData.recoveryPhrase);
+    } else {
+      // Check if recovery key was never shown (previous migration)
+      try {
+        const response = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
+        if (response.ok) {
+          const userData = await response.json();
+          setAuthProvider(userData.auth_provider || 'local');
+          localStorage.setItem('justtype-auth-provider', userData.auth_provider || 'local');
+          if (userData.recoveryKeyPending) {
+            setView('account');
+            setRecoveryKeyPending(true);
+          } else {
+            setRecoveryKeyPending(false);
+          }
+        }
+      } catch (e) { /* ignore */ }
+    }
+  };
+
+  const confirmLogout = () => {
+    setShowLogoutConfirm(true);
   };
 
   const handleLogout = async () => {
+    setShowLogoutConfirm(false);
+
+    // Clear slate key from IndexedDB
+    if (userId) {
+      try {
+        await deleteSlateKey(userId);
+      } catch (err) {
+        console.error('Failed to clear slate key:', err);
+      }
+    }
+
     // Delete session from database (cookie sent automatically)
     if (token) {
       try {
@@ -413,9 +542,11 @@ export default function App() {
     // Clear local state and storage
     setToken(null);
     setUsername(null);
+    setUserId(null);
     setEmail(null);
     setEmailVerified(false);
     localStorage.removeItem('justtype-username');
+    localStorage.removeItem('justtype-user-id');
     localStorage.removeItem('justtype-email');
     localStorage.removeItem('justtype-email-verified');
     localStorage.removeItem('justtype-auth-provider');
@@ -686,6 +817,10 @@ export default function App() {
     return <Feedback token={token} username={username} email={email} />;
   }
 
+  if (view === 'verify') {
+    return <Verify />;
+  }
+
   return (
     <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
 
@@ -900,6 +1035,7 @@ export default function App() {
           <Writer
             ref={writerRef}
             token={token}
+            userId={userId}
             currentSlate={currentSlate}
             onSlateChange={setCurrentSlate}
             onLogin={() => setShowAuthModal(true)}
@@ -921,10 +1057,16 @@ export default function App() {
             <Account
               token={token}
               username={username}
+              userId={userId}
               email={email}
               emailVerified={emailVerified}
               authProvider={authProvider}
-              onLogout={handleLogout}
+              onLogout={confirmLogout}
+              onForceLogout={handleLogout}
+              recoveryKeyPending={recoveryKeyPending}
+              onRecoveryKeyShown={(phrase) => {
+                setPendingRecoveryPhrase(phrase);
+              }}
               onEmailUpdate={(newEmail, verified) => {
                 setEmail(newEmail);
                 setEmailVerified(verified);
@@ -1097,6 +1239,138 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => setShowLogoutConfirm(false)}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg text-white mb-2">{strings.account.sessions.logoutConfirm.title}</h2>
+            <p className="text-[#888] text-sm mb-2">{strings.account.sessions.logoutConfirm.message}</p>
+            {(authProvider === 'google' || authProvider === 'both') && (
+              <p className="text-yellow-400/80 text-sm mb-4">{strings.account.sessions.logoutConfirm.pinWarning}</p>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors text-sm"
+              >
+                {strings.account.sessions.logoutConfirm.cancel}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex-1 px-4 py-2 bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+              >
+                {strings.account.sessions.logoutConfirm.confirm}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recovery Key Modal */}
+      {pendingRecoveryPhrase && (
+        <RecoveryKeyModal
+          recoveryPhrase={pendingRecoveryPhrase}
+          onAcknowledge={() => {
+            setPendingRecoveryPhrase(null);
+            setRecoveryKeyPending(false);
+            // Tell server user has seen their recovery key
+            fetch(`${API_URL}/account/acknowledge-recovery-key`, {
+              method: 'POST',
+              credentials: 'include'
+            }).catch(() => {});
+          }}
+        />
+      )}
+
+      {/* PIN Setup/Unlock Modal for Google users */}
+      {showPinSetup && pendingMigrationKey && (
+        <PinSetupModal
+          isSetup={true}
+          onSubmit={async (pin) => {
+            const encryptionSalt = generateSalt();
+            const pinDerivedKey = await deriveKey(pin, encryptionSalt, { pin: true });
+            const wrappedKey = await wrapKey(pendingMigrationKey, pinDerivedKey);
+            const recoveryPhrase = generateRecoveryPhrase(wordlist);
+            const recoverySalt = generateSalt();
+            const recoveryDerivedKey = await deriveKey(recoveryPhrase, recoverySalt);
+            const recoveryWrappedKey = await wrapKey(pendingMigrationKey, recoveryDerivedKey);
+            const response = await fetch(`${API_URL}/account/finalize-e2e-migration`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt }),
+            });
+            if (!response.ok) throw new Error('failed to save pin');
+            setShowPinSetup(false);
+            setPendingMigrationKey(null);
+            setPendingRecoveryPhrase(recoveryPhrase);
+          }}
+        />
+      )}
+
+      {/* PIN Unlock Modal for returning Google users */}
+      {showPinSetup && !pendingMigrationKey && userId && (
+        <PinSetupModal
+          isSetup={false}
+          onSubmit={async (pin) => {
+            const keyResponse = await fetch(`${API_URL}/account/wrapped-key`, { credentials: 'include' });
+            if (!keyResponse.ok) throw new Error('failed to get key data');
+            const keyData = await keyResponse.json();
+            const pinDerivedKey = await deriveKey(pin, keyData.encryptionSalt, { pin: true });
+            const slateKey = await unwrapKey(keyData.wrappedKey, pinDerivedKey);
+            await saveSlateKey(userId, slateKey);
+            setShowPinSetup(false);
+          }}
+          onRecover={async (recoveryPhrase, newPin) => {
+            // Fetch recovery-wrapped key from server
+            const keyResponse = await fetch(`${API_URL}/account/wrapped-key`, { credentials: 'include' });
+            if (!keyResponse.ok) throw new Error('failed to get key data');
+            const keyData = await keyResponse.json();
+
+            // Fetch recovery key data
+            const recoveryResponse = await fetch(`${API_URL}/account/recovery-data`, { credentials: 'include' });
+            if (!recoveryResponse.ok) throw new Error('failed to get recovery data');
+            const recoveryData = await recoveryResponse.json();
+
+            // Unwrap slate key with recovery phrase
+            const recoveryDerivedKey = await deriveKey(recoveryPhrase, recoveryData.recoverySalt);
+            let slateKey;
+            try {
+              slateKey = await unwrapKey(recoveryData.recoveryWrappedKey, recoveryDerivedKey);
+            } catch (err) {
+              throw new Error(strings.pin.recovery.errors.invalid);
+            }
+
+            // Re-wrap with new PIN
+            const newPinSalt = generateSalt();
+            const newPinDerivedKey = await deriveKey(newPin, newPinSalt, { pin: true });
+            const newPinWrappedKey = await wrapKey(slateKey, newPinDerivedKey);
+
+            // Generate new recovery key
+            const newRecoveryPhrase = generateRecoveryPhrase(wordlist);
+            const newRecoverySalt = generateSalt();
+            const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
+            const newRecoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
+
+            // Save to server
+            const resetResponse = await fetch(`${API_URL}/account/reset-pin`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt })
+            });
+            if (!resetResponse.ok) throw new Error('failed to save new pin');
+
+            // Save slate key locally
+            await saveSlateKey(userId, slateKey);
+            setShowPinSetup(false);
+
+            // Show new recovery key
+            setPendingRecoveryPhrase(newRecoveryPhrase);
+          }}
+        />
       )}
 
       {/* Command Palette */}

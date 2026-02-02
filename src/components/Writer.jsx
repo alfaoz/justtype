@@ -3,13 +3,17 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme } from '../themes';
+import { encryptContent, decryptContent } from '../crypto';
+import { getSlateKey } from '../keyStore';
 
-export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
+export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('ready');
   const [zenMode, setZenMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingFadeOut, setLoadingFadeOut] = useState(false);
+  const [contentFadeKey, setContentFadeKey] = useState(0);
   const [showPublishMenu, setShowPublishMenu] = useState(false);
   const [shareUrl, setShareUrl] = useState(null);
   const [showSaveMenu, setShowSaveMenu] = useState(false);
@@ -457,18 +461,33 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
       }
 
       const data = await response.json();
+      let slateContent;
+      if (data.encrypted && data.encryptedContent) {
+        // E2E: decrypt client-side
+        const slateKey = await getSlateKey(userId);
+        if (!slateKey) {
+          setIsLoading(false);
+          onLogin();
+          return;
+        }
+        slateContent = await decryptContent(data.encryptedContent, slateKey);
+      } else {
+        slateContent = data.content;
+      }
       setTitle(data.title);
-      setContent(data.content);
+      setContent(slateContent);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
-      // If slate was published before (has published_at) but is now unpublished, it's a draft
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
       setWasPublishedBeforeEdit(isPreviouslyPublishedDraft);
-      lastSavedContentRef.current = JSON.stringify({ content: data.content });
+      lastSavedContentRef.current = JSON.stringify({ content: slateContent });
       setHasUnsavedChanges(false);
-      setIsLoading(false);
+      setLoadingFadeOut(true);
+      setContentFadeKey(prev => prev + 1);
+      setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
     } catch (err) {
       console.error('Failed to load slate:', err);
       setIsLoading(false);
+      setLoadingFadeOut(false);
     }
   };
 
@@ -516,15 +535,27 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     setStatus('saving...');
 
     try {
-      // Extract title from first line of content
       const firstLine = content.split('\n')[0].trim();
       const titleToSave = firstLine || 'untitled slate';
+
+      // Try E2E encryption
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      let body;
+      if (slateKey) {
+        const encrypted = await encryptContent(content, slateKey);
+        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+        const charCount = content.length;
+        const sizeBytes = new TextEncoder().encode(content).length;
+        body = { title: titleToSave, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
+      } else {
+        body = { title: titleToSave, content };
+      }
 
       const response = await fetch(`${API_URL}/slates/${currentSlate.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ title: titleToSave, content }),
+        body: JSON.stringify(body),
       });
 
       // Check if encryption key is missing (server restarted)
@@ -595,11 +626,24 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
         ? `${API_URL}/slates/${currentSlate.id}`
         : `${API_URL}/slates`;
 
+      // Try E2E encryption
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      let body;
+      if (slateKey) {
+        const encrypted = await encryptContent(content, slateKey);
+        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+        const charCount = content.length;
+        const sizeBytes = new TextEncoder().encode(content).length;
+        body = { title: titleToSave, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
+      } else {
+        body = { title: titleToSave, content };
+      }
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ title: titleToSave, content }),
+        body: JSON.stringify(body),
       });
 
       // Check if encryption key is missing (server restarted)
@@ -711,11 +755,21 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     const isRepublish = wasPublishedBeforeEdit && !shareUrl;
 
     try {
+      // For E2E users publishing, send plaintext content for the public copy
+      const publishBody = { isPublished: !shareUrl };
+      if (!shareUrl) {
+        // Publishing — include plaintext for public copy (E2E users need this)
+        const slateKey = userId ? await getSlateKey(userId) : null;
+        if (slateKey) {
+          publishBody.publicContent = content;
+        }
+      }
+
       const response = await fetch(`${API_URL}/slates/${currentSlate.id}/publish`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ isPublished: !shareUrl }),
+        body: JSON.stringify(publishBody),
       });
 
       const data = await response.json();
@@ -924,13 +978,13 @@ export const Writer = forwardRef(({ token, currentSlate, onSlateChange, onLogin,
     <div className="relative flex flex-col bg-[#111111] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
       {isLoading && (
-        <div className="absolute inset-0 bg-[#111111] flex items-center justify-center z-50">
-          <div className="text-[#666] text-sm">loading slate...</div>
+        <div className={`absolute inset-0 bg-[#111111] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
+          <div className="text-[#666] text-sm animate-pulse">loading slate...</div>
         </div>
       )}
 
       {/* WRITING AREA */}
-      <main className="flex-grow flex justify-center w-full bg-[#111111] overflow-y-auto">
+      <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[#111111] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
         <textarea
           ref={textareaRef}
           value={content}

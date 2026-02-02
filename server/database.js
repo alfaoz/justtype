@@ -391,6 +391,54 @@ try {
   `);
   console.log('✓ Notification system tables initialized');
 
+  // Add key-wrapping columns for encryption architecture upgrade
+  const userColsFinal = db.pragma('table_info(users)');
+  const hasWrappedKey = userColsFinal.some(col => col.name === 'wrapped_key');
+  const hasRecoveryWrappedKey = userColsFinal.some(col => col.name === 'recovery_wrapped_key');
+  const hasRecoverySalt = userColsFinal.some(col => col.name === 'recovery_salt');
+  const hasKeyMigrated = userColsFinal.some(col => col.name === 'key_migrated');
+
+  if (!hasWrappedKey) {
+    db.exec(`ALTER TABLE users ADD COLUMN wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added wrapped_key column');
+  }
+  if (!hasRecoveryWrappedKey) {
+    db.exec(`ALTER TABLE users ADD COLUMN recovery_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added recovery_wrapped_key column');
+  }
+  if (!hasRecoverySalt) {
+    db.exec(`ALTER TABLE users ADD COLUMN recovery_salt TEXT;`);
+    console.log('✓ Database migrated: Added recovery_salt column');
+  }
+  if (!hasKeyMigrated) {
+    db.exec(`ALTER TABLE users ADD COLUMN key_migrated BOOLEAN DEFAULT 0;`);
+    console.log('✓ Database migrated: Added key_migrated column');
+  }
+
+  const hasRecoveryKeyShown = userColsFinal.some(col => col.name === 'recovery_key_shown');
+  if (!hasRecoveryKeyShown) {
+    db.exec(`ALTER TABLE users ADD COLUMN recovery_key_shown BOOLEAN DEFAULT 1;`);
+    console.log('✓ Database migrated: Added recovery_key_shown column');
+  }
+
+  const hasE2eMigrated = userColsFinal.some(col => col.name === 'e2e_migrated');
+  if (!hasE2eMigrated) {
+    db.exec(`ALTER TABLE users ADD COLUMN e2e_migrated INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added e2e_migrated column');
+  }
+
+  const hasPinWrappedKey = userColsFinal.some(col => col.name === 'pin_wrapped_key');
+  if (!hasPinWrappedKey) {
+    db.exec(`ALTER TABLE users ADD COLUMN pin_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE users ADD COLUMN pin_salt TEXT;`);
+    // Migrate existing Google E2E users: move wrapped_key → pin_wrapped_key
+    const googleE2eUsers = db.prepare(`SELECT id FROM users WHERE auth_provider = 'google' AND e2e_migrated = 1 AND wrapped_key IS NOT NULL`).all();
+    for (const user of googleE2eUsers) {
+      db.prepare(`UPDATE users SET pin_wrapped_key = wrapped_key, pin_salt = encryption_salt, wrapped_key = NULL, encryption_salt = NULL WHERE id = ?`).run(user.id);
+    }
+    console.log(`✓ Database migrated: Added pin_wrapped_key/pin_salt columns, migrated ${googleE2eUsers.length} Google E2E users`);
+  }
+
   // Create feedback table
   db.exec(`
     CREATE TABLE IF NOT EXISTS feedback (

@@ -14,10 +14,11 @@ const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
 const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogger');
 const { validateEmailForRegistration } = require('./emailValidator');
-const { createRateLimitMiddleware } = require('./rateLimiter');
+const { createRateLimitMiddleware, rateLimiter } = require('./rateLimiter');
 const { healthChecks } = require('./startupHealth');
 const { passport, decryptEncryptionKey } = require('./googleAuth');
 const stripeModule = require('./stripe');
+const { wordlist: bip39Wordlist } = require('./bip39-wordlist');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -211,6 +212,81 @@ const getCachedEncryptionKey = (userId) => {
   return null;
 };
 
+// Generate a 12-word BIP39 recovery phrase (128 bits of entropy)
+const generateRecoveryPhrase = () => {
+  const words = [];
+  for (let i = 0; i < 12; i++) {
+    const index = crypto.randomInt(0, bip39Wordlist.length);
+    words.push(bip39Wordlist[index]);
+  }
+  return words.join(' ');
+};
+
+// Wrap (encrypt) a key using AES-256-GCM
+const wrapKey = (keyToWrap, wrappingKey) => {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', wrappingKey, iv);
+  const encrypted = Buffer.concat([cipher.update(keyToWrap), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]).toString('base64');
+};
+
+// Unwrap (decrypt) a key using AES-256-GCM
+const unwrapKey = (wrappedKeyBase64, wrappingKey) => {
+  const data = Buffer.from(wrappedKeyBase64, 'base64');
+  const iv = data.slice(0, 16);
+  const authTag = data.slice(16, 32);
+  const encrypted = data.slice(32);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', wrappingKey, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+};
+
+// Generate a new random slate key and wrap it with both password and recovery phrase
+const setupKeyWrapping = (password, encryptionSalt) => {
+  const slateKey = crypto.randomBytes(32);
+  const passwordDerivedKey = deriveEncryptionKey(password, encryptionSalt);
+  const wrappedKey = wrapKey(slateKey, passwordDerivedKey);
+
+  const recoverySalt = crypto.randomBytes(32).toString('hex');
+  const recoveryPhrase = generateRecoveryPhrase();
+  const recoveryDerivedKey = deriveEncryptionKey(recoveryPhrase, recoverySalt);
+  const recoveryWrappedKey = wrapKey(slateKey, recoveryDerivedKey);
+
+  return { slateKey, wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey };
+};
+
+// Migrate an existing user from password-derived encryption to key-wrapping
+const migrateUserEncryption = async (userId, password, encryptionSalt) => {
+  const oldKey = deriveEncryptionKey(password, encryptionSalt);
+  const { slateKey, wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey } = setupKeyWrapping(password, encryptionSalt);
+
+  // Re-encrypt all user slates with the new slate key
+  const slates = db.prepare('SELECT id, b2_file_id FROM slates WHERE user_id = ?').all(userId);
+
+  for (const slate of slates) {
+    if (!slate.b2_file_id) continue;
+    try {
+      const content = await b2Storage.getSlate(slate.b2_file_id, oldKey);
+      const newFileId = await b2Storage.uploadSlate(`${userId}-${slate.id}-migrated-${Date.now()}`, content, slateKey);
+      db.prepare('UPDATE slates SET b2_file_id = ? WHERE id = ?').run(newFileId, slate.id);
+    } catch (err) {
+      console.error(`Failed to migrate slate #${slate.id} for user #${userId}:`, err);
+      throw new Error('Migration failed: could not re-encrypt slates');
+    }
+  }
+
+  // Store wrapped keys and mark as migrated
+  db.prepare(`
+    UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1, recovery_key_shown = 0
+    WHERE id = ?
+  `).run(wrappedKey, recoveryWrappedKey, recoverySalt, userId);
+
+  console.log(`Migration succeeded for user #${userId}: ${slates.length} slates re-encrypted`);
+
+  return { slateKey, recoveryPhrase };
+};
+
 // CORS configuration - allow our domain and CLI requests
 app.use(cors({
   origin: (origin, callback) => {
@@ -237,7 +313,19 @@ app.use(cookieParser());
 
 // Security headers with helmet.js
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable CSP to allow inline styles/scripts from Vite
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "https://challenges.cloudflare.com"],
+      frameSrc: ["https://challenges.cloudflare.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+    }
+  },
   crossOriginEmbedderPolicy: false // Allow embedding for public slates
 }));
 
@@ -797,8 +885,15 @@ const authenticateToken = (req, res, next) => {
 // Middleware to check if encryption key exists in cache
 // If missing (e.g., after server restart), force user to re-login
 const requireEncryptionKey = (req, res, next) => {
+  // E2E users: skip server-side encryption entirely — client handles it
+  const userCheck = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
+  if (userCheck && userCheck.e2e_migrated) {
+    req.e2e = true;
+    return next();
+  }
+
   // Check if user is a Google user with encrypted_key
-  const user = db.prepare('SELECT auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
+  const user = userCheck;
 
   if (user && (user.auth_provider === 'google' || user.auth_provider === 'both') && user.encrypted_key) {
     // Decrypt the encryption key for Google users
@@ -833,7 +928,7 @@ const requireEncryptionKey = (req, res, next) => {
 
 // Register
 app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('register'), async (req, res) => {
-  let { username, password, email, termsAccepted } = req.body;
+  let { username, password, email, termsAccepted, wrappedKey: clientWrappedKey, recoveryWrappedKey: clientRecoveryWrappedKey, recoverySalt: clientRecoverySalt, encryptionSalt: clientEncryptionSalt } = req.body;
 
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
@@ -843,10 +938,10 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
     return res.status(400).json({ error: 'You must accept the Terms and Conditions' });
   }
 
-  // Validate username: only lowercase a-z, 0-9, underscore
+  // Validate username: lowercase a-z, 0-9, underscore, dot, hyphen
   username = username.toLowerCase().trim();
-  if (!/^[a-z0-9_]+$/.test(username)) {
-    return res.status(400).json({ error: 'Username can only contain lowercase letters (a-z), numbers (0-9), and underscores (_)' });
+  if (!/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(username) || /[._-]{2}/.test(username)) {
+    return res.status(400).json({ error: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores' });
   }
 
   if (username.length < 3 || username.length > 20) {
@@ -886,10 +981,29 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
     // Create session
     createSession(result.lastInsertRowid, token, req);
 
-    // Derive and cache encryption key for this user
-    const salt = getOrCreateEncryptionSalt(result.lastInsertRowid);
-    const encryptionKey = deriveEncryptionKey(password, salt);
-    cacheEncryptionKey(result.lastInsertRowid, encryptionKey);
+    // E2E client-side encryption: client sends pre-wrapped keys
+    const isE2E = !!(clientWrappedKey && clientRecoveryWrappedKey && clientRecoverySalt && clientEncryptionSalt);
+    let recoveryPhrase = null;
+
+    if (isE2E) {
+      // Client generated keys — store them directly, no server-side key generation
+      db.prepare(`
+        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, encryption_salt = ?, key_migrated = 1, e2e_migrated = 1
+        WHERE id = ?
+      `).run(clientWrappedKey, clientRecoveryWrappedKey, clientRecoverySalt, clientEncryptionSalt, result.lastInsertRowid);
+    } else {
+      // Legacy server-side key setup (for non-E2E clients)
+      const salt = getOrCreateEncryptionSalt(result.lastInsertRowid);
+      const keyData = setupKeyWrapping(password, salt);
+      recoveryPhrase = keyData.recoveryPhrase;
+
+      db.prepare(`
+        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1
+        WHERE id = ?
+      `).run(keyData.wrappedKey, keyData.recoveryWrappedKey, keyData.recoverySalt, result.lastInsertRowid);
+
+      cacheEncryptionKey(result.lastInsertRowid, keyData.slateKey);
+    }
 
     // Set HttpOnly cookie for secure auth
     res.cookie('justtype_token', token, getAuthCookieOptions());
@@ -904,6 +1018,8 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
         email: email.toLowerCase(),
         email_verified: false
       },
+      recoveryPhrase,
+      e2e: isE2E,
       message: 'Account created! Check your email for a verification code.'
     });
   } catch (error) {
@@ -941,10 +1057,50 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Derive and cache encryption key for this user
+    // Handle encryption key based on E2E migration status
     const salt = getOrCreateEncryptionSalt(user.id);
-    const encryptionKey = deriveEncryptionKey(password, salt);
-    cacheEncryptionKey(user.id, encryptionKey);
+    let encryptionKey;
+    let recoveryPhrase = null;
+    let migrationSlateKey = null;
+
+    if (user.e2e_migrated) {
+      // E2E user: don't unwrap on server. Client will unwrap locally.
+      // No server-side caching needed.
+    } else if (!user.key_migrated) {
+      // Legacy user: migrate from password-derived key to key-wrapping
+      try {
+        const migrationResult = await migrateUserEncryption(user.id, password, salt);
+        encryptionKey = migrationResult.slateKey;
+        recoveryPhrase = migrationResult.recoveryPhrase;
+        // Provide slate key to client for E2E migration
+        migrationSlateKey = Buffer.from(encryptionKey).toString('base64');
+        // Don't mark e2e_migrated yet — client will finalize after re-wrapping
+        cacheEncryptionKey(user.id, encryptionKey);
+      } catch (err) {
+        console.error(`Migration failed for user #${user.id}:`, err.message, err.stack);
+        // Fall back to old behavior so user isn't locked out
+        encryptionKey = deriveEncryptionKey(password, salt);
+        cacheEncryptionKey(user.id, encryptionKey);
+      }
+    } else {
+      // Migrated (key-wrapped) but not yet E2E: unwrap and provide to client
+      const passwordDerivedKey = deriveEncryptionKey(password, salt);
+      try {
+        encryptionKey = unwrapKey(user.wrapped_key, passwordDerivedKey);
+        // Provide slate key to client for E2E migration
+        migrationSlateKey = Buffer.from(encryptionKey).toString('base64');
+        // Don't mark e2e_migrated yet — client will finalize after re-wrapping
+        cacheEncryptionKey(user.id, encryptionKey);
+      } catch (err) {
+        console.error(`Key unwrap failed for user #${user.id}:`, err);
+        return res.status(401).json({ error: 'Failed to decrypt encryption key. Your password may have changed externally.' });
+      }
+    }
+
+    // Only cache server-side if NOT e2e migrated (fallback path)
+    if (encryptionKey && !migrationSlateKey) {
+      cacheEncryptionKey(user.id, encryptionKey);
+    }
 
     // Check email verification - if not verified, send special response
     if (!user.email_verified) {
@@ -967,6 +1123,11 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
           email: user.email,
           email_verified: false
         },
+        recoveryPhrase,
+        migrationSlateKey,
+        wrappedKey: user.e2e_migrated ? user.wrapped_key : undefined,
+        encryptionSalt: user.e2e_migrated ? user.encryption_salt : undefined,
+        e2e: !!user.e2e_migrated,
         requiresVerification: true
       });
     }
@@ -989,7 +1150,12 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
         username: user.username,
         email: user.email,
         email_verified: user.email_verified
-      }
+      },
+      recoveryPhrase,
+      migrationSlateKey,
+      wrappedKey: user.e2e_migrated ? user.wrapped_key : undefined,
+      encryptionSalt: user.e2e_migrated ? user.encryption_salt : undefined,
+      e2e: !!user.e2e_migrated
     });
   } catch (error) {
     res.status(500).json({ error: 'Login failed' });
@@ -1051,19 +1217,30 @@ app.post('/api/auth/verify-email', async (req, res) => {
 // Get current user info
 app.get('/api/auth/me', authenticateToken, (req, res) => {
   try {
-    const user = db.prepare('SELECT id, username, email, email_verified, auth_provider FROM users WHERE id = ?').get(req.user.id);
+    const user = db.prepare('SELECT id, username, email, email_verified, auth_provider, key_migrated, recovery_key_shown FROM users WHERE id = ?').get(req.user.id);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({
+    const userFull = db.prepare('SELECT e2e_migrated FROM users WHERE id = ?').get(req.user.id);
+    const responseData = {
       id: user.id,
       username: user.username,
       email: user.email,
       email_verified: user.email_verified,
-      auth_provider: user.auth_provider || 'local'
-    });
+      auth_provider: user.auth_provider || 'local',
+      requiresMigration: !user.key_migrated && user.auth_provider !== 'google',
+      recoveryKeyPending: user.key_migrated && !user.recovery_key_shown && user.auth_provider !== 'google',
+      e2eMigrated: !!(userFull && userFull.e2e_migrated),
+      needsPinSetup: (user.auth_provider === 'google') && !userFull?.e2e_migrated && !user.key_migrated
+    };
+
+    if (responseData.recoveryKeyPending) {
+      console.log(`[auth/me] User #${user.id} has recoveryKeyPending=true (key_migrated=${user.key_migrated}, recovery_key_shown=${user.recovery_key_shown})`);
+    }
+
+    res.json(responseData);
   } catch (error) {
     console.error('Get user info error:', error);
     res.status(500).json({ error: 'Failed to get user info' });
@@ -1372,7 +1549,7 @@ app.get('/cli-auth', (req, res) => {
 });
 
 // Resend verification email
-app.post('/api/auth/resend-verification', async (req, res) => {
+app.post('/api/auth/resend-verification', createRateLimitMiddleware('resendVerification'), async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -1439,6 +1616,114 @@ app.post('/api/auth/forgot-password', verifyTurnstileToken, createRateLimitMiddl
 });
 
 // Reset password
+// Reset password with recovery key (preserves slates)
+// Get recovery data for E2E client-side password reset
+app.post('/api/auth/recovery-data', createRateLimitMiddleware('resetPassword'), (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: 'Email and code are required' });
+  }
+  const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt, encryption_salt, e2e_migrated FROM users WHERE email = ? AND reset_token = ?')
+    .get(email.toLowerCase(), code);
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid reset code' });
+  }
+  res.json({
+    recoveryWrappedKey: user.recovery_wrapped_key,
+    recoverySalt: user.recovery_salt,
+    encryptionSalt: user.encryption_salt,
+    e2e: !!user.e2e_migrated
+  });
+});
+
+app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('resetPassword'), async (req, res) => {
+  const { email, code, newPassword, recoveryPhrase,
+    newWrappedKey: clientNewWrappedKey, newRecoveryWrappedKey: clientNewRecoveryWrappedKey,
+    newRecoverySalt: clientNewRecoverySalt, newEncryptionSalt: clientNewEncryptionSalt } = req.body;
+
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: 'Email, code, and new password are required' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE email = ? AND reset_token = ?').get(email.toLowerCase(), code);
+
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid reset code' });
+    }
+
+    if (new Date(user.reset_code_expires) < new Date()) {
+      return res.status(400).json({ error: 'Reset code has expired' });
+    }
+
+    if (!user.key_migrated || !user.recovery_wrapped_key || !user.recovery_salt) {
+      return res.status(400).json({ error: 'Account does not have a recovery key configured. Use the standard reset instead.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    if (user.e2e_migrated && clientNewWrappedKey && clientNewRecoveryWrappedKey) {
+      // E2E user: client did all unwrap/rewrap locally
+      const updateFields = [hashedPassword, clientNewWrappedKey, clientNewRecoveryWrappedKey, clientNewRecoverySalt];
+      let sql = `UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?`;
+      if (clientNewEncryptionSalt) {
+        sql += `, encryption_salt = ?`;
+        updateFields.push(clientNewEncryptionSalt);
+      }
+      sql += `, reset_token = NULL, reset_code_expires = NULL WHERE id = ?`;
+      updateFields.push(user.id);
+      db.prepare(sql).run(...updateFields);
+    } else {
+      // Non-E2E: server-side unwrap/rewrap
+      if (!recoveryPhrase) {
+        return res.status(400).json({ error: 'Recovery key is required' });
+      }
+
+      let slateKey;
+      try {
+        const recoveryDerivedKey = deriveEncryptionKey(recoveryPhrase.trim().toLowerCase(), user.recovery_salt);
+        slateKey = unwrapKey(user.recovery_wrapped_key, recoveryDerivedKey);
+      } catch (err) {
+        return res.status(400).json({ error: 'Invalid recovery key. Please check your recovery phrase and try again.' });
+      }
+
+      const salt = user.encryption_salt || getOrCreateEncryptionSalt(user.id);
+      const newPasswordKey = deriveEncryptionKey(newPassword, salt);
+      const newWrappedKey = wrapKey(slateKey, newPasswordKey);
+
+      const newRecoverySalt = crypto.randomBytes(32).toString('hex');
+      const newRecoveryPhrase = generateRecoveryPhrase();
+      const newRecoveryKey = deriveEncryptionKey(newRecoveryPhrase, newRecoverySalt);
+      const newRecoveryWrappedKey = wrapKey(slateKey, newRecoveryKey);
+
+      db.prepare(`
+        UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?,
+        reset_token = NULL, reset_code_expires = NULL WHERE id = ?
+      `).run(hashedPassword, newWrappedKey, newRecoveryWrappedKey, newRecoverySalt, user.id);
+    }
+
+    // Invalidate all existing sessions
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    encryptionKeyCache.delete(user.id);
+
+    res.json({
+      message: 'Password reset successfully! Your slates are preserved.',
+      // For E2E, client already has the recovery phrase; for non-E2E, server returns it
+      recoveryPhrase: user.e2e_migrated ? undefined : (recoveryPhrase ? undefined : null),
+      recoveryWrappedKey: user.e2e_migrated ? undefined : undefined,
+      e2e: !!user.e2e_migrated
+    });
+  } catch (error) {
+    console.error('Recovery password reset error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// Reset password without recovery key (destructive - wipes all slates)
 app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'), async (req, res) => {
   const { email, code, newPassword } = req.body;
 
@@ -1457,17 +1742,41 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
       return res.status(400).json({ error: 'Invalid reset code' });
     }
 
-    // Check if code is expired
     if (new Date(user.reset_code_expires) < new Date()) {
       return res.status(400).json({ error: 'Reset code has expired' });
     }
 
-    // Hash new password and clear reset code
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    db.prepare('UPDATE users SET password = ?, reset_token = NULL, reset_code_expires = NULL WHERE id = ?')
-      .run(hashedPassword, user.id);
+    // Delete all user slates from B2 and DB
+    const slates = db.prepare('SELECT id, b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(user.id);
+    for (const slate of slates) {
+      try {
+        if (slate.b2_file_id) await b2Storage.deleteSlate(slate.b2_file_id);
+        if (slate.b2_public_file_id) await b2Storage.deleteSlate(slate.b2_public_file_id);
+      } catch (err) {
+        console.error(`Failed to delete B2 file for slate #${slate.id}:`, err);
+      }
+    }
+    db.prepare('DELETE FROM slates WHERE user_id = ?').run(user.id);
 
-    res.json({ message: 'Password reset successfully!' });
+    // Set up fresh encryption with new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const salt = user.encryption_salt || getOrCreateEncryptionSalt(user.id);
+    const { wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey } = setupKeyWrapping(newPassword, salt);
+
+    db.prepare(`
+      UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?,
+      key_migrated = 1, storage_used = 0, reset_token = NULL, reset_code_expires = NULL WHERE id = ?
+    `).run(hashedPassword, wrappedKey, recoveryWrappedKey, recoverySalt, user.id);
+
+    // Invalidate all existing sessions
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    encryptionKeyCache.delete(user.id);
+
+    res.json({
+      message: 'Password reset successfully. All slates have been deleted.',
+      recoveryPhrase,
+      slatesDeleted: slates.length
+    });
   } catch (error) {
     console.error('Password reset error:', error);
     res.status(500).json({ error: 'Failed to reset password' });
@@ -1510,11 +1819,24 @@ app.get('/auth/google/callback',
       // Create session in database
       createSession(req.user.id, token, req);
 
-      // Cache encryption key for Google users
-      if (req.user.encrypted_key) {
-        const encryptionKey = decryptEncryptionKey(req.user.encrypted_key);
+      // Handle encryption key for Google users
+      let migrationSlateKey = null;
+      const userRecord = db.prepare('SELECT e2e_migrated, encrypted_key, wrapped_key, encryption_salt FROM users WHERE id = ?').get(req.user.id);
+
+      if (userRecord && !userRecord.e2e_migrated && userRecord.encrypted_key) {
+        // Google user not yet E2E migrated: decrypt key and pass to client (one-time)
+        const encryptionKey = decryptEncryptionKey(userRecord.encrypted_key);
+        migrationSlateKey = Buffer.from(encryptionKey).toString('base64');
+        // Don't mark e2e_migrated yet — client will finalize after PIN setup
         cacheEncryptionKey(req.user.id, encryptionKey);
+      } else if (userRecord && !userRecord.e2e_migrated) {
+        // Non-Google legacy: cache for backward compat
+        if (req.user.encrypted_key) {
+          const encryptionKey = decryptEncryptionKey(req.user.encrypted_key);
+          cacheEncryptionKey(req.user.id, encryptionKey);
+        }
       }
+      // E2E users: no server-side caching
 
       // Generate one-time auth code (prevents token/email exposure in URL)
       const authCode = generateAuthCode({
@@ -1523,7 +1845,9 @@ app.get('/auth/google/callback',
         username: req.user.username,
         email: req.user.email,
         emailVerified: req.user.email_verified,
-        isNewUser
+        isNewUser,
+        migrationSlateKey,
+        e2e: !!userRecord?.e2e_migrated
       });
 
       // Redirect with only the one-time code (no sensitive data in URL)
@@ -1559,7 +1883,9 @@ app.post('/api/auth/exchange-code', async (req, res) => {
       email: authData.email,
       email_verified: authData.emailVerified
     },
-    isNewUser: authData.isNewUser
+    isNewUser: authData.isNewUser,
+    migrationSlateKey: authData.migrationSlateKey || undefined,
+    e2e: authData.e2e || false
   });
 });
 
@@ -1693,6 +2019,13 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
       return res.status(404).json({ error: 'Slate not found' });
     }
 
+    if (req.e2e) {
+      // E2E user: download raw encrypted blob from B2, return as base64
+      const rawData = await b2Storage.downloadRawFile(slate.b2_file_id);
+      const encryptedContent = rawData.toString('base64');
+      return res.json({ ...slate, encryptedContent, encrypted: true });
+    }
+
     // Use encryption key from middleware (already verified to exist)
     const encryptionKey = slate.encryption_version === 1 ? req.encryptionKey : null;
 
@@ -1714,14 +2047,21 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 
 // Create new slate
 app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
-  const { title, content } = req.body;
+  const { title, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
 
-  if (!title || !content) {
+  const isE2E = req.e2e && encryptedContent;
+
+  if (!title || (!content && !encryptedContent)) {
     return res.status(400).json({ error: 'Title and content required' });
   }
 
+  // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
+  if (req.e2e && !encryptedContent) {
+    return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+  }
+
   // Check content size (5 MB limit)
-  const contentSize = Buffer.byteLength(content, 'utf8');
+  const contentSize = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
   const maxSize = 5 * 1024 * 1024; // 5 MB
   if (contentSize > maxSize) {
     return res.status(413).json({
@@ -1742,24 +2082,32 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
       return res.status(403).json({ error: 'Slate limit reached (50 max). Delete some slates to create new ones.' });
     }
 
-    // Use encryption key from middleware (already verified to exist)
-    const encryptionKey = req.encryptionKey;
-
-    // Upload content to B2 (encrypted)
     const slateId = `${req.user.id}-${Date.now()}`;
-    const b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
+    let b2FileId;
+    let wordCount, charCount, sizeBytes;
 
-    // Calculate stats
-    const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-    const charCount = content.length;
-    const sizeBytes = Buffer.byteLength(content, 'utf8');
+    if (isE2E) {
+      // E2E: upload pre-encrypted blob directly
+      const encryptedBuffer = Buffer.from(encryptedContent, 'base64');
+      b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
+      wordCount = clientWordCount || 0;
+      charCount = clientCharCount || 0;
+      sizeBytes = clientSizeBytes || 0;
+    } else {
+      // Legacy: server encrypts
+      const encryptionKey = req.encryptionKey;
+      b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
+      wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+      charCount = content.length;
+      sizeBytes = Buffer.byteLength(content, 'utf8');
+    }
 
     // Save metadata to database with encryption_version = 1
     const stmt = db.prepare(`
       INSERT INTO slates (user_id, title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(req.user.id, title, b2FileId, wordCount, charCount, sizeBytes, encryptionKey ? 1 : 0);
+    const result = stmt.run(req.user.id, title, b2FileId, wordCount, charCount, sizeBytes, 1);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -1790,10 +2138,19 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
 // Update slate
 app.put('/api/slates/:id', authenticateToken, async (req, res) => {
-  const { title, content } = req.body;
+  const { title, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
+
+  // Determine if E2E
+  const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
+  const isE2E = userE2E && userE2E.e2e_migrated && encryptedContent;
+
+  // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
+  if (userE2E && userE2E.e2e_migrated && !encryptedContent && content) {
+    return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+  }
 
   // Check content size (5 MB limit)
-  const contentSize = Buffer.byteLength(content, 'utf8');
+  const contentSize = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content || '', 'utf8');
   const maxSize = 5 * 1024 * 1024; // 5 MB
   if (contentSize > maxSize) {
     return res.status(413).json({
@@ -1822,15 +2179,11 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     // Get encryption key - handle based on slate type and user auth method
     let encryptionKey = null;
 
-    if (!slate.is_system_slate) {
-      // Normal slates need encryption
-      // Check if user is a Google user with encrypted_key
-      const user = db.prepare('SELECT auth_provider, encrypted_key, encryption_salt FROM users WHERE id = ?').get(req.user.id);
-
-      if (user && (user.auth_provider === 'google' || user.auth_provider === 'both') && user.encrypted_key) {
-        // Decrypt the encryption key for Google users
+    if (!isE2E && !slate.is_system_slate) {
+      // Non-E2E: normal slates need server-side encryption
+      if (userE2E && (userE2E.auth_provider === 'google' || userE2E.auth_provider === 'both') && userE2E.encrypted_key) {
         try {
-          encryptionKey = decryptEncryptionKey(user.encrypted_key);
+          encryptionKey = decryptEncryptionKey(userE2E.encrypted_key);
         } catch (error) {
           console.error('Failed to decrypt Google user encryption key:', error);
           return res.status(500).json({
@@ -1839,7 +2192,6 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
           });
         }
       } else {
-        // Password-based users: check cache
         encryptionKey = getCachedEncryptionKey(req.user.id);
         if (!encryptionKey) {
           return res.status(401).json({
@@ -1860,14 +2212,12 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     }
 
     // Auto-unpublish if slate is currently published (unless it's a system slate)
-    // This prevents accidentally publishing work-in-progress changes
     let wasUnpublished = false;
     let newPublicFileId = slate.b2_public_file_id;
 
     if (slate.is_published && !slate.is_system_slate) {
       wasUnpublished = true;
 
-      // Delete public B2 copy if it exists
       if (slate.b2_public_file_id) {
         try {
           await b2Storage.deleteSlate(slate.b2_public_file_id);
@@ -1882,12 +2232,14 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     let b2FileId;
 
     if (slate.is_system_slate) {
-      // System slates: upload once unencrypted, use same file for both private and public
       const slateId = `system-${slate.share_id}-${Date.now()}`;
       b2FileId = await b2Storage.uploadSlate(slateId, content, null);
-      newPublicFileId = b2FileId; // Same file for both
+      newPublicFileId = b2FileId;
+    } else if (isE2E) {
+      const slateId = `${req.user.id}-${Date.now()}`;
+      const encryptedBuffer = Buffer.from(encryptedContent, 'base64');
+      b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
     } else {
-      // Normal slates: upload encrypted
       const slateId = `${req.user.id}-${Date.now()}`;
       b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
     }
@@ -1899,7 +2251,6 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
       console.warn('Failed to delete old B2 file:', err);
     }
 
-    // Delete old public file if it's different from the main file
     if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) {
       try {
         await b2Storage.deleteSlate(slate.b2_public_file_id);
@@ -1909,13 +2260,12 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     }
 
     // Calculate stats
-    const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-    const charCount = content.length;
-    const sizeBytes = Buffer.byteLength(content, 'utf8');
+    const wordCount = isE2E ? (clientWordCount || 0) : (content.trim() === '' ? 0 : content.trim().split(/\s+/).length);
+    const charCount = isE2E ? (clientCharCount || 0) : content.length;
+    const sizeBytes = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
 
-    // Update database - keep system slates published, unpublish normal slates
     const newPublishedState = slate.is_system_slate ? slate.is_published : 0;
-    const encryptionVersion = slate.is_system_slate ? 0 : (encryptionKey ? 1 : 0);
+    const encryptionVersion = slate.is_system_slate ? 0 : 1;
     const stmt = db.prepare(`
       UPDATE slates
       SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
@@ -1953,7 +2303,7 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
 
 // Publish/unpublish slate
 app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
-  const { isPublished } = req.body;
+  const { isPublished, publicContent } = req.body;
 
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -1972,9 +2322,15 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
 
     // If publishing an encrypted slate, create an unencrypted public copy
     if (isPublished && slate.encryption_version === 1) {
-      // Get the encrypted content first (using key from middleware)
-      const encryptionKey = req.encryptionKey;
-      const content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
+      let content;
+      if (req.e2e && publicContent) {
+        // E2E user: client sends plaintext for public copy
+        content = publicContent;
+      } else {
+        // Non-E2E: server decrypts
+        const encryptionKey = req.encryptionKey;
+        content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
+      }
 
       // Upload unencrypted version for public viewing
       const publicSlateId = `${req.user.id}-public-${Date.now()}`;
@@ -2147,11 +2503,20 @@ app.post('/api/admin/auth', async (req, res) => {
   const isValid = password === adminSecret;
 
   if (isValid) {
-    // No expiry - token lasts forever
-    const adminToken = jwt.sign({ admin: true }, JWT_SECRET);
+    const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
 
     // Log admin login
     logAdminAction('admin_login', null, null, 'Admin logged in', req.adminIp || req.ip);
+
+    // Email admin token if ADMIN_EMAIL is configured
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (adminEmail) {
+      emailService.sendEmail({
+        to: adminEmail,
+        subject: 'justtype admin token issued',
+        text: `A new admin token was issued.\n\nToken: ${adminToken}\n\nExpires in 24 hours.\nIP: ${req.adminIp || req.ip}\nTime: ${new Date().toISOString()}`
+      }).catch(err => console.error('Failed to send admin token email:', err));
+    }
 
     return res.json({ token: adminToken, message: 'Admin authenticated' });
   }
@@ -3139,7 +3504,7 @@ app.delete('/api/admin/feedback/:id', authenticateAdmin, (req, res) => {
 
 // Change password
 app.post('/api/account/change-password', authenticateToken, async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
+  const { currentPassword, newPassword, newWrappedKey: clientNewWrappedKey, newEncryptionSalt, newRecoveryWrappedKey, newRecoverySalt } = req.body;
 
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Current password and new password are required' });
@@ -3164,12 +3529,244 @@ app.post('/api/account/change-password', authenticateToken, async (req, res) => 
 
     // Hash and update new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.user.id);
+
+    if (user.e2e_migrated && !clientNewWrappedKey) {
+      // E2E user must provide client-wrapped key — server cannot re-wrap with matching iterations
+      return res.status(400).json({ error: 'Client-side key re-wrap required. Please log out and log back in before changing your password.' });
+    } else if (user.e2e_migrated && clientNewWrappedKey) {
+      // E2E user: client re-wrapped the key, just store it
+      const fields = ['password = ?', 'wrapped_key = ?'];
+      const params = [hashedPassword, clientNewWrappedKey];
+      if (newEncryptionSalt) {
+        fields.push('encryption_salt = ?');
+        params.push(newEncryptionSalt);
+      }
+      if (newRecoveryWrappedKey && newRecoverySalt) {
+        fields.push('recovery_wrapped_key = ?', 'recovery_salt = ?', 'recovery_key_shown = 0');
+        params.push(newRecoveryWrappedKey, newRecoverySalt);
+      }
+      params.push(req.user.id);
+      db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    } else if (user.key_migrated && user.wrapped_key) {
+      // Non-E2E migrated user: server re-wraps
+      const salt = user.encryption_salt;
+      const oldPasswordKey = deriveEncryptionKey(currentPassword, salt);
+      const newPasswordKey = deriveEncryptionKey(newPassword, salt);
+
+      try {
+        const slateKey = unwrapKey(user.wrapped_key, oldPasswordKey);
+        const newWrappedKey = wrapKey(slateKey, newPasswordKey);
+
+        db.prepare('UPDATE users SET password = ?, wrapped_key = ? WHERE id = ?')
+          .run(hashedPassword, newWrappedKey, req.user.id);
+
+        cacheEncryptionKey(req.user.id, slateKey);
+      } catch (err) {
+        console.error('Key re-wrap failed during password change:', err);
+        return res.status(500).json({ error: 'Failed to update encryption key' });
+      }
+    } else {
+      db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.user.id);
+    }
 
     res.json({ message: 'Password changed successfully' });
   } catch (error) {
     console.error('Change password error:', error);
     res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Get wrapped key data for client-side PIN unlock
+app.get('/api/account/wrapped-key', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT wrapped_key, encryption_salt, pin_wrapped_key, pin_salt, e2e_migrated FROM users WHERE id = ?').get(req.user.id);
+    if (!user || !user.e2e_migrated) {
+      return res.status(404).json({ error: 'No wrapped key found' });
+    }
+    // Prefer PIN-wrapped key (for Google/PIN unlock), fall back to wrapped_key
+    const key = user.pin_wrapped_key || user.wrapped_key;
+    const salt = user.pin_wrapped_key ? user.pin_salt : user.encryption_salt;
+    if (!key || !salt) {
+      return res.status(404).json({ error: 'No wrapped key found' });
+    }
+    res.json({ wrappedKey: key, encryptionSalt: salt });
+  } catch (error) {
+    console.error('Get wrapped key error:', error);
+    res.status(500).json({ error: 'Failed to get key data' });
+  }
+});
+
+// Acknowledge recovery key was shown
+app.post('/api/account/acknowledge-recovery-key', authenticateToken, (req, res) => {
+  try {
+    db.prepare('UPDATE users SET recovery_key_shown = 1 WHERE id = ?').run(req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Acknowledge recovery key error:', error);
+    res.status(500).json({ error: 'Failed to acknowledge recovery key' });
+  }
+});
+
+// Finalize E2E migration — client sends re-wrapped keys after receiving migrationSlateKey
+app.post('/api/account/finalize-e2e-migration', authenticateToken, (req, res) => {
+  const { wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt } = req.body;
+  if (!wrappedKey || !encryptionSalt || !recoveryWrappedKey || !recoverySalt) {
+    return res.status(400).json({ error: 'Wrapped key, encryption salt, recovery wrapped key, and recovery salt are required' });
+  }
+  try {
+    const user = db.prepare('SELECT auth_provider FROM users WHERE id = ?').get(req.user.id);
+    const isGoogleUser = user && (user.auth_provider === 'google' || user.auth_provider === 'both');
+    if (isGoogleUser) {
+      // Google users: PIN-wrapped key goes to pin_wrapped_key columns
+      db.prepare(`
+        UPDATE users SET pin_wrapped_key = ?, pin_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 0, e2e_migrated = 1
+        WHERE id = ?
+      `).run(wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt, req.user.id);
+    } else {
+      db.prepare(`
+        UPDATE users SET wrapped_key = ?, encryption_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 0, e2e_migrated = 1
+        WHERE id = ?
+      `).run(wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt, req.user.id);
+    }
+    // Clear server-side cache — no longer needed for E2E users
+    encryptionKeyCache.delete(req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Finalize E2E migration error:', error);
+    res.status(500).json({ error: 'Failed to finalize migration' });
+  }
+});
+
+// Set password for Google-only users
+app.post('/api/account/set-password', authenticateToken, async (req, res) => {
+  const { password, wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt } = req.body;
+
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  if (!wrappedKey || !encryptionSalt || !recoveryWrappedKey || !recoverySalt) {
+    return res.status(400).json({ error: 'Wrapped key data required' });
+  }
+
+  try {
+    const user = db.prepare('SELECT auth_provider, username FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.auth_provider !== 'google') {
+      return res.status(400).json({ error: 'Password already set' });
+    }
+
+    // Check username isn't taken by another user (Google usernames may conflict)
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    db.prepare(`
+      UPDATE users SET password = ?, wrapped_key = ?, encryption_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?,
+        auth_provider = 'both', key_migrated = 1, recovery_key_shown = 0
+      WHERE id = ?
+    `).run(hashedPassword, wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt, req.user.id);
+
+    res.json({ success: true, username: user.username });
+  } catch (error) {
+    console.error('Set password error:', error);
+    res.status(500).json({ error: 'Failed to set password' });
+  }
+});
+
+// Regenerate recovery key
+app.post('/api/account/regenerate-recovery-key', authenticateToken, async (req, res) => {
+  const { password, newRecoveryWrappedKey: clientRecoveryWrappedKey, newRecoverySalt: clientRecoverySalt } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ error: 'Password is required' });
+  }
+
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) return res.status(401).json({ error: 'Incorrect password' });
+
+    if (!user.key_migrated || !user.wrapped_key) {
+      return res.status(400).json({ error: 'Account encryption not yet migrated. Please log out and log back in first.' });
+    }
+
+    if (user.e2e_migrated && clientRecoveryWrappedKey && clientRecoverySalt) {
+      // E2E user: client already wrapped the key, just store it
+      db.prepare('UPDATE users SET recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 1 WHERE id = ?')
+        .run(clientRecoveryWrappedKey, clientRecoverySalt, user.id);
+      return res.json({ success: true });
+    }
+
+    // Non-E2E: server generates recovery phrase and wraps
+    const salt = user.encryption_salt;
+    const passwordKey = deriveEncryptionKey(password, salt);
+    const slateKey = unwrapKey(user.wrapped_key, passwordKey);
+
+    const newRecoverySalt = crypto.randomBytes(32).toString('hex');
+    const newRecoveryPhrase = generateRecoveryPhrase();
+    const newRecoveryKey = deriveEncryptionKey(newRecoveryPhrase, newRecoverySalt);
+    const newRecoveryWrappedKey = wrapKey(slateKey, newRecoveryKey);
+
+    db.prepare('UPDATE users SET recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 1 WHERE id = ?')
+      .run(newRecoveryWrappedKey, newRecoverySalt, user.id);
+
+    res.json({ recoveryPhrase: newRecoveryPhrase });
+  } catch (error) {
+    console.error('Regenerate recovery key error:', error);
+    res.status(500).json({ error: 'Failed to regenerate recovery key' });
+  }
+});
+
+// Get recovery key data for authenticated user (for PIN reset)
+app.get('/api/account/recovery-data', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt FROM users WHERE id = ?').get(req.user.id);
+    if (!user || !user.recovery_wrapped_key || !user.recovery_salt) {
+      return res.status(404).json({ error: 'No recovery key configured' });
+    }
+    res.json({ recoveryWrappedKey: user.recovery_wrapped_key, recoverySalt: user.recovery_salt });
+  } catch (error) {
+    console.error('Get recovery data error:', error);
+    res.status(500).json({ error: 'Failed to get recovery data' });
+  }
+});
+
+// Reset PIN using recovery key (for Google users who forgot their PIN)
+app.post('/api/account/reset-pin', authenticateToken, async (req, res) => {
+  const { newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt } = req.body;
+
+  if (!newPinWrappedKey || !newPinSalt || !newRecoveryWrappedKey || !newRecoverySalt) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    if (!user.e2e_migrated) {
+      return res.status(400).json({ error: 'Account is not E2E encrypted' });
+    }
+
+    if (user.auth_provider === 'local') {
+      return res.status(400).json({ error: 'PIN reset is only for Google users' });
+    }
+
+    // Update PIN-wrapped key and recovery key
+    if (user.pin_wrapped_key) {
+      db.prepare(`
+        UPDATE users SET pin_wrapped_key = ?, pin_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 0 WHERE id = ?
+      `).run(newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt, user.id);
+    } else {
+      // Fallback: user might have wrapped_key as PIN key (pre-migration)
+      db.prepare(`
+        UPDATE users SET wrapped_key = ?, encryption_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?, recovery_key_shown = 0 WHERE id = ?
+      `).run(newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt, user.id);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Reset PIN error:', error);
+    res.status(500).json({ error: 'Failed to reset PIN' });
   }
 });
 

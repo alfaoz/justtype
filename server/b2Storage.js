@@ -246,6 +246,58 @@ class B2Storage {
     }
   }
 
+  // Download raw file bytes without decryption (for E2E users)
+  async downloadRawFile(fileId) {
+    await this.authorize();
+    try {
+      const response = await this.b2.downloadFileById({
+        fileId: fileId,
+        responseType: 'arraybuffer',
+      });
+      const data = Buffer.from(response.data);
+      b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
+      return data;
+    } catch (error) {
+      if (error.response && error.response.status === 401) {
+        this.authorized = false;
+        this.authExpiry = null;
+        await this.authorize();
+        const response = await this.b2.downloadFileById({
+          fileId: fileId,
+          responseType: 'arraybuffer',
+        });
+        const data = Buffer.from(response.data);
+        b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
+        return data;
+      }
+      b2Monitor.logError('downloadRawFile', error);
+      throw handleB2Error(error, 'downloadRawFile');
+    }
+  }
+
+  // Upload pre-encrypted blob to B2 (for E2E users)
+  async uploadRawSlate(slateId, encryptedBuffer) {
+    await this.authorize();
+    try {
+      const uploadUrlResponse = await this.b2.getUploadUrl({
+        bucketId: this.bucketId,
+      });
+      const fileName = `slates/${slateId}.enc`;
+      const response = await this.b2.uploadFile({
+        uploadUrl: uploadUrlResponse.data.uploadUrl,
+        uploadAuthToken: uploadUrlResponse.data.authorizationToken,
+        fileName: fileName,
+        data: encryptedBuffer,
+        mime: 'application/octet-stream',
+      });
+      b2Monitor.logClassC('uploadRawSlate', { slateId, bytes: encryptedBuffer.length });
+      return response.data.fileId;
+    } catch (error) {
+      b2Monitor.logError('uploadRawSlate', error);
+      throw handleB2Error(error, 'uploadRawSlate');
+    }
+  }
+
   async deleteSlate(fileId, fileName = null) {
     await this.authorize();
 

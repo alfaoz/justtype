@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
+import { RecoveryKeyModal } from './RecoveryKeyModal';
+import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase } from '../crypto';
+import { getSlateKey } from '../keyStore';
+import { wordlist } from '../bip39-wordlist';
 
-export function Account({ token, username, email, emailVerified, authProvider, onLogout, onEmailUpdate }) {
+export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, recoveryKeyPending, onRecoveryKeyShown }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -31,6 +35,13 @@ export function Account({ token, username, email, emailVerified, authProvider, o
   const [storageInfo, setStorageInfo] = useState(null);
   const [loadingStorage, setLoadingStorage] = useState(true);
 
+  // Recovery key
+  const [showRecoverySection, setShowRecoverySection] = useState(recoveryKeyPending || false);
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [regeneratingRecovery, setRegeneratingRecovery] = useState(false);
+  const [recoveryPhrase, setRecoveryPhrase] = useState(null);
+
   // Modal states
   const [showLogoutEverywhereModal, setShowLogoutEverywhereModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
@@ -47,6 +58,22 @@ export function Account({ token, username, email, emailVerified, authProvider, o
   const [unlinkSuccess, setUnlinkSuccess] = useState('');
   const [unlinkingGoogle, setUnlinkingGoogle] = useState(false);
   const [requestingUnlink, setRequestingUnlink] = useState(false);
+
+  // Set password for Google users
+  const [showSetPasswordModal, setShowSetPasswordModal] = useState(false);
+  const [showSetPasswordSuccess, setShowSetPasswordSuccess] = useState(false);
+  const [setPasswordNew, setSetPasswordNew] = useState('');
+  const [setPasswordConfirm, setSetPasswordConfirm] = useState('');
+  const [newPasswordError, setNewPasswordError] = useState('');
+  const [setPasswordStep, setSetPasswordStep] = useState('pin'); // 'pin' | 'password'
+  const [setPasswordPin, setSetPasswordPin] = useState(['', '', '', '', '', '']);
+  const [verifiedSlateKey, setVerifiedSlateKey] = useState(null);
+  const setPwPinRefs = useRef([]);
+  const [settingPassword, setSettingPassword] = useState(false);
+  const [setPasswordRecoveryPhrase, setSetPasswordRecoveryPhrase] = useState(null);
+  const [passwordBannerDismissed, setPasswordBannerDismissed] = useState(
+    localStorage.getItem('justtype-password-banner-dismissed') === 'true'
+  );
 
   // Export slates state
   const [exportingSlates, setExportingSlates] = useState(false);
@@ -187,7 +214,7 @@ export function Account({ token, username, email, emailVerified, authProvider, o
 
       if (response.ok) {
         // Immediately logout - this logs out everywhere including current device
-        onLogout();
+        (onForceLogout || onLogout)();
       } else {
         const data = await response.json();
         alert(data.error || strings.account.sessions.errors.logoutAllFailed);
@@ -249,6 +276,48 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     return ip;
   };
 
+  const handleRegenerateRecoveryKey = async (e) => {
+    e.preventDefault();
+    setRecoveryError('');
+    setRegeneratingRecovery(true);
+
+    try {
+      // Try E2E: generate recovery key client-side
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      let body = { password: recoveryPassword };
+      let clientRecoveryPhrase = null;
+
+      if (slateKey) {
+        clientRecoveryPhrase = generateRecoveryPhrase(wordlist);
+        const newRecoverySalt = generateSalt();
+        const recoveryDerivedKey = await deriveKey(clientRecoveryPhrase, newRecoverySalt);
+        const newRecoveryWrappedKey = await wrapKey(slateKey, recoveryDerivedKey);
+        body.newRecoveryWrappedKey = newRecoveryWrappedKey;
+        body.newRecoverySalt = newRecoverySalt;
+      }
+
+      const response = await fetch(`${API_URL}/account/regenerate-recovery-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setRecoveryPhrase(clientRecoveryPhrase || data.recoveryPhrase);
+        setRecoveryPassword('');
+      } else {
+        setRecoveryError(data.error || 'Failed to regenerate recovery key');
+      }
+    } catch (err) {
+      setRecoveryError('Failed to regenerate recovery key');
+    } finally {
+      setRegeneratingRecovery(false);
+    }
+  };
+
   const handleChangePassword = async (e) => {
     e.preventDefault();
     setPasswordError('');
@@ -267,23 +336,50 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     setChangingPassword(true);
 
     try {
+      // Try E2E: re-wrap key with new password client-side
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      const body = { currentPassword, newPassword };
+
+      if (slateKey) {
+        const newEncryptionSalt = generateSalt();
+        const newPasswordDerivedKey = await deriveKey(newPassword, newEncryptionSalt);
+        const newWrappedKey = await wrapKey(slateKey, newPasswordDerivedKey);
+        body.newWrappedKey = newWrappedKey;
+        body.newEncryptionSalt = newEncryptionSalt;
+
+        // Also regenerate recovery key
+        const newRecoveryPhrase = generateRecoveryPhrase(wordlist);
+        const newRecoverySalt = generateSalt();
+        const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
+        const newRecoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
+        body.newRecoveryWrappedKey = newRecoveryWrappedKey;
+        body.newRecoverySalt = newRecoverySalt;
+        // Store recovery phrase to show to user
+        body._recoveryPhrase = newRecoveryPhrase;
+      }
+
+      const recoveryPhraseToShow = body._recoveryPhrase;
+      delete body._recoveryPhrase;
+
       const response = await fetch(`${API_URL}/account/change-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          currentPassword,
-          newPassword
-        })
+        body: JSON.stringify(body)
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        setPasswordSuccess(strings.account.password.success);
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+        if (recoveryPhraseToShow) {
+          setRecoveryPhrase(recoveryPhraseToShow);
+          setShowRecoverySection(true);
+        } else {
+          setPasswordSuccess(strings.account.password.success);
+        }
       } else {
         setPasswordError(data.error || strings.account.password.errors.changeFailed);
       }
@@ -388,7 +484,7 @@ export function Account({ token, username, email, emailVerified, authProvider, o
       const data = await response.json();
 
       if (response.ok) {
-        onLogout();
+        (onForceLogout || onLogout)();
       } else {
         setDeleteError(data.error || 'Failed to delete account');
         setDeleting(false);
@@ -423,6 +519,95 @@ export function Account({ token, username, email, emailVerified, authProvider, o
     } catch (err) {
       alert('failed to initiate google linking');
     }
+  };
+
+  const handleVerifyPin = async () => {
+    setNewPasswordError('');
+    const pin = setPasswordPin.join('');
+    if (pin.length !== 6) {
+      setNewPasswordError(strings.account.googleAuth.setPassword.errors.pinRequired);
+      return;
+    }
+    setSettingPassword(true);
+    try {
+      const keyResponse = await fetch(`${API_URL}/account/wrapped-key`, { credentials: 'include' });
+      if (!keyResponse.ok) throw new Error('failed to get key data');
+      const keyData = await keyResponse.json();
+      const pinDerivedKey = await deriveKey(pin, keyData.encryptionSalt, { pin: true });
+      const slateKey = await unwrapKey(keyData.wrappedKey, pinDerivedKey);
+      setVerifiedSlateKey(slateKey);
+      setSetPasswordStep('password');
+      setNewPasswordError('');
+    } catch (err) {
+      setNewPasswordError(strings.account.googleAuth.setPassword.errors.wrongPin);
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    setNewPasswordError('');
+
+    if (setPasswordNew.length < 6) {
+      setNewPasswordError(strings.account.googleAuth.setPassword.errors.tooShort);
+      return;
+    }
+    if (setPasswordNew !== setPasswordConfirm) {
+      setNewPasswordError(strings.account.googleAuth.setPassword.errors.mismatch);
+      return;
+    }
+
+    setSettingPassword(true);
+    try {
+      const slateKey = verifiedSlateKey;
+      if (!slateKey) {
+        setNewPasswordError(strings.account.googleAuth.setPassword.errors.noKey);
+        setSettingPassword(false);
+        return;
+      }
+
+      // Wrap slate key with password
+      const encryptionSalt = generateSalt();
+      const passwordDerivedKey = await deriveKey(setPasswordNew, encryptionSalt);
+      const wrappedKey = await wrapKey(slateKey, passwordDerivedKey);
+
+      // Generate recovery key
+      const newRecoveryPhrase = generateRecoveryPhrase(wordlist);
+      const recoverySalt = generateSalt();
+      const recoveryDerivedKey = await deriveKey(newRecoveryPhrase, recoverySalt);
+      const recoveryWrappedKey = await wrapKey(slateKey, recoveryDerivedKey);
+
+      const response = await fetch(`${API_URL}/account/set-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password: setPasswordNew, wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setSetPasswordRecoveryPhrase(newRecoveryPhrase);
+        setShowSetPasswordModal(false);
+        setShowSetPasswordSuccess(true);
+        setSetPasswordNew('');
+        setSetPasswordConfirm('');
+        setSetPasswordStep('pin');
+        setSetPasswordPin(['', '', '', '', '', '']);
+        setVerifiedSlateKey(null);
+      } else {
+        setNewPasswordError(data.error || strings.account.googleAuth.setPassword.errors.failed);
+      }
+    } catch (err) {
+      setNewPasswordError(strings.account.googleAuth.setPassword.errors.failed);
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
+  const dismissPasswordBanner = () => {
+    setPasswordBannerDismissed(true);
+    localStorage.setItem('justtype-password-banner-dismissed', 'true');
   };
 
   const handleRequestUnlinkGoogle = async () => {
@@ -485,6 +670,27 @@ export function Account({ token, username, email, emailVerified, authProvider, o
       <div className="max-w-4xl mx-auto p-4 md:p-8">
         <h1 className="text-xl md:text-2xl text-white mb-8">{strings.account.title}</h1>
 
+        {/* Password banner for Google-only users */}
+        {authProvider === 'google' && !passwordBannerDismissed && (
+          <div className="mb-6 p-4 border border-yellow-400/20 bg-yellow-400/5 rounded flex items-center justify-between gap-4 animate-[fadeInUp_0.3s_ease-out]">
+            <p className="text-yellow-400/80 text-sm">{strings.account.googleAuth.setPassword.banner}</p>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={() => setShowSetPasswordModal(true)}
+                className="text-white text-sm hover:text-yellow-400 transition-colors"
+              >
+                {strings.account.googleAuth.setPassword.button}
+              </button>
+              <button
+                onClick={dismissPasswordBanner}
+                className="text-[#666] hover:text-white transition-colors text-xs"
+              >
+                {strings.account.googleAuth.setPassword.dismiss}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Main Info - Clean text-based layout */}
         <div className="mb-8 space-y-4 text-sm">
           {/* Username */}
@@ -531,6 +737,14 @@ export function Account({ token, username, email, emailVerified, authProvider, o
                   className="text-[#666] hover:text-white transition-colors text-xs"
                 >
                   + link google
+                </button>
+              )}
+              {authProvider === 'google' && (
+                <button
+                  onClick={() => setShowSetPasswordModal(true)}
+                  className="text-[#666] hover:text-white transition-colors text-xs"
+                >
+                  {strings.account.googleAuth.setPassword.button}
                 </button>
               )}
               {authProvider === 'both' && (
@@ -728,6 +942,66 @@ export function Account({ token, username, email, emailVerified, authProvider, o
                 </div>
               )}
             </div>
+          )}
+
+          {/* Recovery Key Pending Banner */}
+          {recoveryKeyPending && (authProvider === 'local' || authProvider === 'both') && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-4">
+              <p className="text-yellow-400 text-sm">your account was upgraded but your recovery key was never shown. please regenerate it below and save it somewhere safe.</p>
+            </div>
+          )}
+
+          {/* Recovery Key Section - Only for local/both auth */}
+          {(authProvider === 'local' || authProvider === 'both') && (
+            <div className={`border rounded ${recoveryKeyPending ? 'border-yellow-500/30' : 'border-[#333]'}`}>
+              <button
+                onClick={() => setShowRecoverySection(!showRecoverySection)}
+                className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
+              >
+                <span>{strings.auth.recoveryKey.regenerate.title}</span>
+                <span className="text-[#666]">{showRecoverySection ? '−' : '+'}</span>
+              </button>
+              {showRecoverySection && (
+                <div className="p-4 border-t border-[#333]">
+                  <p className="text-[#888] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
+                  <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
+                    <input
+                      type="password"
+                      value={recoveryPassword}
+                      onChange={(e) => setRecoveryPassword(e.target.value)}
+                      placeholder={strings.auth.recoveryKey.regenerate.passwordRequired}
+                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      required
+                    />
+                    {recoveryError && <p className="text-red-400 text-xs">{recoveryError}</p>}
+                    <button
+                      type="submit"
+                      disabled={regeneratingRecovery}
+                      className="px-4 py-2 bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {regeneratingRecovery ? 'regenerating...' : strings.auth.recoveryKey.regenerate.submit}
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Recovery Key Modal */}
+          {recoveryPhrase && (
+            <RecoveryKeyModal
+              recoveryPhrase={recoveryPhrase}
+              subtitle={strings.account.password.recoveryKeyRegenerated}
+              onAcknowledge={() => {
+                setRecoveryPhrase(null);
+                setShowRecoverySection(false);
+                // Tell server user has seen their recovery key
+                fetch(`${API_URL}/account/acknowledge-recovery-key`, {
+                  method: 'POST',
+                  credentials: 'include'
+                }).catch(() => {});
+              }}
+            />
           )}
 
           {/* Sessions Section */}
@@ -1109,6 +1383,100 @@ export function Account({ token, username, email, emailVerified, authProvider, o
             </button>
           </div>
         </div>
+      )}
+
+      {/* Set Password Modal */}
+      {showSetPasswordModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => { setShowSetPasswordModal(false); setSetPasswordStep('pin'); setSetPasswordPin(['','','','','','']); setNewPasswordError(''); setVerifiedSlateKey(null); }}>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+            {setPasswordStep === 'pin' ? (
+              <>
+                <h2 className="text-lg text-white mb-2">{strings.account.googleAuth.setPassword.modal.pinTitle}</h2>
+                <p className="text-sm text-[#888] mb-6">{strings.account.googleAuth.setPassword.modal.pinMessage}</p>
+                <div className="flex gap-2 justify-center" onPaste={e => { e.preventDefault(); const d = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6); if (d.length === 6) { setSetPasswordPin(d.split('')); setTimeout(() => setPwPinRefs.current[5]?.focus(), 0); } }}>
+                  {setPasswordPin.map((digit, i) => (
+                    <input
+                      key={i}
+                      ref={el => setPwPinRefs.current[i] = el}
+                      autoFocus={i === 0}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={digit}
+                      onChange={e => { if (!/^\d*$/.test(e.target.value)) return; const p = [...setPasswordPin]; p[i] = e.target.value.slice(-1); setSetPasswordPin(p); setNewPasswordError(''); e.target.value && i < 5 && setPwPinRefs.current[i + 1]?.focus(); }}
+                      onKeyDown={e => { if (e.key === 'Backspace' && !setPasswordPin[i] && i > 0) { setPwPinRefs.current[i - 1]?.focus(); const p = [...setPasswordPin]; p[i - 1] = ''; setSetPasswordPin(p); } }}
+                      className="w-11 h-14 bg-[#111] border border-[#333] rounded text-center text-2xl text-white focus:border-[#666] focus:outline-none transition-colors"
+                    />
+                  ))}
+                </div>
+                {newPasswordError && <p className="text-red-400 text-sm text-center mt-3">{newPasswordError}</p>}
+                <button
+                  onClick={handleVerifyPin}
+                  disabled={settingPassword || setPasswordPin.join('').length !== 6}
+                  className="w-full mt-6 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-30 text-sm"
+                >
+                  {settingPassword ? strings.account.googleAuth.setPassword.modal.pinVerifying : strings.account.googleAuth.setPassword.modal.pinVerify}
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg text-white mb-2">{strings.account.googleAuth.setPassword.modal.title}</h2>
+                <p className="text-sm text-[#888] mb-6">{strings.account.googleAuth.setPassword.modal.message}</p>
+                <form onSubmit={handleSetPassword} className="space-y-3">
+                  <input
+                    type="password"
+                    value={setPasswordNew}
+                    onChange={e => setSetPasswordNew(e.target.value)}
+                    placeholder={strings.account.googleAuth.setPassword.modal.passwordPlaceholder}
+                    minLength={6}
+                    required
+                    autoFocus
+                    className="w-full bg-[#111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors rounded text-sm"
+                  />
+                  <input
+                    type="password"
+                    value={setPasswordConfirm}
+                    onChange={e => setSetPasswordConfirm(e.target.value)}
+                    placeholder={strings.account.googleAuth.setPassword.modal.confirmPlaceholder}
+                    minLength={6}
+                    required
+                    className="w-full bg-[#111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors rounded text-sm"
+                  />
+                  {newPasswordError && <p className="text-red-400 text-xs">{newPasswordError}</p>}
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setShowSetPasswordModal(false); setNewPasswordError(''); setSetPasswordNew(''); setSetPasswordConfirm(''); setSetPasswordStep('pin'); setSetPasswordPin(['','','','','','']); setVerifiedSlateKey(null); }}
+                      className="flex-1 border border-[#333] px-4 py-2 rounded hover:bg-[#222] transition-colors text-sm"
+                    >
+                      {strings.account.googleAuth.setPassword.modal.cancel}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={settingPassword}
+                      className="flex-1 bg-white text-black px-4 py-2 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50"
+                    >
+                      {settingPassword ? strings.account.googleAuth.setPassword.modal.submitting : strings.account.googleAuth.setPassword.modal.submit}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Set Password Success - Recovery Key Modal */}
+      {showSetPasswordSuccess && setPasswordRecoveryPhrase && (
+        <RecoveryKeyModal
+          recoveryPhrase={setPasswordRecoveryPhrase}
+          subtitle={strings.account.googleAuth.setPassword.success.subtitle}
+          onAcknowledge={() => {
+            setShowSetPasswordSuccess(false);
+            setSetPasswordRecoveryPhrase(null);
+            window.location.reload();
+          }}
+        />
       )}
       </div>
     </div>

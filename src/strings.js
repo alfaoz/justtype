@@ -168,8 +168,107 @@ const strings = {
       label: 'verification code',
       submit: 'verify',
       resend: 'resend code',
+      resendCountdown: (seconds) => `resend code (${seconds}s)`,
       skip: 'skip for now' // this should be deprecated. -alfa
-    }
+    },
+    forgotPassword: {
+      title: 'forgot password',
+      email: 'email address',
+      description: 'we\'ll send you a 6-digit reset code.',
+      submit: 'send reset code',
+      back: 'back to login',
+      cancel: 'cancel',
+    },
+    resetPassword: {
+      title: 'reset password',
+      code: 'verification code',
+      codePlaceholder: 'check your email for the code',
+      newPassword: 'new password',
+      newPasswordPlaceholder: 'at least 6 characters',
+      otpStep: {
+        title: 'enter verification code',
+        description: 'check your email for the 6-digit code',
+        submit: 'continue',
+      },
+      recoveryEntry: {
+        title: 'enter your recovery key',
+        placeholder: 'enter your 12-word recovery key...',
+        submit: 'submit recovery codes',
+        noKey: 'i don\'t have recovery codes',
+      },
+      withRecovery: {
+        title: 'set new password',
+        description: 'your slates will be preserved.',
+        submit: 'reset password',
+      },
+      destructive: {
+        title: 'reset password',
+        warning: 'without your recovery key, all your encrypted slates will be permanently deleted.',
+        checkbox: 'i know all my slates will be gone',
+        submit: 'reset password and delete all slates',
+        back: 'back',
+      },
+      success: 'password reset successfully!',
+      slatesPreserved: 'your slates are preserved.',
+      slatesDeleted: (count) => `${count} slate${count !== 1 ? 's' : ''} deleted.`,
+    },
+    recoveryKey: {
+      title: 'your recovery key',
+      description: 'this is your recovery key. it is the only way to recover your slates if you forget your password. save it somewhere safe.',
+      warning: 'this will not be shown again.',
+      download: 'download recovery key',
+      copied: 'copied to clipboard',
+      copy: 'copy to clipboard',
+      acknowledge: 'i pinky promise i saved this somewhere safe',
+      regenerate: {
+        title: 'regenerate recovery key',
+        description: 'this will generate a new recovery key and invalidate the old one.',
+        submit: 'regenerate',
+        passwordRequired: 'enter your password to regenerate your recovery key',
+      },
+    },
+  },
+
+  // 6-digit PIN for Google users
+  pin: {
+    setup: {
+      title: 'set a 6-digit pin',
+      description: 'this pin protects your encrypted slates. you\'ll need it to access your slates on new devices or after clearing your browser data.',
+      confirmTitle: 'confirm your pin',
+      confirmDescription: 'enter the same pin again to confirm.',
+      continue: 'continue',
+      submit: 'set pin',
+      saving: 'saving...',
+      back: 'back',
+    },
+    unlock: {
+      title: 'enter your pin',
+      description: 'enter your 6-digit pin to unlock your slates.',
+      submit: 'unlock',
+      unlocking: 'unlocking...',
+      forgotPin: 'forgot pin?',
+    },
+    recovery: {
+      title: 'recover with recovery key',
+      description: 'enter your 12-word recovery key to unlock your slates and set a new pin.',
+      placeholder: 'enter your 12-word recovery key...',
+      submit: 'recover',
+      recovering: 'recovering...',
+      newPinTitle: 'set a new pin',
+      newPinDescription: 'choose a new 6-digit pin to protect your slates.',
+      noKey: 'i don\'t have my recovery key',
+      noKeyWarning: 'without your recovery key, your encrypted slates cannot be recovered. you can reset your account from the login page.',
+      errors: {
+        required: 'please enter your recovery key.',
+        invalid: 'invalid recovery key. please check and try again.',
+        failed: 'recovery failed. please try again.',
+      },
+    },
+    errors: {
+      required: 'enter all 6 digits',
+      mismatch: 'pins don\'t match, try again',
+      failed: 'incorrect pin',
+    },
   },
 
   // account settings
@@ -195,7 +294,8 @@ const strings = {
         tooShort: 'New password must be at least 6 characters',
         changeFailed: 'Failed to change password'
       },
-      success: 'Password changed successfully'
+      success: 'password changed successfully',
+      recoveryKeyRegenerated: 'your recovery key has been regenerated. your previous recovery key no longer works.'
     },
     sessions: {
       title: 'sessions',
@@ -232,6 +332,13 @@ const strings = {
         title: 'sign out everywhere?',
         message: 'this will sign you out from all devices including this one. you will need to login again.',
         confirm: 'sign out everywhere',
+        cancel: 'cancel'
+      },
+      logoutConfirm: {
+        title: 'sign out?',
+        message: 'are you sure you want to sign out?',
+        pinWarning: "you'll need to enter your pin next time to unlock your slates.",
+        confirm: 'sign out',
         cancel: 'cancel'
       },
       errors: {
@@ -298,6 +405,35 @@ const strings = {
           alreadyLinked: 'this google account is already linked to another user.',
           sessionExpired: 'linking session expired. please try again.',
           button: 'okay'
+        }
+      },
+      setPassword: {
+        button: '+ set password',
+        banner: 'add a password so you don\'t lose access to your slates if you lose your google account.',
+        dismiss: 'dismiss',
+        modal: {
+          pinTitle: 'verify your pin',
+          pinMessage: 'enter your 6-digit pin to continue.',
+          pinVerify: 'verify',
+          pinVerifying: 'verifying...',
+          title: 'set password',
+          message: 'create a password to sign in without google. you\'ll still be able to use google sign-in.',
+          passwordPlaceholder: 'enter password',
+          confirmPlaceholder: 'confirm password',
+          submit: 'set password',
+          submitting: 'setting password...',
+          cancel: 'cancel'
+        },
+        success: {
+          subtitle: 'password set! you can now sign in with either your password or google account. your previous recovery key has been replaced by this one.',
+        },
+        errors: {
+          tooShort: 'password must be at least 6 characters.',
+          mismatch: 'passwords do not match.',
+          failed: 'failed to set password.',
+          noKey: 'slate key not found. please log out and log back in first.',
+          pinRequired: 'please enter your 6-digit pin.',
+          wrongPin: 'incorrect pin. please try again.'
         }
       },
       unlink: {
@@ -637,6 +773,60 @@ take care!
     emailSent: 'email sent!',
     passwordChanged: 'password changed!',
     emailChanged: 'email changed!'
+  },
+
+  // build verification
+  verify: {
+    title: 'verify build integrity',
+    description: 'verify that the code running on this site matches the open-source repository.',
+    verified: 'all sources match',
+    mismatch: 'mismatch detected',
+    computing: 'computing hashes...',
+    error: 'failed to verify. try refreshing.',
+    jsBundle: 'javascript bundle',
+    cssBundle: 'css bundle',
+    sources: {
+      server: 'server',
+      github: 'github',
+      computed: 'computed',
+    },
+    version: (v) => `version ${v}`,
+    buildDate: (d) => `built ${d}`,
+    githubRelease: 'view release on github',
+    github: {
+      label: 'github actions hashes',
+      hostedOn: 'built by github actions from the public repo — not controlled by justtype servers',
+      viewEndpoint: 'view raw hashes',
+      viewWorkflow: 'view workflow source',
+      loading: 'fetching from github...',
+      error: 'could not reach github pages',
+    },
+    trustModel: {
+      title: 'trust model',
+      quick: {
+        label: 'quick check',
+        description: 'this page computes hashes of the code your browser received and compares them against github actions (built independently from the public repo). protects against a compromised server.',
+      },
+      independent: {
+        label: 'independent check',
+        description: 'click the github link above and compare the hashes yourself. you can also inspect the workflow that produced them.',
+      },
+      full: {
+        label: 'full verification',
+        description: 'clone the repo, read the code, build it yourself, and compare hashes. proves the served code IS the open-source code with zero trust required.',
+      },
+    },
+    localVerify: {
+      title: 'verify locally',
+      description: 'run these commands in your terminal to verify independently:',
+    },
+    buildYourself: {
+      title: 'build it yourself',
+      description: 'clone the repo, build from source, and compare hashes:',
+      compare: 'compare the hashes in build-manifest.json with what github reports.',
+    },
+    authFooter: (v) => `v${v}`,
+    authFooterVerify: 'verify',
   },
 
   // cli page
