@@ -75,7 +75,8 @@ export function Verify() {
   };
 
   return (
-    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex flex-col">
+    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex flex-col" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');`}</style>
       <header className="p-8 border-b border-[#222]">
         <a href="/" className="text-xl font-medium text-[#808080] hover:text-white transition-colors">
           + just type

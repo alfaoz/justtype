@@ -319,7 +319,7 @@ app.use(helmet({
       scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", "https://challenges.cloudflare.com"],
+      connectSrc: ["'self'", "https://challenges.cloudflare.com", "https://alfaoz.github.io"],
       frameSrc: ["https://challenges.cloudflare.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
