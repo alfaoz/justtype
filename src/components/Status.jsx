@@ -70,9 +70,12 @@ export function Status() {
 
   return (
     <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex flex-col" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');`}</style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+        body { font-family: 'JetBrains Mono', monospace; background-color: #111111; margin: 0; padding: 0; }
+      `}</style>
       <header className="p-8 border-b border-[#222]">
-        <a href="/" className="text-xl font-medium text-[#808080] hover:text-white transition-colors">
+        <a href="/" className="text-lg md:text-xl font-medium text-[#808080] hover:text-white transition-colors">
           + just type
         </a>
       </header>
