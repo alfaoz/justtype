@@ -32,7 +32,9 @@ jobs:
 
       - run: npm run build
         env:
-          VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
+          # hardcoded here (not a secret) so users can verify no hidden build inputs
+          # this is a public site key - it's already in the HTML served to every visitor
+          VITE_TURNSTILE_SITE_KEY: "0x4AAAAAACSJvMqEG5Z-iXyo"
 
       - name: prepare pages artifact
         run: |
