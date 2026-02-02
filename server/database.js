@@ -439,6 +439,33 @@ try {
     console.log(`✓ Database migrated: Added pin_wrapped_key/pin_salt columns, migrated ${googleE2eUsers.length} Google E2E users`);
   }
 
+  // Create incidents tables for status page
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS incidents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'minor',
+      status TEXT NOT NULL DEFAULT 'investigating',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      resolved_at DATETIME,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS incident_updates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      incident_id INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+    CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
+    CREATE INDEX IF NOT EXISTS idx_incident_updates_incident_id ON incident_updates(incident_id);
+  `);
+  console.log('✓ Incidents tables initialized');
+
   // Create feedback table
   db.exec(`
     CREATE TABLE IF NOT EXISTS feedback (

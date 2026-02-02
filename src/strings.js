@@ -514,7 +514,8 @@ const strings = {
         logs: 'Logs',
         health: 'Health',
         announcements: 'Announcements',
-        feedback: 'Feedback'
+        feedback: 'Feedback',
+        status: 'Status'
       },
       stats: {
         title: 'stats',
@@ -840,6 +841,24 @@ take care!
     copyAction: 'click to copy',
     platforms: 'linux and macos',
     github: 'github'
+  },
+
+  status: {
+    title: 'system status',
+    description: 'real-time status of justtype services.',
+    allOperational: 'all systems operational',
+    degraded: 'degraded performance',
+    outage: 'service disruption',
+    activeIncidents: 'active incidents',
+    pastIncidents: 'past incidents',
+    noIncidents: 'no incidents reported',
+    severity: { minor: 'minor', major: 'major', critical: 'critical' },
+    statuses: { investigating: 'investigating', identified: 'identified', monitoring: 'monitoring', resolved: 'resolved' },
+    lastUpdated: 'last updated',
+    footer: {
+      home: 'just type',
+      github: 'github'
+    }
   }
 };
 

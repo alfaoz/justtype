@@ -3500,6 +3500,103 @@ app.delete('/api/admin/feedback/:id', authenticateAdmin, (req, res) => {
   }
 });
 
+// ============ INCIDENT / STATUS ROUTES ============
+
+// Public: get status
+app.get('/api/status', (req, res) => {
+  try {
+    const active = db.prepare(`SELECT * FROM incidents WHERE status != 'resolved' ORDER BY created_at DESC`).all();
+    const resolved = db.prepare(`SELECT * FROM incidents WHERE status = 'resolved' ORDER BY resolved_at DESC LIMIT 20`).all();
+    const allIds = [...active, ...resolved].map(i => i.id);
+    let updates = [];
+    if (allIds.length > 0) {
+      updates = db.prepare(`SELECT * FROM incident_updates WHERE incident_id IN (${allIds.map(() => '?').join(',')}) ORDER BY created_at ASC`).all(...allIds);
+    }
+    const updatesByIncident = {};
+    for (const u of updates) {
+      if (!updatesByIncident[u.incident_id]) updatesByIncident[u.incident_id] = [];
+      updatesByIncident[u.incident_id].push(u);
+    }
+    const attach = (list) => list.map(i => ({ ...i, updates: updatesByIncident[i.id] || [] }));
+    res.json({ active: attach(active), resolved: attach(resolved) });
+  } catch (error) {
+    console.error('Fetch status error:', error);
+    res.status(500).json({ error: 'Failed to fetch status' });
+  }
+});
+
+// Admin: create incident
+app.post('/api/admin/incidents', authenticateAdmin, (req, res) => {
+  try {
+    const { title, severity, message } = req.body;
+    if (!title || !message) return res.status(400).json({ error: 'Title and message required' });
+    const sev = ['minor', 'major', 'critical'].includes(severity) ? severity : 'minor';
+    const result = db.prepare(`INSERT INTO incidents (title, severity, status) VALUES (?, ?, 'investigating')`).run(title, sev);
+    db.prepare(`INSERT INTO incident_updates (incident_id, message, status) VALUES (?, ?, 'investigating')`).run(result.lastInsertRowid, message);
+    const incident = db.prepare(`SELECT * FROM incidents WHERE id = ?`).get(result.lastInsertRowid);
+    const updates = db.prepare(`SELECT * FROM incident_updates WHERE incident_id = ?`).all(result.lastInsertRowid);
+    res.json({ incident: { ...incident, updates } });
+  } catch (error) {
+    console.error('Create incident error:', error);
+    res.status(500).json({ error: 'Failed to create incident' });
+  }
+});
+
+// Admin: update incident
+app.patch('/api/admin/incidents/:id', authenticateAdmin, (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ error: 'Status required' });
+    const validStatuses = ['investigating', 'identified', 'monitoring', 'resolved'];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const updates = { status, updated_at: new Date().toISOString() };
+    if (status === 'resolved') updates.resolved_at = new Date().toISOString();
+    const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+    db.prepare(`UPDATE incidents SET ${setClauses} WHERE id = ?`).run(...Object.values(updates), req.params.id);
+    const incident = db.prepare(`SELECT * FROM incidents WHERE id = ?`).get(req.params.id);
+    res.json({ incident });
+  } catch (error) {
+    console.error('Update incident error:', error);
+    res.status(500).json({ error: 'Failed to update incident' });
+  }
+});
+
+// Admin: delete incident
+app.delete('/api/admin/incidents/:id', authenticateAdmin, (req, res) => {
+  try {
+    db.prepare('DELETE FROM incident_updates WHERE incident_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM incidents WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete incident error:', error);
+    res.status(500).json({ error: 'Failed to delete incident' });
+  }
+});
+
+// Admin: add update to incident
+app.post('/api/admin/incidents/:id/updates', authenticateAdmin, (req, res) => {
+  try {
+    const { message, status } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message required' });
+    const incident = db.prepare(`SELECT * FROM incidents WHERE id = ?`).get(req.params.id);
+    if (!incident) return res.status(404).json({ error: 'Incident not found' });
+    const updateStatus = status || incident.status;
+    db.prepare(`INSERT INTO incident_updates (incident_id, message, status) VALUES (?, ?, ?)`).run(req.params.id, message, updateStatus);
+    if (status && status !== incident.status) {
+      const changes = { status, updated_at: new Date().toISOString() };
+      if (status === 'resolved') changes.resolved_at = new Date().toISOString();
+      const setClauses = Object.keys(changes).map(k => `${k} = ?`).join(', ');
+      db.prepare(`UPDATE incidents SET ${setClauses} WHERE id = ?`).run(...Object.values(changes), req.params.id);
+    }
+    const updated = db.prepare(`SELECT * FROM incidents WHERE id = ?`).get(req.params.id);
+    const updates = db.prepare(`SELECT * FROM incident_updates WHERE incident_id = ? ORDER BY created_at ASC`).all(req.params.id);
+    res.json({ incident: { ...updated, updates } });
+  } catch (error) {
+    console.error('Add incident update error:', error);
+    res.status(500).json({ error: 'Failed to add update' });
+  }
+});
+
 // ============ ACCOUNT ROUTES ============
 
 // Change password

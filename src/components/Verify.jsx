@@ -277,6 +277,8 @@ curl -s https://justtype.io/assets/${manifest.cssFile} | sha256sum`}
           <a href="/" className="hover:text-white transition-colors">just type</a>
           <span className="mx-2">·</span>
           <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">github</a>
+          <span className="mx-2">·</span>
+          <a href="/status" className="hover:text-white transition-colors">status</a>
         </div>
       </footer>
     </div>

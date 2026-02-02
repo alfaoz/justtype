@@ -80,7 +80,7 @@ export function AdminConsole() {
   // Tab state - get initial tab from URL
   const getInitialTab = () => {
     const path = window.location.pathname;
-    const match = path.match(/\/holyfuckwhereami\/(overview|users|logs|health|sentry|announcements|feedback)/);
+    const match = path.match(/\/holyfuckwhereami\/(overview|users|logs|health|sentry|announcements|feedback|status)/);
     return match ? match[1] : 'overview';
   };
   const [activeTab, setActiveTab] = useState(getInitialTab());
@@ -109,6 +109,12 @@ export function AdminConsole() {
 
   // Feedback state
   const [feedbackList, setFeedbackList] = useState([]);
+
+  // Incidents state
+  const [incidents, setIncidents] = useState([]);
+  const [newIncident, setNewIncident] = useState({ title: '', severity: 'minor', message: '' });
+  const [incidentUpdateText, setIncidentUpdateText] = useState({});
+  const [incidentUpdateStatus, setIncidentUpdateStatus] = useState({});
 
   // Search state
   const [userSearch, setUserSearch] = useState('');
@@ -169,7 +175,66 @@ export function AdminConsole() {
       case 'feedback':
         fetchFeedback();
         break;
+      case 'status':
+        fetchIncidents();
+        break;
     }
+  };
+
+  // ---- Incidents ----
+  const fetchIncidents = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/status`);
+      const data = await res.json();
+      setIncidents([...data.active, ...data.resolved]);
+    } catch { setError('Failed to fetch incidents'); }
+    setLoading(false);
+  };
+
+  const createIncident = async () => {
+    if (!newIncident.title || !newIncident.message) return;
+    try {
+      await fetch(`${API_URL}/admin/incidents`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(newIncident)
+      });
+      setNewIncident({ title: '', severity: 'minor', message: '' });
+      fetchIncidents();
+    } catch { setError('Failed to create incident'); }
+  };
+
+  const updateIncidentStatus = async (id, status) => {
+    try {
+      await fetch(`${API_URL}/admin/incidents/${id}`, {
+        method: 'PATCH', headers: { 'Authorization': `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      fetchIncidents();
+    } catch { setError('Failed to update incident'); }
+  };
+
+  const addIncidentUpdate = async (id) => {
+    const message = incidentUpdateText[id];
+    if (!message) return;
+    try {
+      await fetch(`${API_URL}/admin/incidents/${id}/updates`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, status: incidentUpdateStatus[id] || undefined })
+      });
+      setIncidentUpdateText(prev => ({ ...prev, [id]: '' }));
+      setIncidentUpdateStatus(prev => ({ ...prev, [id]: '' }));
+      fetchIncidents();
+    } catch { setError('Failed to add update'); }
+  };
+
+  const deleteIncident = async (id) => {
+    try {
+      await fetch(`${API_URL}/admin/incidents/${id}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${adminToken}` }
+      });
+      fetchIncidents();
+    } catch { setError('Failed to delete incident'); }
   };
 
   const fetchAdminNotifications = async () => {
@@ -682,7 +747,7 @@ export function AdminConsole() {
 
         {/* Tabs */}
         <div className="flex gap-4 mb-6 border-b border-[#333] overflow-x-auto">
-          {['overview', 'users', 'stripe', 'logs', 'health', 'sentry', 'announcements', 'feedback'].map((tab) => (
+          {['overview', 'users', 'stripe', 'logs', 'health', 'sentry', 'announcements', 'feedback', 'status'].map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -1034,6 +1099,125 @@ export function AdminConsole() {
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+        {activeTab === 'status' && (
+          <div>
+            {/* Create incident */}
+            <div className="bg-[#111] border border-[#333] rounded p-4 mb-6">
+              <h3 className="text-white text-sm mb-3">create incident</h3>
+              <input
+                value={newIncident.title}
+                onChange={e => setNewIncident(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="incident title"
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-3 py-2 text-sm text-white mb-2"
+              />
+              <div className="flex gap-2 mb-2">
+                <select
+                  value={newIncident.severity}
+                  onChange={e => setNewIncident(prev => ({ ...prev, severity: e.target.value }))}
+                  className="bg-[#0a0a0a] border border-[#333] rounded px-3 py-2 text-sm text-white"
+                >
+                  <option value="minor">minor</option>
+                  <option value="major">major</option>
+                  <option value="critical">critical</option>
+                </select>
+              </div>
+              <textarea
+                value={newIncident.message}
+                onChange={e => setNewIncident(prev => ({ ...prev, message: e.target.value }))}
+                placeholder="initial status message"
+                className="w-full bg-[#0a0a0a] border border-[#333] rounded px-3 py-2 text-sm text-white mb-2 min-h-[60px]"
+              />
+              <button
+                onClick={createIncident}
+                disabled={!newIncident.title || !newIncident.message}
+                className="px-4 py-2 bg-white text-black rounded text-sm hover:bg-[#e5e5e5] transition-colors disabled:opacity-50"
+              >
+                create
+              </button>
+            </div>
+
+            {loading ? (
+              <p className="text-[#666] text-sm">loading...</p>
+            ) : incidents.length === 0 ? (
+              <p className="text-[#666] text-sm">no incidents</p>
+            ) : (
+              <div className="space-y-4">
+                {incidents.map(inc => {
+                  const isActive = inc.status !== 'resolved';
+                  const sevColor = { minor: 'border-yellow-500', major: 'border-orange-500', critical: 'border-red-500' }[inc.severity] || 'border-[#333]';
+                  return (
+                    <div key={inc.id} className={`bg-[#111] border-l-4 ${sevColor} border border-[#333] rounded p-4`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <span className="text-white text-sm font-medium">{inc.title}</span>
+                          <span className={`ml-2 text-xs px-2 py-0.5 rounded ${
+                            inc.status === 'resolved' ? 'bg-green-900/30 text-green-400' :
+                            inc.status === 'monitoring' ? 'bg-blue-900/30 text-blue-400' :
+                            inc.status === 'identified' ? 'bg-yellow-900/30 text-yellow-400' :
+                            'bg-red-900/30 text-red-400'
+                          }`}>{inc.status}</span>
+                          <span className="ml-2 text-xs text-[#555]">{inc.severity}</span>
+                        </div>
+                        <button onClick={() => deleteIncident(inc.id)} className="text-red-400 hover:text-red-300 text-xs">delete</button>
+                      </div>
+
+                      {/* Timeline */}
+                      {inc.updates && inc.updates.length > 0 && (
+                        <div className="ml-2 border-l border-[#333] pl-4 mb-3 space-y-2">
+                          {inc.updates.map(u => (
+                            <div key={u.id} className="text-xs">
+                              <span className="text-[#555]">{new Date(u.created_at).toLocaleString()}</span>
+                              <span className="text-[#666] ml-2">[{u.status}]</span>
+                              <p className="text-[#888] mt-0.5">{u.message}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Quick actions for active incidents */}
+                      {isActive && (
+                        <div className="mt-3 pt-3 border-t border-[#222]">
+                          <div className="flex gap-2 mb-2 flex-wrap">
+                            {['investigating', 'identified', 'monitoring', 'resolved'].filter(s => s !== inc.status).map(s => (
+                              <button key={s} onClick={() => updateIncidentStatus(inc.id, s)}
+                                className={`text-xs px-2 py-1 rounded border transition-colors ${
+                                  s === 'resolved' ? 'border-green-700 text-green-400 hover:bg-green-900/20' : 'border-[#444] text-[#888] hover:bg-[#222]'
+                                }`}>{s}</button>
+                            ))}
+                          </div>
+                          <div className="flex gap-2 items-end">
+                            <input
+                              value={incidentUpdateText[inc.id] || ''}
+                              onChange={e => setIncidentUpdateText(prev => ({ ...prev, [inc.id]: e.target.value }))}
+                              placeholder="add update message..."
+                              className="flex-1 bg-[#0a0a0a] border border-[#333] rounded px-2 py-1 text-xs text-white"
+                            />
+                            <select
+                              value={incidentUpdateStatus[inc.id] || ''}
+                              onChange={e => setIncidentUpdateStatus(prev => ({ ...prev, [inc.id]: e.target.value }))}
+                              className="bg-[#0a0a0a] border border-[#333] rounded px-2 py-1 text-xs text-white"
+                            >
+                              <option value="">keep status</option>
+                              {['investigating', 'identified', 'monitoring', 'resolved'].map(s => (
+                                <option key={s} value={s}>{s}</option>
+                              ))}
+                            </select>
+                            <button onClick={() => addIncidentUpdate(inc.id)}
+                              className="px-3 py-1 bg-[#333] text-white rounded text-xs hover:bg-[#444] transition-colors">
+                              post
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-[#444] text-xs mt-2">{new Date(inc.created_at).toLocaleString()}</p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

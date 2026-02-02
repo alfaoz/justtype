@@ -12,6 +12,7 @@ import { CliPair } from './components/CliPair';
 import { Cli } from './components/Cli';
 import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
+import { Status } from './components/Status';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
 import { PinSetupModal } from './components/PinSetupModal';
 import { API_URL } from './config';
@@ -259,6 +260,8 @@ export default function App() {
         setView('feedback');
       } else if (path === '/verify') {
         setView('verify');
+      } else if (path === '/status') {
+        setView('status');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -819,6 +822,10 @@ export default function App() {
 
   if (view === 'verify') {
     return <Verify />;
+  }
+
+  if (view === 'status') {
+    return <Status />;
   }
 
   return (
