@@ -10,47 +10,45 @@ transparency + sweet community support.
 
 ## what it offers
 
-- a simple writing interface
-- cloud saved slates
-- publish and share with unique urls
-- end-to-end encryption (aes-256-gcm)
-- export to txt/pdf
+a simple writing interface with cloud saved slates, shareable urls, export to txt, and zero-knowledge encryption. your writing is yours.
 
 ## how encryption works
 
-```
-your password → pbkdf2 (100k iterations) → encryption key
-your slates → aes-256-gcm → encrypted storage (backblaze b2)
-```
+your password is never sent to the server in plaintext. on signup, a unique salt is generated and stored. your password is derived into a 256-bit encryption key using pbkdf2 with 100k iterations of sha-256.
 
-- private slates: encrypted at rest, only you can decrypt
-- published slates: stored unencrypted for public access
-- keys never leave your browser, server never sees plaintext (duh...)
+every private slate is encrypted client-side with aes-256-gcm before upload. the encrypted payload is structured as `iv (16 bytes) + auth tag (16 bytes) + ciphertext`, stored on backblaze b2. the server only ever handles ciphertext. decryption happens in your browser when you load a slate.
 
->don't trust me? i wouldn't either. check the implementation: `server/index.js` (lines 23-64)
+this is zero-knowledge: the server cannot read your slates because it never possesses the key. if you forget your password and lose your 12-word bip39 recovery key, your data is unrecoverable by design.
+
+published slates are the exception. publishing stores a separate unencrypted copy on b2 with a public share id. unpublishing deletes the public copy.
+
+you can verify all of this yourself. the source is right here, and the [/verify](https://justtype.io/verify) page lets you confirm the code running in your browser matches this repo through three-way hash comparison (server, github actions, browser-computed). for a deeper dive on the encryption architecture, key management, and recovery system, see the [encryption deep dive](docs/encryption.md).
+
+> don't trust me? i wouldn't either. check `server/index.js`, `server/b2Storage.js`, and `src/crypto.js`.
 
 ## tech stack
 
-- frontend: react + tailwind css
-- backend: node.js + express
-- storage: sqlite + backblaze b2
-- encryption: pbkdf2 + aes-256-gcm
+react, tailwind css, node.js, express, sqlite, backblaze b2, resend.
 
 ## self-hosting
 
-want to run your own justtype instance? we support it, but don't expect optimization for it.
+you can run your own instance. clone the repo, configure your environment, and you're up.
 
 ```bash
 git clone https://github.com/alfaoz/justtype.git
 cd justtype
 npm install
 cp .env.example .env
-# configure your b2 credentials in .env
+```
+
+fill in your `.env` with backblaze b2 credentials, a jwt secret, and a resend api key for emails. then build and start:
+
+```bash
 npm run build
 npm run server
 ```
 
-requires: node 20+, backblaze b2 account, resend api key (for emails)
+requires node 20+.
 
 ## system documentation
 
@@ -67,7 +65,7 @@ this creates:
 - 4 published slates with share_ids: `terms`, `privacy`, `limits`, `project`
 - redirects from `/terms` → `/s/terms`, etc.
 
-the system slates are protected from deletion but can be edited by logging in as the system user. you can also keep the documentation as plain text files—both approaches work.
+the system slates are protected from deletion but can be edited by logging in as the system user. you can also keep the documentation as plain text files. both approaches work.
 
 ## contributing
 
