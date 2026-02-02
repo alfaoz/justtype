@@ -4,6 +4,8 @@ const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 
 let cachedResult = null;
 
+const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
 export function VerifyBadge({ children, className }) {
   const [show, setShow] = useState(false);
   const [result, setResult] = useState(cachedResult);
@@ -11,33 +13,76 @@ export function VerifyBadge({ children, className }) {
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const fetchedRef = useRef(false);
   const timeoutRef = useRef(null);
+  const pollRef = useRef(null);
+  const showRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(timeoutRef.current);
+      clearInterval(pollRef.current);
+    };
+  }, []);
 
   const handleMouseEnter = (e) => {
     updatePos(e);
     timeoutRef.current = setTimeout(() => {
       setShow(true);
+      showRef.current = true;
       if (!fetchedRef.current && !cachedResult) {
         fetchedRef.current = true;
         runVerification();
+      } else if (cachedResult && !cachedResult.verified && !cachedResult.error) {
+        startPolling();
       }
     }, 200);
   };
 
   const handleMouseLeave = () => {
     clearTimeout(timeoutRef.current);
+    clearInterval(pollRef.current);
     setShow(false);
+    showRef.current = false;
   };
 
   const updatePos = (e) => {
     setPos({ x: e.clientX, y: e.clientY });
   };
 
+  const startPolling = () => {
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      if (!showRef.current) {
+        clearInterval(pollRef.current);
+        return;
+      }
+      const gh = await fetchGithubHashes();
+      if (!gh || !cachedResult) return;
+      const ghMatch = gh.jsHash === cachedResult.jsHash && gh.cssHash === cachedResult.cssHash;
+      if (ghMatch || !showRef.current) {
+        clearInterval(pollRef.current);
+      }
+      const updated = { ...cachedResult, ghMatch, ghJsHash: gh.jsHash, verified: cachedResult.serverMatch && ghMatch };
+      cachedResult = updated;
+      setResult(updated);
+    }, 5000);
+  };
+
+  const fetchGithubHashes = async () => {
+    try {
+      const res = await fetch(bustCache(GITHUB_HASHES_URL));
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
   const runVerification = async () => {
     setLoading(true);
     try {
       const [manifestRes, ghRes] = await Promise.all([
-        fetch('/build-manifest.json'),
-        fetch(GITHUB_HASHES_URL)
+        fetch(bustCache('/build-manifest.json')),
+        fetch(bustCache(GITHUB_HASHES_URL))
       ]);
 
       if (!manifestRes.ok) throw new Error('manifest');
@@ -45,8 +90,8 @@ export function VerifyBadge({ children, className }) {
       const gh = ghRes.ok ? await ghRes.json() : null;
 
       const [jsRes, cssRes] = await Promise.all([
-        fetch(`/assets/${manifest.jsFile}`),
-        fetch(`/assets/${manifest.cssFile}`)
+        fetch(bustCache(`/assets/${manifest.jsFile}`)),
+        fetch(bustCache(`/assets/${manifest.cssFile}`))
       ]);
 
       const [jsBuf, cssBuf] = await Promise.all([
@@ -77,6 +122,10 @@ export function VerifyBadge({ children, className }) {
       };
       cachedResult = r;
       setResult(r);
+
+      if (!r.verified && !r.error && showRef.current) {
+        startPolling();
+      }
     } catch {
       const r = { error: true };
       cachedResult = r;
@@ -86,7 +135,6 @@ export function VerifyBadge({ children, className }) {
     }
   };
 
-  // Tooltip positioning
   const tooltipStyle = {
     position: 'fixed',
     left: pos.x + 12,
@@ -96,7 +144,6 @@ export function VerifyBadge({ children, className }) {
     pointerEvents: 'none',
   };
 
-  // Keep tooltip near cursor if above viewport
   if (pos.y < 120) {
     tooltipStyle.transform = 'translateY(8px)';
     tooltipStyle.top = pos.y + 16;
@@ -140,10 +187,10 @@ export function VerifyBadge({ children, className }) {
                     <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{truncate(result.cssHash)}</span>
                   </div>
                   {result.ghMatch === false && (
-                    <div className="text-yellow-400/50 pt-1">github actions: rebuilding</div>
+                    <div className="text-yellow-400/50 pt-1 animate-pulse">github actions: rebuilding...</div>
                   )}
                   {result.ghMatch === null && (
-                    <div className="text-[#555] pt-1">github: unavailable</div>
+                    <div className="text-[#555] pt-1 animate-pulse">github: checking...</div>
                   )}
                 </div>
               </div>

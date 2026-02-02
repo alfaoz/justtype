@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { strings } from '../strings';
 
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 const GITHUB_WORKFLOW_URL = 'https://github.com/alfaoz/justtype/blob/master/.github/workflows/publish-hashes.yml';
+
+const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
 export function Verify() {
   const [manifest, setManifest] = useState(null);
@@ -11,22 +13,50 @@ export function Verify() {
   const [computedJs, setComputedJs] = useState(null);
   const [computedCss, setComputedCss] = useState(null);
   const [error, setError] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const pollRef = useRef(null);
+  const manifestRef = useRef(null);
 
   useEffect(() => {
     verify();
     fetchGithub();
+    return () => clearInterval(pollRef.current);
   }, []);
+
+  // Start polling github if we have computed hashes but github doesn't match yet
+  useEffect(() => {
+    if (!manifest || !computedJs || !computedCss) return;
+    if (github && github.jsHash === computedJs && github.cssHash === computedCss) return;
+    if (githubError || polling) return;
+
+    setPolling(true);
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(bustCache(GITHUB_HASHES_URL));
+        if (!res.ok) return;
+        const data = await res.json();
+        setGithub(data);
+        setGithubError(false);
+        // Stop polling once it matches
+        if (data.jsHash === manifestRef.current?.jsHash && data.cssHash === manifestRef.current?.cssHash) {
+          clearInterval(pollRef.current);
+          setPolling(false);
+        }
+      } catch {}
+    }, 5000);
+  }, [manifest, computedJs, computedCss, github, githubError]);
 
   const verify = async () => {
     try {
-      const manifestRes = await fetch('/build-manifest.json');
+      const manifestRes = await fetch(bustCache('/build-manifest.json'));
       if (!manifestRes.ok) throw new Error('manifest not found');
       const data = await manifestRes.json();
       setManifest(data);
+      manifestRef.current = data;
 
       const [jsRes, cssRes] = await Promise.all([
-        fetch(`/assets/${data.jsFile}`),
-        fetch(`/assets/${data.cssFile}`)
+        fetch(bustCache(`/assets/${data.jsFile}`)),
+        fetch(bustCache(`/assets/${data.cssFile}`))
       ]);
 
       const [jsBuf, cssBuf] = await Promise.all([
@@ -49,7 +79,7 @@ export function Verify() {
 
   const fetchGithub = async () => {
     try {
-      const res = await fetch(GITHUB_HASHES_URL);
+      const res = await fetch(bustCache(GITHUB_HASHES_URL));
       if (!res.ok) throw new Error('github pages fetch failed');
       const data = await res.json();
       setGithub(data);
@@ -156,8 +186,9 @@ export function Verify() {
                   <span className="text-sm text-white">{strings.verify.github.label}</span>
                   <p className="text-xs text-[#555] mt-1">{strings.verify.github.hostedOn}</p>
                 </div>
-                {github && <span className="text-xs text-green-400">&#10003;</span>}
-                {githubError && <span className="text-xs text-red-400">&#10007;</span>}
+                {github && !polling && <span className="text-xs text-green-400">&#10003;</span>}
+                {polling && <span className="text-xs text-yellow-400 animate-pulse">rebuilding...</span>}
+                {githubError && !polling && <span className="text-xs text-red-400">&#10007;</span>}
               </div>
               {githubError ? (
                 <p className="text-xs text-red-400/60 pb-2">{strings.verify.github.error}</p>
