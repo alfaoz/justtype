@@ -88,6 +88,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }, [currentSlate, token]);
 
+  // Autofocus textarea on blank slate (so user can "just type")
+  useEffect(() => {
+    if (!currentSlate && !isLoading && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [currentSlate, isLoading]);
+
   // Notify parent about zen mode changes
   useEffect(() => {
     if (onZenModeChange) {
