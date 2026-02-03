@@ -12,7 +12,7 @@ in legacy mode, the server derives the encryption key and handles encrypt/decryp
 
 the user base is 5 people, so the "migration" is less of a migration and more of a group chat message saying "hey log in again."
 
-## e2e mode (current)
+## zero-knowledge end-to-end encryption
 
 ### how it works
 
@@ -46,7 +46,7 @@ the raw slate key is stored in the browser's indexeddb (`src/keyStore.js`), scop
 
 `src/crypto.js` handles all cryptographic operations client-side: key derivation (`deriveKey`), key wrapping/unwrapping (`wrapKey`/`unwrapKey`), content encryption/decryption (`encryptContent`/`decryptContent`), and recovery phrase generation. all using the web crypto api.
 
-## legacy mode (deprecated)
+## legacy encryption (deprecated)
 
 in legacy mode, the server derives the encryption key from the user's password during login:
 
@@ -56,7 +56,7 @@ password + encryption_salt -> PBKDF2-SHA256 (100k iterations) -> 256-bit encrypt
 
 the derived key is cached server-side in memory for 24 hours (`encryptionKeyCache` in `server/index.js`). encryption and decryption happen in `server/b2Storage.js` using node's `crypto` module. the server sees plaintext content during every save and load.
 
-this is **not zero-knowledge**. it's encrypted-at-rest. legacy mode will be removed once all users have migrated to e2e.
+this is **not zero-knowledge**. it's encrypted-at-rest. legacy encryption will be removed once the 5 users that still haven't migrated, migrates.
 
 ## encryption format
 
