@@ -71,13 +71,10 @@ the system slates are protected from deletion but can be edited by logging in as
 
 found a bug? security issue? want to add a feature? need a friend?
 
-- **security issues:** email security@justtype.io (not github issues)
+- **security issues:** email hi@justtype.io (not github issues)
 - **bugs/features:** open an issue or pr
 - **style guide:** see CONTRIBUTING.md
-- **friend:** alfa.ozaltin@gmail.com
-
-we welcome thoughtful contributions to the ux.
-
+  
 ## license
 
 mit
