@@ -803,6 +803,7 @@ take care!
       hostedOn: 'built by github actions from the public repo, not controlled by justtype servers',
       viewEndpoint: 'view raw hashes',
       viewWorkflow: 'view workflow source',
+      viewLatestCommit: 'view latest commit',
       loading: 'fetching from github...',
       error: 'could not reach github pages',
     },

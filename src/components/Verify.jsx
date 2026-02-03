@@ -4,6 +4,7 @@ import { strings } from '../strings';
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 const GITHUB_WORKFLOW_URL = 'https://github.com/alfaoz/justtype/blob/master/.github/workflows/publish-hashes.yml';
 const GITHUB_RUNS_URL = 'https://api.github.com/repos/alfaoz/justtype/actions/workflows/publish-hashes.yml/runs?per_page=1';
+const GITHUB_LATEST_COMMIT_URL = 'https://github.com/alfaoz/justtype/commits/master';
 
 const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
@@ -259,12 +260,15 @@ export function Verify() {
               {githubError ? (
                 <p className="text-xs text-red-400/60 pb-2">{strings.verify.github.error}</p>
               ) : (
-                <div className="flex gap-6 text-xs pb-2">
+                <div className="flex gap-6 text-xs pb-2 flex-wrap">
                   <a href={GITHUB_HASHES_URL} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-white transition-colors">
                     {strings.verify.github.viewEndpoint} →
                   </a>
                   <a href={GITHUB_WORKFLOW_URL} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-white transition-colors">
                     {strings.verify.github.viewWorkflow} →
+                  </a>
+                  <a href={GITHUB_LATEST_COMMIT_URL} target="_blank" rel="noopener noreferrer" className="text-[#888] hover:text-white transition-colors">
+                    {strings.verify.github.viewLatestCommit} →
                   </a>
                 </div>
               )}
