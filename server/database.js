@@ -312,6 +312,14 @@ try {
     console.log('✓ Database migrated: Added is_system_slate column to slates');
   }
 
+  // Add encrypted_title column to slates if it doesn't exist
+  const hasEncryptedTitle = slateColumnsCheck.some(col => col.name === 'encrypted_title');
+
+  if (!hasEncryptedTitle) {
+    db.exec(`ALTER TABLE slates ADD COLUMN encrypted_title TEXT;`);
+    console.log('✓ Database migrated: Added encrypted_title column to slates');
+  }
+
   // Create CLI device codes table for OAuth device flow
   db.exec(`
     CREATE TABLE IF NOT EXISTS cli_device_codes (

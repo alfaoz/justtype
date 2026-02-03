@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
+import { decryptTitle, encryptTitle } from '../crypto';
+import { getSlateKey } from '../keyStore';
 
-export function SlateManager({ token, onSelectSlate, onNewSlate }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
   const [slates, setSlates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
@@ -42,7 +44,45 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
       const response = await fetch(`${API_URL}/slates`, {
         credentials: 'include'
       });
-      const data = await response.json();
+      let data = await response.json();
+
+      // Get slate key for decryption
+      const slateKey = userId ? await getSlateKey(userId) : null;
+
+      if (slateKey) {
+        // Decrypt encrypted titles for unpublished slates
+        data = await Promise.all(data.map(async (slate) => {
+          if (slate.encrypted_title && !slate.is_published) {
+            try {
+              const decryptedTitle = await decryptTitle(slate.encrypted_title, slateKey);
+              return { ...slate, title: decryptedTitle };
+            } catch (err) {
+              console.error('Failed to decrypt title for slate:', slate.id, err);
+              return { ...slate, title: '[encrypted]' };
+            }
+          }
+          return slate;
+        }));
+
+        // Migration: encrypt plaintext titles for unpublished slates without encrypted_title
+        const needsMigration = data.filter(s => !s.is_published && !s.encrypted_title && s.title);
+        if (needsMigration.length > 0) {
+          for (const slate of needsMigration) {
+            try {
+              const encryptedTitleBlob = await encryptTitle(slate.title, slateKey);
+              await fetch(`${API_URL}/slates/${slate.id}/migrate-title`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ encryptedTitle: encryptedTitleBlob })
+              });
+            } catch (err) {
+              console.error('Failed to migrate title for slate:', slate.id, err);
+            }
+          }
+        }
+      }
+
       setSlates(data);
     } catch (err) {
       console.error('Failed to load slates:', err);
@@ -190,7 +230,7 @@ export function SlateManager({ token, onSelectSlate, onNewSlate }) {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="search slates..."
+                placeholder="search titles..."
                 className="w-full bg-[#1a1a1a] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
               />
             </div>

@@ -1979,30 +1979,24 @@ app.get('/auth/google/link/callback',
 // ============ SLATE ROUTES ============
 
 // Get all slates for authenticated user
+// Client handles search/sort - server just returns all slates
 app.get('/api/slates', authenticateToken, (req, res) => {
   try {
-    const { search } = req.query;
+    const slates = db.prepare(`
+      SELECT id, title, encrypted_title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
+      FROM slates
+      WHERE user_id = ?
+    `).all(req.user.id);
 
-    let slates;
-    if (search && search.trim()) {
-      // Search by title (case-insensitive)
-      const searchTerm = `%${search.trim()}%`;
-      slates = db.prepare(`
-        SELECT id, title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
-        FROM slates
-        WHERE user_id = ? AND title LIKE ?
-        ORDER BY updated_at DESC
-      `).all(req.user.id, searchTerm);
-    } else {
-      slates = db.prepare(`
-        SELECT id, title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
-        FROM slates
-        WHERE user_id = ?
-        ORDER BY updated_at DESC
-      `).all(req.user.id);
-    }
+    // For unpublished slates with encrypted_title, hide plaintext (client decrypts)
+    const result = slates.map(slate => {
+      if (!slate.is_published && slate.encrypted_title) {
+        return { ...slate, title: null };
+      }
+      return slate;
+    });
 
-    res.json(slates);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch slates' });
   }
@@ -2047,7 +2041,7 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 
 // Create new slate
 app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
-  const { title, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
+  const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
 
   const isE2E = req.e2e && encryptedContent;
 
@@ -2104,10 +2098,10 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
     // Save metadata to database with encryption_version = 1
     const stmt = db.prepare(`
-      INSERT INTO slates (user_id, title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO slates (user_id, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(req.user.id, title, b2FileId, wordCount, charCount, sizeBytes, 1);
+    const result = stmt.run(req.user.id, title, encryptedTitle || null, b2FileId, wordCount, charCount, sizeBytes, 1);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2138,7 +2132,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
 // Update slate
 app.put('/api/slates/:id', authenticateToken, async (req, res) => {
-  const { title, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
+  const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
 
   // Determine if E2E
   const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
@@ -2268,11 +2262,11 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     const encryptionVersion = slate.is_system_slate ? 0 : 1;
     const stmt = db.prepare(`
       UPDATE slates
-      SET title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
+      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
           is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
     `);
-    stmt.run(title, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
+    stmt.run(title, encryptedTitle || null, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2303,7 +2297,7 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
 
 // Publish/unpublish slate
 app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
-  const { isPublished, publicContent } = req.body;
+  const { isPublished, publicContent, publicTitle, encryptedTitle } = req.body;
 
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -2351,12 +2345,25 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
     // Keep existing published_at when unpublishing (to track that it was published before)
     const publishedAt = isPublished && !slate.published_at ? new Date().toISOString() : slate.published_at;
 
+    // Handle title encryption state based on publish action
+    let titleToStore = slate.title;
+    let encryptedTitleToStore = slate.encrypted_title;
+
+    if (isPublished && publicTitle) {
+      // Publishing: store plaintext title for public view, clear encrypted
+      titleToStore = publicTitle;
+      encryptedTitleToStore = null;
+    } else if (!isPublished && encryptedTitle) {
+      // Unpublishing: encrypt title, keep plaintext as fallback
+      encryptedTitleToStore = encryptedTitle;
+    }
+
     const stmt = db.prepare(`
       UPDATE slates
-      SET is_published = ?, share_id = ?, published_at = ?, b2_public_file_id = ?
+      SET is_published = ?, share_id = ?, published_at = ?, b2_public_file_id = ?, title = ?, encrypted_title = ?
       WHERE id = ? AND user_id = ?
     `);
-    stmt.run(isPublished ? 1 : 0, shareId, publishedAt, publicFileId, req.params.id, req.user.id);
+    stmt.run(isPublished ? 1 : 0, shareId, publishedAt, publicFileId, titleToStore, encryptedTitleToStore, req.params.id, req.user.id);
 
     const shareUrl = isPublished ? `${process.env.PUBLIC_URL}/s/${shareId}` : null;
 
@@ -2410,6 +2417,37 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       });
     }
     res.status(500).json({ error: 'Failed to delete slate' });
+  }
+});
+
+// Migrate slate title to encrypted (one-time operation for existing slates)
+app.post('/api/slates/:id/migrate-title', authenticateToken, async (req, res) => {
+  const { encryptedTitle } = req.body;
+
+  if (!encryptedTitle) {
+    return res.status(400).json({ error: 'Encrypted title required' });
+  }
+
+  try {
+    const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.user.id);
+
+    if (!slate) {
+      return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // Only migrate unpublished slates without encrypted title
+    if (slate.is_published || slate.encrypted_title) {
+      return res.json({ success: true, skipped: true });
+    }
+
+    db.prepare('UPDATE slates SET encrypted_title = ? WHERE id = ?')
+      .run(encryptedTitle, req.params.id);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Migrate title error:', error);
+    res.status(500).json({ error: 'Failed to migrate title' });
   }
 });
 

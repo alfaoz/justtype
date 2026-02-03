@@ -126,6 +126,48 @@ export async function decryptContent(base64Blob, slateKeyBytes) {
   return parsed.content;
 }
 
+// Encrypt a title string. Returns base64 blob.
+export async function encryptTitle(plaintext, slateKeyBytes) {
+  const enc = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', slateKeyBytes, 'AES-GCM', false, ['encrypt']
+  );
+  const result = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 },
+    cryptoKey,
+    enc.encode(plaintext)
+  );
+  const resultBytes = new Uint8Array(result);
+  const ciphertext = resultBytes.slice(0, resultBytes.length - TAG_LENGTH);
+  const authTag = resultBytes.slice(resultBytes.length - TAG_LENGTH);
+  const combined = new Uint8Array(IV_LENGTH + TAG_LENGTH + ciphertext.length);
+  combined.set(iv, 0);
+  combined.set(authTag, IV_LENGTH);
+  combined.set(ciphertext, IV_LENGTH + TAG_LENGTH);
+  return bufToBase64(combined);
+}
+
+// Decrypt a title blob. Returns plaintext string.
+export async function decryptTitle(base64Blob, slateKeyBytes) {
+  const data = base64ToBuf(base64Blob);
+  const iv = data.slice(0, IV_LENGTH);
+  const authTag = data.slice(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
+  const ciphertext = data.slice(IV_LENGTH + TAG_LENGTH);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', slateKeyBytes, 'AES-GCM', false, ['decrypt']
+  );
+  const input = new Uint8Array(ciphertext.length + TAG_LENGTH);
+  input.set(ciphertext, 0);
+  input.set(authTag, ciphertext.length);
+  const result = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 },
+    cryptoKey,
+    input
+  );
+  return new TextDecoder().decode(result);
+}
+
 // Generate a 12-word BIP39 recovery phrase
 export function generateRecoveryPhrase(wordlist) {
   const indices = crypto.getRandomValues(new Uint16Array(12));

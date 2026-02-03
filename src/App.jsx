@@ -240,7 +240,14 @@ export default function App() {
           setView('writer');
         }
       } else if (path === '/slates') {
-        setView('slates');
+        if (!token) {
+          // Redirect to home and show login modal if not authenticated
+          setView('writer');
+          setShowAuthModal(true);
+          window.history.pushState({}, '', '/');
+        } else {
+          setView('slates');
+        }
       } else if (path === '/account') {
         if (!token) {
           // Redirect to home and show login modal if not authenticated
@@ -1054,6 +1061,7 @@ export default function App() {
           <div className="h-full animate-slide-down">
             <SlateManager
               token={token}
+              userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
             />

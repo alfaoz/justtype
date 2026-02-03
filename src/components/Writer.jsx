@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme } from '../themes';
-import { encryptContent, decryptContent } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
 
@@ -463,6 +463,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       const data = await response.json();
       let slateContent;
+      let slateTitle = data.title;
       if (data.encrypted && data.encryptedContent) {
         // E2E: decrypt client-side
         const slateKey = await getSlateKey(userId);
@@ -472,10 +473,19 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           return;
         }
         slateContent = await decryptContent(data.encryptedContent, slateKey);
+        // Decrypt title if encrypted
+        if (data.encrypted_title && !data.is_published) {
+          try {
+            slateTitle = await decryptTitle(data.encrypted_title, slateKey);
+          } catch (err) {
+            console.error('Failed to decrypt title:', err);
+            slateTitle = 'untitled slate';
+          }
+        }
       } else {
         slateContent = data.content;
       }
-      setTitle(data.title);
+      setTitle(slateTitle);
       setContent(slateContent);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
@@ -632,10 +642,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       let body;
       if (slateKey) {
         const encrypted = await encryptContent(content, slateKey);
+        const encryptedTitleBlob = await encryptTitle(titleToSave, slateKey);
         const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
         const charCount = content.length;
         const sizeBytes = new TextEncoder().encode(content).length;
-        body = { title: titleToSave, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
+        body = { title: titleToSave, encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
       } else {
         body = { title: titleToSave, content };
       }
@@ -756,13 +767,25 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const isRepublish = wasPublishedBeforeEdit && !shareUrl;
 
     try {
-      // For E2E users publishing, send plaintext content for the public copy
+      // For E2E users publishing, send plaintext content and title for the public copy
+      // For unpublishing, send encrypted title to re-encrypt it
       const publishBody = { isPublished: !shareUrl };
+      const slateKey = userId ? await getSlateKey(userId) : null;
+
       if (!shareUrl) {
         // Publishing — include plaintext for public copy (E2E users need this)
-        const slateKey = userId ? await getSlateKey(userId) : null;
         if (slateKey) {
           publishBody.publicContent = content;
+          // Send plaintext title for public view
+          const firstLine = content.split('\n')[0].trim();
+          publishBody.publicTitle = firstLine || 'untitled slate';
+        }
+      } else {
+        // Unpublishing — encrypt title for private storage
+        if (slateKey) {
+          const firstLine = content.split('\n')[0].trim();
+          const titleToEncrypt = firstLine || 'untitled slate';
+          publishBody.encryptedTitle = await encryptTitle(titleToEncrypt, slateKey);
         }
       }
 
