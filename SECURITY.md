@@ -2,7 +2,7 @@
 
 ## reporting vulnerabilities
 
-found a security issue? please email **security@justtype.io**
+found a security issue? please email **hi@justtype.io**
 
 do not open public github issues for security vulnerabilities.
 
