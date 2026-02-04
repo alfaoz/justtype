@@ -174,8 +174,14 @@ export function VerifyBadge({ children, className }) {
             )}
             {result && !result.error && (
               <div className="space-y-1.5">
-                <div className={`text-xs font-medium ${result.verified ? 'text-green-400' : 'text-yellow-400'}`}>
-                  {result.verified ? '\u2713 verified' : '\u2713 server match'}
+                <div className={`text-xs font-medium ${
+                  result.verified ? 'text-green-400' :
+                  (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? 'text-red-400' :
+                  'text-yellow-400'
+                }`}>
+                  {result.verified ? '\u2713 verified' :
+                   (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? '\u2717 github mismatch' :
+                   '\u2713 server match'}
                 </div>
                 <div className="text-[#666] space-y-0.5">
                   <div className="flex justify-between gap-4">
@@ -186,7 +192,10 @@ export function VerifyBadge({ children, className }) {
                     <span>css</span>
                     <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{truncate(result.cssHash)}</span>
                   </div>
-                  {result.ghMatch === false && (
+                  {result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash && (
+                    <div className="text-red-400/70 pt-1">server and github hashes differ</div>
+                  )}
+                  {result.ghMatch === false && (!result.ghJsHash || result.ghJsHash === result.jsHash) && (
                     <div className="text-yellow-400/50 pt-1 animate-pulse">github actions: rebuilding...</div>
                   )}
                   {result.ghMatch === null && (

@@ -1,14 +1,36 @@
 @import "tailwindcss";
 
-/* Font size (punto) variants - explicit color to prevent cache issues */
-.punto-small { font-size: 14px !important; line-height: 1.7 !important; color: #d4d4d4; }
-.punto-base { font-size: 15px !important; line-height: 1.7 !important; color: #d4d4d4; }
-.punto-large { font-size: 18px !important; line-height: 1.6 !important; color: #d4d4d4; }
+/* ========================================
+   CSS VARIABLES - Theme System
+   All theme colors are defined as CSS variables
+   and set dynamically via JavaScript
+   ======================================== */
+:root {
+  /* Default (dark theme) - these get overridden by JS for custom themes */
+  --theme-bg: #111111;
+  --theme-bg-secondary: #1a1a1a;
+  --theme-bg-tertiary: #222222;
+  --theme-text: #d4d4d4;
+  --theme-text-muted: #a0a0a0;
+  --theme-text-dim: #666666;
+  --theme-border: #333333;
+  --theme-border-light: #222222;
+  --theme-accent: #ffffff;
+  --theme-blue: #60a5fa;
+  --theme-orange: #fb923c;
+  --theme-red: #f87171;
+  --theme-green: #4ade80;
+  /* Font variables */
+  --theme-font-ui: 'JetBrains Mono', monospace;
+  --theme-font-writer: 'JetBrains Mono', monospace;
+}
 
-/* Punto light mode overrides */
-body.light-mode .punto-small,
-body.light-mode .punto-base,
-body.light-mode .punto-large { color: #2a2a2a; }
+/* Font size (punto) variants - use CSS variables for color and font */
+.punto-small { font-size: 14px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-base { font-size: 15px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-large { font-size: 18px !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+
+/* Punto theme overrides - CSS variables handle this now */
 
 /* Animations */
 @keyframes slide-in-right {
@@ -381,11 +403,7 @@ body.sepia-mode .bg-white {
   color: #f4ecd8 !important;
 }
 
-body.sepia-mode .punto-small,
-body.sepia-mode .punto-base,
-body.sepia-mode .punto-large {
-  color: #5c4b37 !important;
-}
+/* sepia punto - CSS variables handle this */
 
 body.sepia-mode ::-webkit-scrollbar-thumb {
   background: #d4c4a8;
@@ -469,11 +487,7 @@ body.midnight-mode .bg-white {
   color: #0a0a14 !important;
 }
 
-body.midnight-mode .punto-small,
-body.midnight-mode .punto-base,
-body.midnight-mode .punto-large {
-  color: #c8c8d4 !important;
-}
+/* midnight punto - CSS variables handle this */
 
 body.midnight-mode .text-blue-400 {
   color: #6366f1 !important;
@@ -494,4 +508,105 @@ body.midnight-mode ::-webkit-scrollbar-thumb {
 
 body.midnight-mode ::-webkit-scrollbar-track {
   background: #0a0a14;
+}
+
+/* ========================================
+   CUSTOM THEMES
+   Custom themes use CSS variables exclusively.
+   These overrides ensure Tailwind classes use CSS variables.
+   ======================================== */
+body.custom-theme {
+  background: var(--theme-bg);
+  color: var(--theme-text);
+}
+
+body.custom-theme #root {
+  background: var(--theme-bg);
+}
+
+body.custom-theme .bg-\[\#111111\],
+body.custom-theme .bg-black {
+  background: var(--theme-bg) !important;
+}
+
+body.custom-theme .bg-\[\#1a1a1a\] {
+  background: var(--theme-bg-secondary) !important;
+}
+
+body.custom-theme .bg-\[\#222\],
+body.custom-theme .bg-\[\#0a0a0a\] {
+  background: var(--theme-bg-tertiary) !important;
+}
+
+body.custom-theme .text-white {
+  color: var(--theme-accent) !important;
+}
+
+body.custom-theme .text-\[\#d4d4d4\] {
+  color: var(--theme-text) !important;
+}
+
+body.custom-theme .text-\[\#a0a0a0\] {
+  color: var(--theme-text-muted) !important;
+}
+
+body.custom-theme .text-\[\#666\],
+body.custom-theme .text-\[\#808080\] {
+  color: var(--theme-text-dim) !important;
+}
+
+body.custom-theme .border-\[\#333\],
+body.custom-theme .border-\[\#222\] {
+  border-color: var(--theme-border) !important;
+}
+
+body.custom-theme input,
+body.custom-theme textarea {
+  background: var(--theme-bg-secondary) !important;
+  color: var(--theme-text) !important;
+  border-color: var(--theme-border) !important;
+}
+
+body.custom-theme textarea::placeholder {
+  color: var(--theme-text-dim) !important;
+}
+
+body.custom-theme .hover\:text-white:hover {
+  color: var(--theme-accent) !important;
+}
+
+body.custom-theme .hover\:bg-\[\#333\]:hover,
+body.custom-theme .hover\:bg-\[\#1a1a1a\]:hover {
+  background: var(--theme-bg-tertiary) !important;
+}
+
+body.custom-theme .bg-white {
+  background: var(--theme-accent) !important;
+  color: var(--theme-bg) !important;
+}
+
+body.custom-theme .text-blue-400 {
+  color: var(--theme-blue) !important;
+}
+
+body.custom-theme .text-orange-400 {
+  color: var(--theme-orange) !important;
+}
+
+body.custom-theme .text-red-400,
+body.custom-theme .text-red-600 {
+  color: var(--theme-red) !important;
+}
+
+body.custom-theme .text-green-400,
+body.custom-theme .text-green-500 {
+  color: var(--theme-green) !important;
+}
+
+body.custom-theme ::-webkit-scrollbar-thumb {
+  background: var(--theme-border);
+}
+
+body.custom-theme ::-webkit-scrollbar-track {
+  background: var(--theme-bg);
 }

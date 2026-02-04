@@ -20,6 +20,7 @@ import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } f
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
+import { applyThemeVariables, themeExists } from './themes';
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'notfound'
@@ -56,6 +57,15 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const notificationRef = useRef(null);
+
+  // Initialize theme on mount - this ensures CSS variables are set for all pages
+  // including special pages like /verify, /status, /cli that don't render Writer
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('justtype-theme') || 'dark';
+    // Validate theme exists, fallback to dark if not
+    const themeToApply = themeExists(savedTheme) ? savedTheme : 'dark';
+    applyThemeVariables(themeToApply);
+  }, []);
 
   // Setup global login nudge trigger for Writer component
   useEffect(() => {

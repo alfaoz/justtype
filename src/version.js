@@ -2,4 +2,4 @@
 // MAJOR: Breaking changes
 // MINOR: New features (backward compatible)
 // PATCH: Bug fixes/hotfixes
-export const VERSION = '2.15.1';
+export const VERSION = '2.16.0';

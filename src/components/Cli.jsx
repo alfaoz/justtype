@@ -11,11 +11,11 @@ export function Cli() {
   };
 
   return (
-    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex items-center justify-center p-4 md:p-6">
+    <div className="min-h-screen font-mono flex items-center justify-center p-4 md:p-6" style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text-muted)' }}>
       <div className="flex flex-col items-center">
-        {/* ASCII Logo - purple tint, hidden on mobile */}
+        {/* ASCII Logo - accent color, hidden on mobile */}
         <div className="hidden md:block mb-8">
-          <pre className="text-[#8B5CF6] text-xs leading-tight select-none font-mono">{`           _           _     _
+          <pre className="text-xs leading-tight select-none font-mono" style={{ color: 'var(--theme-blue)' }}>{`           _           _     _
    _      (_)_   _ ___| |_  | |_ _   _ _ __   ___
  _| |_    | | | | / __| __| | __| | | | '_ \\ / _ \\
 |_   _|   | | |_| \\__ \\ |_  | |_| |_| | |_) |  __/
@@ -24,23 +24,26 @@ export function Cli() {
         </div>
 
         {/* Mobile title */}
-        <h1 className="md:hidden text-2xl text-white mb-4">
-          <span className="text-[#8B5CF6]">+</span> justtype cli
+        <h1 className="md:hidden text-2xl mb-4" style={{ color: 'var(--theme-accent)' }}>
+          <span style={{ color: 'var(--theme-blue)' }}>+</span> justtype cli
         </h1>
 
         {/* Tagline */}
-        <p className="text-[#888] text-lg mb-8">
+        <p className="text-lg mb-8" style={{ color: 'var(--theme-text-muted)' }}>
           {strings.cli.tagline}
         </p>
 
         {/* The hero: install command */}
         <div
           onClick={handleCopy}
-          className="group bg-[#0d0d0d] border border-[#333] hover:border-[#8B5CF6]/50 rounded-lg px-5 py-4 cursor-pointer transition-all duration-200 mb-2"
+          className="group rounded-lg px-5 py-4 cursor-pointer transition-all duration-200 mb-2"
+          style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)' }}
+          onMouseOver={(e) => e.currentTarget.style.borderColor = 'var(--theme-blue)'}
+          onMouseOut={(e) => e.currentTarget.style.borderColor = 'var(--theme-border)'}
         >
           <div className="flex items-center gap-3">
-            <span className="text-[#8B5CF6] select-none">$</span>
-            <code className="text-white text-sm whitespace-nowrap">
+            <span className="select-none" style={{ color: 'var(--theme-blue)' }}>$</span>
+            <code className="text-sm whitespace-nowrap" style={{ color: 'var(--theme-accent)' }}>
               {strings.cli.install}
             </code>
           </div>
@@ -48,30 +51,39 @@ export function Cli() {
 
         <button
           onClick={handleCopy}
-          className="text-sm text-[#666] hover:text-[#8B5CF6] transition-colors mb-12"
+          className="text-sm transition-colors mb-12"
+          style={{ color: 'var(--theme-text-dim)' }}
+          onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-blue)'}
+          onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}
         >
           {copied ? strings.cli.copied : strings.cli.copyAction}
         </button>
 
         {/* One line description */}
-        <p className="text-[#666] text-sm mb-12">
+        <p className="text-sm mb-12" style={{ color: 'var(--theme-text-dim)' }}>
           {strings.cli.description}
         </p>
 
         {/* Footer links */}
         <div className="flex items-center gap-4 text-xs">
-          <span className="text-[#444]">{strings.cli.platforms}</span>
+          <span style={{ color: 'var(--theme-text-dim)' }}>{strings.cli.platforms}</span>
           <a
             href="https://github.com/alfaoz/justtype/tree/master/cli"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[#666] hover:text-[#8B5CF6] transition-colors"
+            className="transition-colors"
+            style={{ color: 'var(--theme-text-dim)' }}
+            onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-blue)'}
+            onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}
           >
             {strings.cli.github}
           </a>
           <a
             href="/"
-            className="text-[#666] hover:text-[#8B5CF6] transition-colors"
+            className="transition-colors"
+            style={{ color: 'var(--theme-text-dim)' }}
+            onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-blue)'}
+            onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}
           >
             justtype.io
           </a>

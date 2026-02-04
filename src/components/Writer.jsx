@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } f
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
-import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme } from '../themes';
+import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
@@ -106,18 +106,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     const activeTheme = previewTheme || theme;
 
-    // Remove all theme classes first
-    document.body.classList.remove('light-mode', 'sepia-mode', 'midnight-mode');
-
-    // Apply the appropriate theme class
-    if (activeTheme === 'light') {
-      document.body.classList.add('light-mode');
-    } else if (activeTheme === 'sepia') {
-      document.body.classList.add('sepia-mode');
-    } else if (activeTheme === 'midnight') {
-      document.body.classList.add('midnight-mode');
-    }
-    // 'dark' is the default, no class needed
+    // Apply CSS variables and body classes for this theme
+    applyThemeVariables(activeTheme);
 
     // Only save to localStorage when not previewing
     if (!previewTheme) {
@@ -1068,13 +1058,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   <button
                     onClick={toggleTheme}
                     className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                    style={{ color: theme === 'dark' || theme === 'midnight' ? 'white' : '#1a1a1a' }}
+                    style={{ color: 'var(--theme-accent)' }}
                   >
                     theme: {theme}
                   </button>
                   {showThemePicker && (
                     <div
-                      className="absolute bottom-full left-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                      className="absolute bottom-full left-0 mb-2 rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)' }}
                       onMouseLeave={() => setPreviewTheme(null)}
                     >
                       {/* Built-in themes */}
@@ -1083,9 +1074,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                           key={themeId}
                           onClick={() => selectTheme(themeId)}
                           onMouseEnter={() => setPreviewTheme(themeId)}
-                          className={`w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm ${
-                            theme === themeId ? 'text-white' : 'text-[#a0a0a0]'
-                          }`}
+                          className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+                          style={{
+                            color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
+                            backgroundColor: 'transparent'
+                          }}
+                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                         >
                           {themeId}
                         </button>
@@ -1093,22 +1088,29 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       {/* Custom themes */}
                       {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
                         <>
-                          <div className="border-t border-[#333] my-1" />
+                          <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
                           {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => (
                             <div key={themeId} className="flex items-center">
                               <button
                                 onClick={() => selectTheme(themeId)}
                                 onMouseEnter={() => setPreviewTheme(themeId)}
-                                className={`flex-1 px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm ${
-                                  theme === themeId ? 'text-white' : 'text-[#a0a0a0]'
-                                }`}
+                                className="flex-1 px-4 py-2 text-left transition-colors duration-200 text-sm"
+                                style={{
+                                  color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
+                                  backgroundColor: 'transparent'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                               >
                                 {themeId}
                               </button>
                               <button
                                 onClick={() => handleDeleteTheme(themeId)}
                                 onMouseEnter={() => setPreviewTheme(themeId)}
-                                className="px-3 py-2 text-[#666] hover:text-red-400 hover:bg-[#333] transition-colors duration-200 text-sm"
+                                className="px-3 py-2 transition-colors duration-200 text-sm"
+                                style={{ color: 'var(--theme-text-dim)' }}
+                                onMouseOver={(e) => { e.currentTarget.style.color = 'var(--theme-red)'; e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'; }}
+                                onMouseOut={(e) => { e.currentTarget.style.color = 'var(--theme-text-dim)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
                                 title="delete theme"
                               >
                                 ×
@@ -1118,22 +1120,28 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                         </>
                       )}
                       {/* Import/Download buttons */}
-                      <div className="border-t border-[#333] my-1" />
+                      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
                       <button
                         onClick={() => themeFileInputRef.current?.click()}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm text-[#a0a0a0]"
+                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+                        style={{ color: 'var(--theme-text-muted)', backgroundColor: 'transparent' }}
+                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
                         + import json
                       </button>
                       <button
                         onClick={downloadExampleTheme}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] transition-colors duration-200 text-sm text-[#666]"
+                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+                        style={{ color: 'var(--theme-text-dim)', backgroundColor: 'transparent' }}
+                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
                         ↓ example.json
                       </button>
                       {/* Import error message */}
                       {themeImportError && (
-                        <div className="px-4 py-2 text-xs text-red-400 border-t border-[#333]">
+                        <div className="px-4 py-2 text-xs" style={{ color: 'var(--theme-red)', borderTop: '1px solid var(--theme-border)' }}>
                           {themeImportError}
                         </div>
                       )}
@@ -1152,7 +1160,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <button
                   onClick={cyclePunto}
                   className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                  style={{ color: 'var(--theme-accent)' }}
                 >
                   {getPuntoLabel()}
                 </button>
@@ -1160,7 +1168,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <button
                   onClick={cycleFocus}
                   className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                  style={{ color: 'var(--theme-accent)' }}
                 >
                   {getFocusLabel()}
                 </button>
@@ -1168,7 +1176,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <button
                   onClick={() => setShowCounter(!showCounter)}
                   className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: theme === 'dark' ? 'white' : '#1a1a1a' }}
+                  style={{ color: 'var(--theme-accent)' }}
                 >
                   {getCounterLabel()}
                 </button>
