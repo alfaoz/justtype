@@ -477,6 +477,12 @@ export default function App() {
                   setShowPinSetup(true);
                 }
               }
+
+              // Fetch and merge theme preferences from server
+              const prefs = await fetchAndMergePreferences();
+              if (prefs.success && prefs.theme) {
+                applyThemeVariables(prefs.theme);
+              }
             }
           })
           .catch(err => {
@@ -513,6 +519,12 @@ export default function App() {
     localStorage.setItem('justtype-email', authData.user.email);
     localStorage.setItem('justtype-email-verified', authData.user.email_verified);
     setShowAuthModal(false);
+
+    // Fetch and merge theme preferences from server
+    const prefs = await fetchAndMergePreferences();
+    if (prefs.success && prefs.theme) {
+      applyThemeVariables(prefs.theme);
+    }
 
     // Show recovery key modal if provided (new signup or migration)
     if (authData.recoveryPhrase) {

@@ -1293,7 +1293,7 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
     }
 
     res.json({
-      theme: user.theme || 'dark',
+      theme: user.theme || 'light',
       customThemes
     });
   } catch (error) {
