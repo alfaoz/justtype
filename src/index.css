@@ -6,20 +6,20 @@
    and set dynamically via JavaScript
    ======================================== */
 :root {
-  /* Default (dark theme) - these get overridden by JS for custom themes */
-  --theme-bg: #111111;
-  --theme-bg-secondary: #1a1a1a;
-  --theme-bg-tertiary: #222222;
-  --theme-text: #d4d4d4;
-  --theme-text-muted: #a0a0a0;
-  --theme-text-dim: #666666;
-  --theme-border: #333333;
-  --theme-border-light: #222222;
-  --theme-accent: #ffffff;
-  --theme-blue: #60a5fa;
-  --theme-orange: #fb923c;
-  --theme-red: #f87171;
-  --theme-green: #4ade80;
+  /* Default (light theme) - these get overridden by JS for custom themes */
+  --theme-bg: #faf9f7;
+  --theme-bg-secondary: #ffffff;
+  --theme-bg-tertiary: #f0efed;
+  --theme-text: #1a1a1a;
+  --theme-text-muted: #4a4a4a;
+  --theme-text-dim: #888888;
+  --theme-border: #d4d2cf;
+  --theme-border-light: #e8e7e5;
+  --theme-accent: #1a1a1a;
+  --theme-blue: #0066cc;
+  --theme-orange: #b85c00;
+  --theme-red: #b33000;
+  --theme-green: #008800;
   /* Font variables */
   --theme-font-ui: 'JetBrains Mono', monospace;
   --theme-font-writer: 'JetBrains Mono', monospace;

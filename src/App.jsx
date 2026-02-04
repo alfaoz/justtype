@@ -61,9 +61,9 @@ export default function App() {
   // Initialize theme on mount - this ensures CSS variables are set for all pages
   // including special pages like /verify, /status, /cli that don't render Writer
   useEffect(() => {
-    const savedTheme = localStorage.getItem('justtype-theme') || 'dark';
-    // Validate theme exists, fallback to dark if not
-    const themeToApply = themeExists(savedTheme) ? savedTheme : 'dark';
+    const savedTheme = localStorage.getItem('justtype-theme') || 'light';
+    // Validate theme exists, fallback to light if not
+    const themeToApply = themeExists(savedTheme) ? savedTheme : 'light';
     applyThemeVariables(themeToApply);
   }, []);
 

@@ -242,7 +242,7 @@ export const getTheme = (id) => {
   if (builtInThemes[id]) return builtInThemes[id];
   const customThemes = getCustomThemes();
   if (customThemes[id]) return customThemes[id];
-  return builtInThemes.dark;
+  return builtInThemes.light;
 };
 
 // Check if theme exists

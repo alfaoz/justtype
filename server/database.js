@@ -284,7 +284,7 @@ try {
   const hasTheme = userColumns.some(col => col.name === 'theme');
 
   if (!hasTheme) {
-    db.exec(`ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark';`);
+    db.exec(`ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'light';`);
     console.log('✓ Database migrated: Added theme column');
   }
 
