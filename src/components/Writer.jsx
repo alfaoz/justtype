@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } f
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
-import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables } from '../themes';
+import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
@@ -909,6 +909,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setTheme(themeId);
     setPreviewTheme(null);
     setShowThemePicker(false);
+    // Sync to server if logged in
+    if (token) {
+      syncThemeToServer(themeId);
+    }
   };
 
   const cycleTheme = () => {
@@ -942,6 +946,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           setTheme(json.id);
           setThemeImportError(null);
           setShowThemePicker(false);
+          // Sync custom themes and selected theme to server
+          if (token) {
+            syncCustomThemesToServer();
+            syncThemeToServer(json.id);
+          }
         } else {
           setThemeImportError(result.errors.join(', '));
         }
@@ -956,8 +965,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const handleDeleteTheme = (themeId) => {
     const result = removeCustomTheme(themeId);
-    if (result.success && theme === themeId) {
-      setTheme('dark');
+    if (result.success) {
+      if (theme === themeId) {
+        setTheme('dark');
+        if (token) syncThemeToServer('dark');
+      }
+      // Sync custom themes to server
+      if (token) syncCustomThemesToServer();
     }
   };
 

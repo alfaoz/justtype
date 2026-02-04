@@ -315,6 +315,9 @@ export const validateTheme = (theme) => {
   return { valid: errors.length === 0, errors };
 };
 
+// Maximum number of custom themes allowed
+export const MAX_CUSTOM_THEMES = 3;
+
 // Add a custom theme
 export const addCustomTheme = (theme) => {
   const validation = validateTheme(theme);
@@ -323,6 +326,12 @@ export const addCustomTheme = (theme) => {
   }
 
   const customThemes = getCustomThemes();
+
+  // Check max themes limit (only if adding a new theme, not updating existing)
+  if (!(theme.id in customThemes) && Object.keys(customThemes).length >= MAX_CUSTOM_THEMES) {
+    return { success: false, errors: [`maximum ${MAX_CUSTOM_THEMES} custom themes allowed`] };
+  }
+
   const themeToSave = {
     id: theme.id,
     name: theme.name,
@@ -357,6 +366,84 @@ export const removeCustomTheme = (id) => {
   saveCustomThemes(customThemes);
 
   return { success: true };
+};
+
+// ============================================================================
+// Theme Syncing (server-side persistence for logged-in users)
+// ============================================================================
+
+import { API_URL } from './config';
+
+// Fetch preferences from server and merge with local
+export const fetchAndMergePreferences = async () => {
+  try {
+    const res = await fetch(`${API_URL}/preferences`, {
+      credentials: 'include'
+    });
+
+    if (!res.ok) return { success: false };
+
+    const data = await res.json();
+
+    // Apply server theme if it exists and is valid
+    if (data.theme && (data.theme in builtInThemes || (data.customThemes && data.theme in data.customThemes))) {
+      localStorage.setItem('justtype-theme', data.theme);
+    }
+
+    // Merge server custom themes with local (server takes priority, but keep local that don't conflict)
+    if (data.customThemes && typeof data.customThemes === 'object') {
+      const localThemes = getCustomThemes();
+      const mergedThemes = { ...data.customThemes }; // Start with server themes
+
+      // Add local themes if under limit and not conflicting
+      for (const [id, theme] of Object.entries(localThemes)) {
+        if (!(id in mergedThemes) && Object.keys(mergedThemes).length < MAX_CUSTOM_THEMES) {
+          mergedThemes[id] = theme;
+        }
+      }
+
+      saveCustomThemes(mergedThemes);
+    }
+
+    return { success: true, theme: data.theme, customThemes: data.customThemes };
+  } catch (error) {
+    console.error('Failed to fetch preferences:', error);
+    return { success: false };
+  }
+};
+
+// Save current theme selection to server
+export const syncThemeToServer = async (themeId) => {
+  try {
+    await fetch(`${API_URL}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ theme: themeId })
+    });
+  } catch (error) {
+    console.error('Failed to sync theme:', error);
+  }
+};
+
+// Save custom themes to server
+export const syncCustomThemesToServer = async () => {
+  try {
+    const customThemes = getCustomThemes();
+    await fetch(`${API_URL}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ customThemes })
+    });
+  } catch (error) {
+    console.error('Failed to sync custom themes:', error);
+  }
+};
+
+// Get count of custom themes
+export const getCustomThemeCount = () => {
+  return Object.keys(getCustomThemes()).length;
 };
 
 // Get example theme JSON for download

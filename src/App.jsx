@@ -20,7 +20,7 @@ import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } f
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
-import { applyThemeVariables, themeExists } from './themes';
+import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'notfound'
@@ -124,6 +124,12 @@ export default function App() {
           localStorage.setItem('justtype-user-id', userData.id);
           localStorage.setItem('justtype-email', userData.email);
           localStorage.setItem('justtype-email-verified', userData.email_verified);
+
+          // Fetch and merge theme preferences from server
+          const prefs = await fetchAndMergePreferences();
+          if (prefs.success && prefs.theme) {
+            applyThemeVariables(prefs.theme);
+          }
 
           // If recovery key was never shown to user, redirect to account to regenerate
           if (userData.recoveryKeyPending) {

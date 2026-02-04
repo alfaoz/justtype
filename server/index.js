@@ -1271,6 +1271,92 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 });
 
 // ============================================================================
+// User Preferences (Theme Sync)
+// ============================================================================
+
+// Get user preferences (theme and custom themes)
+app.get('/api/preferences', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT theme, custom_themes FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'user not found' });
+    }
+
+    let customThemes = {};
+    if (user.custom_themes) {
+      try {
+        customThemes = JSON.parse(user.custom_themes);
+      } catch {
+        customThemes = {};
+      }
+    }
+
+    res.json({
+      theme: user.theme || 'dark',
+      customThemes
+    });
+  } catch (error) {
+    console.error('Get preferences error:', error);
+    res.status(500).json({ error: 'failed to get preferences' });
+  }
+});
+
+// Update user preferences
+app.put('/api/preferences', authenticateToken, (req, res) => {
+  try {
+    const { theme, customThemes } = req.body;
+    const updates = [];
+    const params = [];
+
+    // Validate and update theme
+    if (theme !== undefined) {
+      if (typeof theme !== 'string' || theme.length > 50) {
+        return res.status(400).json({ error: 'invalid theme' });
+      }
+      updates.push('theme = ?');
+      params.push(theme);
+    }
+
+    // Validate and update custom themes
+    if (customThemes !== undefined) {
+      if (typeof customThemes !== 'object') {
+        return res.status(400).json({ error: 'customThemes must be an object' });
+      }
+
+      // Enforce max 3 custom themes
+      const themeIds = Object.keys(customThemes);
+      if (themeIds.length > 3) {
+        return res.status(400).json({ error: 'maximum 3 custom themes allowed' });
+      }
+
+      // Validate each theme structure
+      for (const id of themeIds) {
+        const t = customThemes[id];
+        if (!t || typeof t !== 'object' || !t.id || !t.name || !t.colors) {
+          return res.status(400).json({ error: `invalid theme structure for "${id}"` });
+        }
+      }
+
+      updates.push('custom_themes = ?');
+      params.push(JSON.stringify(customThemes));
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'no preferences to update' });
+    }
+
+    params.push(req.user.id);
+    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update preferences error:', error);
+    res.status(500).json({ error: 'failed to update preferences' });
+  }
+});
+
+// ============================================================================
 // CLI OAuth Device Flow
 // ============================================================================
 

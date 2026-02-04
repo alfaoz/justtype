@@ -288,6 +288,14 @@ try {
     console.log('✓ Database migrated: Added theme column');
   }
 
+  // Add custom_themes column for syncing custom themes (JSON, max 3 themes)
+  const hasCustomThemes = userColumns.some(col => col.name === 'custom_themes');
+
+  if (!hasCustomThemes) {
+    db.exec(`ALTER TABLE users ADD COLUMN custom_themes TEXT;`); // JSON string
+    console.log('✓ Database migrated: Added custom_themes column');
+  }
+
   // Add view_count column to slates if it doesn't exist
   const hasViewCount = slateColumnsCheck.some(col => col.name === 'view_count');
 
