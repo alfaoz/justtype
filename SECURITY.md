@@ -16,13 +16,6 @@ we'll respond within 24 hours and work with you to understand and fix the issue.
 - xss, sql injection, etc.
 - anything that could compromise user data
 
-## what's out of scope?
-
-- rate limiting (we know, it's on the list)
-- denial of service attacks
-- social engineering
-- physical access to servers (even we can't access it easily)
-
 ## our commitment
 
 - we take security seriously (hence the open source)
