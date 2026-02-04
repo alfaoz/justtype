@@ -50,13 +50,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const autoZenTimeoutRef = useRef(null);
   const autoZenActiveRef = useRef(false);
   const [theme, setTheme] = useState(() => {
-    const stored = localStorage.getItem('justtype-theme');
-    if (stored) return stored;
-    // Detect system preference, default to light if unknown
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-    return 'light';
+    return localStorage.getItem('justtype-theme') || 'light';
   });
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
