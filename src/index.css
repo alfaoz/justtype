@@ -25,6 +25,15 @@
   --theme-font-writer: 'JetBrains Mono', monospace;
 }
 
+/* Apply UI font to body and override Tailwind's font-mono */
+body {
+  font-family: var(--theme-font-ui) !important;
+}
+
+.font-mono {
+  font-family: var(--theme-font-ui) !important;
+}
+
 /* Font size (punto) variants - use CSS variables for color and font */
 .punto-small { font-size: 14px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
 .punto-base { font-size: 15px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
