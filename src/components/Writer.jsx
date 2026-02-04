@@ -70,6 +70,71 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const settingsMenuRef = useRef(null);
   const editingOptionsTimeoutRef = useRef(null);
   const threeDotsRef = useRef(null);
+  const draftRestoredRef = useRef(false);
+  const localDraftTimeoutRef = useRef(null);
+
+  // Restore local draft on initial mount (only if no slate is being loaded)
+  useEffect(() => {
+    // Only restore if we're on a new slate (no currentSlate) and no content yet
+    if (!currentSlate && !content) {
+      try {
+        const savedDraft = localStorage.getItem('justtype-draft');
+        if (savedDraft) {
+          const draft = JSON.parse(savedDraft);
+          if (draft.content && draft.content.trim()) {
+            setContent(draft.content);
+            if (draft.title) setTitle(draft.title);
+            draftRestoredRef.current = true;
+            setHasUnsavedChanges(true);
+            setStatus(strings.writer.status.draftRestored);
+            setTimeout(() => setStatus('ready'), 3000);
+          }
+        }
+      } catch (e) {
+        // Ignore invalid draft data
+        localStorage.removeItem('justtype-draft');
+      }
+    }
+  }, []); // Only run on mount
+
+  // Save local draft when content changes (for new slates only)
+  useEffect(() => {
+    // Skip if we just restored a draft (prevent immediate re-save)
+    if (draftRestoredRef.current) {
+      draftRestoredRef.current = false;
+      return;
+    }
+
+    // Only save draft for new slates (not when editing existing ones)
+    if (currentSlate) {
+      return;
+    }
+
+    // Clear existing timeout
+    if (localDraftTimeoutRef.current) {
+      clearTimeout(localDraftTimeoutRef.current);
+    }
+
+    // Debounce localStorage writes
+    localDraftTimeoutRef.current = setTimeout(() => {
+      if (content.trim()) {
+        localStorage.setItem('justtype-draft', JSON.stringify({
+          content,
+          title,
+          timestamp: Date.now()
+        }));
+      } else {
+        // Clear draft if content is empty
+        localStorage.removeItem('justtype-draft');
+      }
+    }, 500);
+
+    return () => {
+      if (localDraftTimeoutRef.current) {
+        clearTimeout(localDraftTimeoutRef.current);
+      }
+    };
+  }, [content, title, currentSlate]);
 
   // Load current slate
   useEffect(() => {
@@ -603,6 +668,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setTitle('');
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
+      localStorage.removeItem('justtype-draft');
     },
     // Command palette methods
     saveSlate: () => saveSlate(),
@@ -678,6 +744,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       lastSavedContentRef.current = JSON.stringify({ content });
       setHasUnsavedChanges(false);
+
+      // Clear local draft since content is now saved to server
+      localStorage.removeItem('justtype-draft');
 
       // Check if we should show support nudge (slate count is 3, 6, or 9)
       if (data.slateCount && (data.slateCount === 3 || data.slateCount === 6 || data.slateCount === 9)) {

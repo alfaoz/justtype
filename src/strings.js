@@ -80,7 +80,8 @@ const strings = {
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
       published: 'published',
-      republished: 'republished'
+      republished: 'republished',
+      draftRestored: 'draft restored'
     },
     publishButton: {
       publish: 'publish',
