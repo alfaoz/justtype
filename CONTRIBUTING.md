@@ -5,7 +5,7 @@ thanks for wanting to make justtype better!
 ## what we're looking for
 
 - bug fixes (especially security/encryption related)
-- ux improvements (we're picky with the design, but 100% open for qol improvements.)
+- ux improvements
 - performance optimizations
 - code cleanup/refactoring
 
