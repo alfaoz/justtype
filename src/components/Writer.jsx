@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } f
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
-import { builtInThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
+import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
@@ -1083,7 +1083,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       onMouseLeave={() => setPreviewTheme(null)}
                     >
                       {/* Built-in themes */}
-                      {Object.keys(builtInThemes).map(themeId => (
+                      {Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id)).map(themeId => (
                         <button
                           key={themeId}
                           onClick={() => selectTheme(themeId)}

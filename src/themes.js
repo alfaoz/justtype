@@ -27,6 +27,27 @@ export const builtInThemes = {
     id: 'dark',
     name: 'dark',
     colors: {
+      bg: '#050505',
+      bgSecondary: '#0a0a0a',
+      bgTertiary: '#111111',
+      text: '#e5e5e5',
+      textMuted: '#888888',
+      textDim: '#4a4a4a',
+      border: '#1a1a1a',
+      borderLight: '#141414',
+      accent: '#e5e5e5',
+      // Semantic colors
+      blue: '#4cc9f0',
+      orange: '#f77f00',
+      red: '#e94560',
+      green: '#06d6a0',
+    },
+    fonts: defaultFonts
+  },
+  legacy: {
+    id: 'legacy',
+    name: 'legacy',
+    colors: {
       bg: '#111111',
       bgSecondary: '#1a1a1a',
       bgTertiary: '#222222',
@@ -231,10 +252,14 @@ const saveCustomThemes = (themes) => {
   localStorage.setItem('justtype-custom-themes', JSON.stringify(themes));
 };
 
-// Get list of all theme ids (built-in + custom)
+// Hidden themes (kept in code but not shown in UI)
+export const hiddenThemes = ['legacy'];
+
+// Get list of all theme ids (built-in + custom), excluding hidden themes
 export const getThemeIds = () => {
   const customThemes = getCustomThemes();
-  return [...Object.keys(builtInThemes), ...Object.keys(customThemes)];
+  const visibleBuiltIn = Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id));
+  return [...visibleBuiltIn, ...Object.keys(customThemes)];
 };
 
 // Get theme by id (checks built-in first, then custom)
@@ -516,7 +541,7 @@ export const applyThemeVariables = async (themeId) => {
 
   // Also apply body classes for backwards compatibility with existing CSS overrides
   // Remove all theme classes first
-  document.body.classList.remove('light-mode', 'sepia-mode', 'midnight-mode', 'custom-theme');
+  document.body.classList.remove('light-mode', 'sepia-mode', 'midnight-mode', 'legacy-mode', 'custom-theme');
 
   // Apply the appropriate theme class for built-in themes
   if (themeId === 'light') {
@@ -525,6 +550,8 @@ export const applyThemeVariables = async (themeId) => {
     document.body.classList.add('sepia-mode');
   } else if (themeId === 'midnight') {
     document.body.classList.add('midnight-mode');
+  } else if (themeId === 'legacy') {
+    document.body.classList.add('legacy-mode');
   } else if (isCustomTheme(themeId)) {
     // Custom themes get a generic class
     document.body.classList.add('custom-theme');
