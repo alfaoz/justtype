@@ -1,3 +1,5 @@
+# publishes build hashes to github pages for integrity verification
+# users can compare hashes of files they received against these to detect tampering
 name: publish build hashes
 
 on:
@@ -7,7 +9,7 @@ on:
 
 permissions:
   pages: write
-  id-token: write
+  id-token: write 
   contents: read
 
 concurrency:
@@ -22,27 +24,24 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - run: npm ci
-
+      # build must match production settings exactly to produce matching hashes
       - run: npm run build
         env:
           VITE_TURNSTILE_SITE_KEY: "0x4AAAAAACSJvMqEG5Z-iXyo"
-
+      # extract only the build manifest containing asset hashes
       - name: prepare pages artifact
         run: |
           mkdir _pages
           cp dist/build-manifest.json _pages/build-hashes.json
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _pages
-
+      # publish hashes to github pages
       - name: deploy to github pages
         id: deployment
         uses: actions/deploy-pages@v4
