@@ -83,5 +83,4 @@ git push
 
 echo -e "${GREEN}✓ CLI v${NEW_VERSION} released successfully!${NC}"
 echo ""
-echo "Users can update with:"
 echo "  curl -fsSL https://justtype.io/cli/install.sh | bash"
