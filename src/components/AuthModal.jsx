@@ -507,7 +507,7 @@ export function AuthModal({ onClose, onAuth }) {
   if (showForgotPassword) {
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-        <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">forgot password</h2>
 
           <form onSubmit={handleForgotPassword} className="space-y-4">
@@ -517,7 +517,7 @@ export function AuthModal({ onClose, onAuth }) {
                 type="email"
                 name="email"
                 required
-                className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder="your@email.com"
               />
               <p className="text-xs opacity-50 mt-1">we'll send you a 6-digit reset code</p>
@@ -539,7 +539,7 @@ export function AuthModal({ onClose, onAuth }) {
               className={`w-full border py-2 transition-all duration-300 mt-6 ${
                 showLoadingAnimation
                   ? 'auth-button-loading border-transparent text-white cursor-wait'
-                  : 'border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
+                  : 'border-[var(--theme-border)] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
               }`}
             >
               send reset code
@@ -598,7 +598,7 @@ export function AuthModal({ onClose, onAuth }) {
 
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-        <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
 
           {/* Step 1: OTP entry */}
           {resetStep === 'otp' && (
@@ -611,7 +611,7 @@ export function AuthModal({ onClose, onAuth }) {
                   value={resetOtp}
                   onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   maxLength={6}
-                  className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[#666] focus:outline-none transition-colors"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder="000000"
                   autoFocus
                 />
@@ -629,7 +629,7 @@ export function AuthModal({ onClose, onAuth }) {
                   setError('');
                   setResetStep('recovery-entry');
                 }}
-                className="w-full border border-[#333] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
+                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.otpStep.submit}
               </button>
@@ -651,7 +651,7 @@ export function AuthModal({ onClose, onAuth }) {
                 value={resetRecoveryInput}
                 onChange={(e) => setResetRecoveryInput(e.target.value)}
                 rows={4}
-                className="w-full bg-[#111111] border border-[#333] px-4 py-3 text-white focus:border-[#666] focus:outline-none transition-colors text-sm font-mono"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors text-sm font-mono"
                 placeholder={strings.auth.resetPassword.recoveryEntry.placeholder}
                 autoFocus
               />
@@ -667,7 +667,7 @@ export function AuthModal({ onClose, onAuth }) {
                   setError('');
                   setResetStep('recovery-submit');
                 }}
-                className="w-full border border-[#333] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
+                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.recoveryEntry.submit}
               </button>
@@ -685,7 +685,7 @@ export function AuthModal({ onClose, onAuth }) {
           {resetStep === 'recovery-submit' && (
             <div className="space-y-4">
               <h2 className="text-xl text-white mb-6">{strings.auth.resetPassword.withRecovery.title}</h2>
-              <p className="text-sm text-[#999]">{strings.auth.resetPassword.withRecovery.description}</p>
+              <p className="text-sm text-[var(--theme-text-muted)]">{strings.auth.resetPassword.withRecovery.description}</p>
 
               <div>
                 <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
@@ -693,7 +693,7 @@ export function AuthModal({ onClose, onAuth }) {
                   id="reset-new-password"
                   type="password"
                   minLength={6}
-                  className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                   autoFocus
                 />
@@ -705,7 +705,7 @@ export function AuthModal({ onClose, onAuth }) {
               <button
                 onClick={() => handleResetPassword('recovery')}
                 disabled={loading}
-                className="w-full border border-[#333] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
+                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
               >
                 {strings.auth.resetPassword.withRecovery.submit}
               </button>
@@ -743,7 +743,7 @@ export function AuthModal({ onClose, onAuth }) {
                   id="reset-new-password"
                   type="password"
                   minLength={6}
-                  className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                   autoFocus
                 />
@@ -791,7 +791,7 @@ export function AuthModal({ onClose, onAuth }) {
   if (showVerification) {
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-        <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">{strings.auth.verify.title}</h2>
 
           <form onSubmit={handleVerify} className="space-y-4">
@@ -803,7 +803,7 @@ export function AuthModal({ onClose, onAuth }) {
                 required
                 maxLength={6}
                 pattern="[0-9]{6}"
-                className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[#666] focus:outline-none transition-colors"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder={strings.auth.verify.codePlaceholder}
               />
               <p className="text-xs opacity-50 mt-1">{strings.auth.verify.instructions(registeredEmail)}</p>
@@ -820,7 +820,7 @@ export function AuthModal({ onClose, onAuth }) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full border border-[#333] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
+              className="w-full border border-[var(--theme-border)] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
             >
               {strings.auth.verify.submit}
             </button>
@@ -847,7 +847,7 @@ export function AuthModal({ onClose, onAuth }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-modal-overlay" onClick={onClose}>
-      <div className="bg-[#1a1a1a] border border-[#333] p-8 max-w-md w-full shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
+      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
         <h2 className="text-xl text-white mb-6">{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -864,7 +864,7 @@ export function AuthModal({ onClose, onAuth }) {
               onChange={(e) => {
                 e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
               }}
-              className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
             />
           </div>
@@ -876,7 +876,7 @@ export function AuthModal({ onClose, onAuth }) {
                 type="email"
                 name="email"
                 required
-                className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder={strings.auth.signup.emailPlaceholder}
               />
             </div>
@@ -889,7 +889,7 @@ export function AuthModal({ onClose, onAuth }) {
               name="password"
               required
               minLength={6}
-              className="w-full bg-[#111111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors"
+              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.passwordPlaceholder : strings.auth.signup.passwordPlaceholder}
             />
           </div>
@@ -959,7 +959,7 @@ export function AuthModal({ onClose, onAuth }) {
             className={`w-full border py-2 transition-all duration-300 mt-6 ${
               showLoadingAnimation
                 ? 'auth-button-loading border-transparent text-white cursor-wait'
-                : 'border-[#333] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
+                : 'border-[var(--theme-border)] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
             }`}
           >
             {isLogin ? strings.auth.login.submit : strings.auth.signup.submit}
@@ -978,16 +978,16 @@ export function AuthModal({ onClose, onAuth }) {
         {/* Google OAuth button */}
         <div className="mt-4 relative">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-[#333]"></div>
+            <div className="w-full border-t border-[var(--theme-border)]"></div>
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-[#1a1a1a] text-[#666]">or</span>
+            <span className="px-2 bg-[var(--theme-bg-secondary)] text-[var(--theme-text-dim)]">or</span>
           </div>
         </div>
 
         <button
           onClick={() => window.location.href = '/auth/google'}
-          className="mt-4 w-full border border-[#333] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
+          className="mt-4 w-full border border-[var(--theme-border)] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1012,10 +1012,10 @@ export function AuthModal({ onClose, onAuth }) {
           cancel
         </button>
 
-        <div className="mt-4 pt-3 border-t border-[#333] text-center text-xs text-[#555]">
+        <div className="mt-4 pt-3 border-t border-[var(--theme-border)] text-center text-xs text-[var(--theme-text-dim)]">
           {strings.verify.authFooter(VERSION)}
           <span className="mx-1">·</span>
-          <VerifyBadge className="text-[#666]">{strings.verify.authFooterVerify}</VerifyBadge>
+          <VerifyBadge className="text-[var(--theme-text-dim)]">{strings.verify.authFooterVerify}</VerifyBadge>
         </div>
       </div>
     </div>

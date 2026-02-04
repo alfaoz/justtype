@@ -819,7 +819,7 @@ export default function App() {
   // CLI Pair
   if (view === 'cli-pair') {
     return (
-      <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
+      <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
           html, body, #root {
@@ -864,7 +864,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex flex-col overflow-hidden">
+    <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
@@ -918,9 +918,9 @@ export default function App() {
       `}</style>
 
       {/* HEADER */}
-      <header className={`p-4 md:p-8 flex justify-between items-center border-b border-[#222] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
+      <header className={`p-4 md:p-8 flex justify-between items-center border-b border-[var(--theme-border-light)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
         <div className="flex items-center select-none">
-          <button type="button" onClick={handleNewSlate} className="text-lg md:text-xl font-medium text-[#808080] hover:text-white transition-colors">
+          <button type="button" onClick={handleNewSlate} className="text-lg md:text-xl font-medium text-[var(--theme-text-muted)] hover:text-white transition-colors">
             {strings.app.logo}
           </button>
         </div>
@@ -931,7 +931,7 @@ export default function App() {
               <div className="relative hidden sm:inline-flex items-center" ref={notificationRef}>
                 <button
                   onClick={handleOpenNotifications}
-                  className="relative text-[#808080] hover:text-white transition-colors p-1"
+                  className="relative text-[var(--theme-text-muted)] hover:text-white transition-colors p-1"
                   aria-label={strings.notifications.title}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -942,18 +942,18 @@ export default function App() {
                   )}
                 </button>
                 {showNotifications && (
-                  <div className="absolute top-full right-0 mt-2 w-80 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl z-50 animate-modal-content">
-                    <div className="p-3 border-b border-[#333]">
+                  <div className="absolute top-full right-0 mt-2 w-80 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl z-50 animate-modal-content">
+                    <div className="p-3 border-b border-[var(--theme-border)]">
                       <span className="text-sm text-white">{strings.notifications.title}</span>
                     </div>
                     <div className="max-h-72 overflow-y-auto">
                       {notifications.length === 0 ? (
-                        <p className="text-sm text-[#666] p-4 text-center">{strings.notifications.empty}</p>
+                        <p className="text-sm text-[var(--theme-text-dim)] p-4 text-center">{strings.notifications.empty}</p>
                       ) : (
                         notifications.map(n => (
                           <div
                             key={n.id}
-                            className={`p-3 border-b border-[#222] last:border-b-0 hover:bg-[#222] transition-colors ${n.link ? 'cursor-pointer' : ''}`}
+                            className={`p-3 border-b border-[var(--theme-border-light)] last:border-b-0 hover:bg-[var(--theme-bg-tertiary)] transition-colors ${n.link ? 'cursor-pointer' : ''}`}
                             onClick={() => {
                               if (n.link) {
                                 if (n.link.startsWith('/')) {
@@ -967,10 +967,10 @@ export default function App() {
                             }}
                           >
                             <p className="text-sm text-white font-medium">{n.title}</p>
-                            <p className="text-xs text-[#888] mt-1">{n.message}</p>
+                            <p className="text-xs text-[var(--theme-text-muted)] mt-1">{n.message}</p>
                             <div className="flex items-center gap-2 mt-1">
-                              <span className="text-xs text-[#555]">{new Date(n.created_at).toLocaleDateString()}</span>
-                              {n.link && <span className="text-xs text-[#555]">→</span>}
+                              <span className="text-xs text-[var(--theme-text-dim)]">{new Date(n.created_at).toLocaleDateString()}</span>
+                              {n.link && <span className="text-xs text-[var(--theme-text-dim)]">→</span>}
                             </div>
                           </div>
                         ))
@@ -979,8 +979,8 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <span className="text-[#808080] hidden sm:inline">{strings.app.welcome(username)}</span>
-              <span className="text-[#333] hidden sm:inline">|</span>
+              <span className="text-[var(--theme-text-muted)] hidden sm:inline">{strings.app.welcome(username)}</span>
+              <span className="text-[var(--theme-border)] hidden sm:inline">|</span>
               {/* Toggle button for writer/slates */}
               <button
                 onClick={handleToggleView}
@@ -1046,13 +1046,13 @@ export default function App() {
           ) : (
             <div className="flex items-center gap-3 md:gap-4">
               {showLoginNudge && (
-                <span className="text-xs md:text-sm text-[#666] animate-fade-in flex items-center gap-2">
+                <span className="text-xs md:text-sm text-[var(--theme-text-dim)] animate-fade-in flex items-center gap-2">
                   <button
                     onClick={() => {
                       setShowLoginNudge(false);
                       setLoginNudgeDismissed(true);
                     }}
-                    className="text-[#444] hover:text-[#666] transition-colors"
+                    className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text-dim)] transition-colors"
                     aria-label="Dismiss"
                   >
                     ✕
@@ -1141,21 +1141,21 @@ export default function App() {
       {/* REPUBLISH WARNING MODAL */}
       {showRepublishModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">unpublished changes</h2>
-            <p className="text-sm text-[#666] mb-6">
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               your edits won't be visible to others until you republish.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={handleRepublishModalContinue}
-                className="flex-1 bg-[#333] text-white px-6 py-3 rounded hover:bg-[#444] transition-colors text-sm"
+                className="flex-1 bg-[var(--theme-bg-tertiary)] text-white px-6 py-3 rounded hover:bg-[var(--theme-border)] transition-colors text-sm"
               >
                 keep as draft
               </button>
               <button
                 onClick={handleRepublishModalCancel}
-                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                className="flex-1 border border-[var(--theme-border)] text-white px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 go back
               </button>
@@ -1167,12 +1167,12 @@ export default function App() {
       {/* GOOGLE OAUTH SUCCESS MODAL */}
       {showGoogleSuccessModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">welcome to justtype!</h2>
-            <p className="text-sm text-[#666] mb-4">
+            <p className="text-sm text-[var(--theme-text-dim)] mb-4">
               you've successfully signed in with google as <span className="text-white">{username}</span>.
             </p>
-            <p className="text-sm text-[#666] mb-6">
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               your slates are encrypted and saved automatically. happy writing!
             </p>
             <button
@@ -1224,20 +1224,20 @@ export default function App() {
             />
           ))}
 
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full celebration-modal">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full celebration-modal">
             <div className="text-center">
               <div className="text-6xl mb-4">🎉</div>
               <h2 className="text-2xl md:text-3xl text-white mb-4">thank you!</h2>
-              <p className="text-sm text-[#a0a0a0] mb-4">
+              <p className="text-sm text-[var(--theme-text-muted)] mb-4">
                 your support means the world to us. your payment was successful!
               </p>
               {token && (
-                <p className="text-sm text-[#666] mb-6">
+                <p className="text-sm text-[var(--theme-text-dim)] mb-6">
                   your storage benefits have been updated. check the account tab to see your new plan.
                 </p>
               )}
               {!token && (
-                <p className="text-sm text-[#666] mb-6">
+                <p className="text-sm text-[var(--theme-text-dim)] mb-6">
                   to receive storage benefits, please sign up and we'll link your donation automatically.
                 </p>
               )}
@@ -1260,11 +1260,11 @@ export default function App() {
       {/* GOOGLE OAUTH ERROR MODAL */}
       {showGoogleErrorModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">
               {googleErrorType === 'account_exists' ? 'account already exists' : 'sign in failed'}
             </h2>
-            <p className="text-sm text-[#666] mb-6">
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {googleErrorType === 'account_exists'
                 ? 'an account with this email already exists with a password. please sign in using your username and password instead.'
                 : 'google authentication failed. please try again or use email/password to sign in.'}
@@ -1287,16 +1287,16 @@ export default function App() {
       {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => setShowLogoutConfirm(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg text-white mb-2">{strings.account.sessions.logoutConfirm.title}</h2>
-            <p className="text-[#888] text-sm mb-2">{strings.account.sessions.logoutConfirm.message}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-2">{strings.account.sessions.logoutConfirm.message}</p>
             {(authProvider === 'google' || authProvider === 'both') && (
               <p className="text-yellow-400/80 text-sm mb-4">{strings.account.sessions.logoutConfirm.pinWarning}</p>
             )}
             <div className="flex gap-3 mt-4">
               <button
                 onClick={() => setShowLogoutConfirm(false)}
-                className="flex-1 px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors text-sm"
+                className="flex-1 px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.sessions.logoutConfirm.cancel}
               </button>
