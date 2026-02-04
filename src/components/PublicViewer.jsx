@@ -7,7 +7,7 @@ export function PublicViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
-  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'dark');
+  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'light');
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [copied, setCopied] = useState(false);
 
