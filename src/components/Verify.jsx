@@ -4,7 +4,7 @@ import { strings } from '../strings';
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 const GITHUB_WORKFLOW_URL = 'https://github.com/alfaoz/justtype/blob/master/.github/workflows/publish-hashes.yml';
 const GITHUB_RUNS_URL = 'https://api.github.com/repos/alfaoz/justtype/actions/workflows/publish-hashes.yml/runs?per_page=1';
-const GITHUB_LATEST_COMMIT_URL = 'https://github.com/alfaoz/justtype/commits/master';
+const GITHUB_LATEST_COMMIT_URL = 'https://github.com/alfaoz/justtype/commit/HEAD';
 
 const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
