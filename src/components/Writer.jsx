@@ -1079,28 +1079,28 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
 
   return (
-    <div className="relative flex flex-col bg-[#111111] h-full overflow-hidden">
+    <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
       {isLoading && (
-        <div className={`absolute inset-0 bg-[#111111] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
-          <div className="text-[#666] text-sm animate-pulse">loading slate...</div>
+        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
+          <div className="text-[var(--theme-text-dim)] text-sm animate-pulse">loading slate...</div>
         </div>
       )}
 
       {/* WRITING AREA */}
-      <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[#111111] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
+      <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
         <textarea
           ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder={strings.writer.contentPlaceholder}
           spellCheck={false}
-          className={`w-full max-w-3xl bg-[#111111] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[#333333] text-[#d4d4d4] punto-${punto}`}
+          className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
         />
       </main>
 
       {/* DESKTOP FOOTER */}
-      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[#111111] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
+      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
@@ -1109,7 +1109,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             <button
               ref={threeDotsRef}
               onClick={handleToggleMenu}
-              className="opacity-50 hover:opacity-100 flex items-center justify-center w-8 h-8 rounded hover:bg-[#1a1a1a] relative transition-transform duration-500 ease-in-out"
+              className="opacity-50 hover:opacity-100 flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--theme-bg-secondary)] relative transition-transform duration-500 ease-in-out"
               style={{
                 zIndex: 100,
                 transform: showSettingsMenu && !isMenuClosing ? `translateX(-${threeDotsTransform}px)` : 'translateX(0)'
@@ -1334,11 +1334,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   share
                 </button>
                 {showPublishMenu && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
+                  <div className="absolute bottom-full right-0 mb-2 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
                     {!shareUrl && !wasPublishedBeforeEdit && (
                       <button
                         onClick={handlePublish}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
+                        className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
                       >
                         make public
                       </button>
@@ -1352,13 +1352,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                             setTimeout(() => setStatus('ready'), 2000);
                             setShowPublishMenu(false);
                           }}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
                         >
                           copy link
                         </button>
                         <button
                           onClick={handlePublish}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-400 hover:text-red-300 transition-colors duration-200"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
                         >
                           make private
                         </button>
@@ -1367,7 +1367,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     {wasPublishedBeforeEdit && !shareUrl && (
                       <button
                         onClick={handlePublish}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors duration-200"
+                        className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
                       >
                         update public version
                       </button>
@@ -1419,9 +1419,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* MOBILE FLOATING MENU BUTTON */}
       <button
         onClick={() => setShowMobileMenu(!showMobileMenu)}
-        className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-[#222] border border-[#333] rounded-full flex items-center justify-center hover:bg-[#333] transition-all duration-300 shadow-2xl z-50"
+        className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-[var(--theme-bg-tertiary)] border border-[var(--theme-border)] rounded-full flex items-center justify-center hover:bg-[var(--theme-bg-tertiary)] transition-all duration-300 shadow-2xl z-50"
       >
-        <svg className="w-6 h-6 text-[#a0a0a0]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-6 h-6 text-[var(--theme-text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
         </svg>
       </button>
@@ -1433,9 +1433,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
             onClick={() => setShowMobileMenu(false)}
           />
-          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[#1a1a1a] border-t border-[#333] rounded-t-2xl z-50 max-h-[60vh] flex flex-col">
+          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[60vh] flex flex-col">
             {/* Tab Bar */}
-            <div className="flex border-b border-[#333] px-2 pt-3">
+            <div className="flex border-b border-[var(--theme-border)] px-2 pt-3">
               {['write', 'settings', 'more'].map(tab => (
                 <button
                   key={tab}
@@ -1443,7 +1443,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   className={`flex-1 py-2 text-sm transition-colors ${
                     mobileTab === tab
                       ? 'text-white border-b-2 border-white -mb-[1px]'
-                      : 'text-[#666]'
+                      : 'text-[var(--theme-text-dim)]'
                   }`}
                 >
                   {tab}
@@ -1459,13 +1459,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   {/* Stats */}
                   {showCounter && (
                     <div className="flex gap-4 text-sm">
-                      <div className="flex-1 p-3 bg-[#222] rounded-lg text-center">
+                      <div className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg text-center">
                         <div className="text-xl font-medium text-white">{wordCount}</div>
-                        <div className="text-xs text-[#666]">words</div>
+                        <div className="text-xs text-[var(--theme-text-dim)]">words</div>
                       </div>
-                      <div className="flex-1 p-3 bg-[#222] rounded-lg text-center">
+                      <div className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg text-center">
                         <div className="text-xl font-medium text-white">{charCount}</div>
-                        <div className="text-xs text-[#666]">chars</div>
+                        <div className="text-xs text-[var(--theme-text-dim)]">chars</div>
                       </div>
                     </div>
                   )}
@@ -1526,7 +1526,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                         {!shareUrl && !wasPublishedBeforeEdit && (
                           <button
                             onClick={handlePublish}
-                            className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors"
+                            className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                           >
                             make public
                           </button>
@@ -1539,13 +1539,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                                 setStatus(strings.writer.status.linkCopied);
                                 setTimeout(() => setStatus('ready'), 2000);
                               }}
-                              className="flex-1 p-3 bg-[#222] rounded-lg hover:bg-[#333] transition-colors"
+                              className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                             >
                               copy link
                             </button>
                             <button
                               onClick={handlePublish}
-                              className="p-3 bg-[#222] text-red-400 rounded-lg hover:bg-[#333] transition-colors"
+                              className="p-3 bg-[var(--theme-bg-tertiary)] text-red-400 rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                             >
                               private
                             </button>
@@ -1562,31 +1562,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <div className="flex flex-col gap-3">
                   <button
                     onClick={cycleTheme}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
                   >
                     <span>theme</span>
-                    <span className="text-[#666]">{theme}</span>
+                    <span className="text-[var(--theme-text-dim)]">{theme}</span>
                   </button>
                   <button
                     onClick={cyclePunto}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
                   >
                     <span>font size</span>
-                    <span className="text-[#666]">{getPuntoLabel()}</span>
+                    <span className="text-[var(--theme-text-dim)]">{getPuntoLabel()}</span>
                   </button>
                   <button
                     onClick={cycleFocus}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
                   >
                     <span>focus mode</span>
-                    <span className="text-[#666]">{getFocusLabel()}</span>
+                    <span className="text-[var(--theme-text-dim)]">{getFocusLabel()}</span>
                   </button>
                   <button
                     onClick={() => setShowCounter(!showCounter)}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left flex justify-between"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
                   >
                     <span>counter</span>
-                    <span className="text-[#666]">{showCounter ? 'on' : 'off'}</span>
+                    <span className="text-[var(--theme-text-dim)]">{showCounter ? 'on' : 'off'}</span>
                   </button>
                 </div>
               )}
@@ -1599,7 +1599,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       setShowMobileMenu(false);
                       setShowExportMenu(true);
                     }}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
                   >
                     export slate
                   </button>
@@ -1608,7 +1608,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       setShowAboutModal(true);
                       setShowMobileMenu(false);
                     }}
-                    className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
                   >
                     about justtype
                   </button>
@@ -1622,9 +1622,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* ABOUT MODAL */}
       {showAboutModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => setShowAboutModal(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
-            <div className="space-y-4 text-sm text-[#a0a0a0]">
+            <div className="space-y-4 text-sm text-[var(--theme-text-muted)]">
               <p>{strings.writer.about.description}</p>
               <p className="text-xs">{strings.writer.about.encryption}</p>
               <p className="text-xs">
@@ -1635,8 +1635,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </p>
 
               {/* Support Section - Subtle */}
-              <div className="pt-4 border-t border-[#333]">
-                <p className="text-xs text-[#666] mb-3">
+              <div className="pt-4 border-t border-[var(--theme-border)]">
+                <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   justtype is free to use, but unfortunately it's not free to run. if you'd like to support development and help keep justtype running, as well as increase your storage{' '}
                   <a
                     href="/limits"
@@ -1689,17 +1689,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 </p>
               </div>
 
-              <p className="text-xs text-[#666] pt-2 border-t border-[#333]">
+              <p className="text-xs text-[var(--theme-text-dim)] pt-2 border-t border-[var(--theme-border)]">
                 {strings.writer.about.version(VERSION)}
                 <span className="mx-1">·</span>
-                <VerifyBadge className="text-[#666]">verify</VerifyBadge>
+                <VerifyBadge className="text-[var(--theme-text-dim)]">verify</VerifyBadge>
                 <span className="mx-1">·</span>
-                <a href="/status" className="text-[#666] hover:text-white hover:underline transition-colors">status</a>
+                <a href="/status" className="text-[var(--theme-text-dim)] hover:text-white hover:underline transition-colors">status</a>
               </p>
             </div>
             <button
               onClick={() => setShowAboutModal(false)}
-              className="mt-6 w-full border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+              className="mt-6 w-full border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
             >
               {strings.writer.about.close}
             </button>
@@ -1713,10 +1713,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           setShowPublishModal(false);
           setLinkCopied(false);
         }}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
-            <p className="text-sm text-[#a0a0a0] mb-4">anyone with this link can view your slate:</p>
-            <div className="bg-[#111] border border-[#333] rounded p-3 mb-6 break-all text-sm text-blue-400">
+            <p className="text-sm text-[var(--theme-text-muted)] mb-4">anyone with this link can view your slate:</p>
+            <div className="bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 mb-6 break-all text-sm text-blue-400">
               {publishModalUrl}
             </div>
             <div className="flex gap-3">
@@ -1742,7 +1742,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   setShowPublishModal(false);
                   setLinkCopied(false);
                 }}
-                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 okay
               </button>
@@ -1754,29 +1754,29 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* DONATE MODAL */}
       {showDonateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowDonateModal(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">support justtype</h2>
-            <p className="text-sm text-[#a0a0a0] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
+            <p className="text-sm text-[var(--theme-text-muted)] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
             <input
               type="number"
               min="1"
               step="0.01"
               value={donateAmount}
               onChange={(e) => setDonateAmount(e.target.value)}
-              className="w-full bg-[#111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm mb-4"
+              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-white text-sm mb-4"
               autoFocus
             />
             {!token && (
               <>
-                <p className="text-sm text-[#a0a0a0] mb-2">your email:</p>
+                <p className="text-sm text-[var(--theme-text-muted)] mb-2">your email:</p>
                 <input
                   type="email"
                   value={donateEmail}
                   onChange={(e) => setDonateEmail(e.target.value)}
                   placeholder="email@example.com"
-                  className="w-full bg-[#111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm mb-4"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-white text-sm mb-4"
                 />
-                <p className="text-xs text-[#666] mb-4">
+                <p className="text-xs text-[var(--theme-text-dim)] mb-4">
                   note: you can donate without an account, but you won't get storage benefits until you sign up and link your payment
                 </p>
               </>
@@ -1798,7 +1798,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </button>
               <button
                 onClick={() => setShowDonateModal(false)}
-                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 cancel
               </button>
@@ -1810,9 +1810,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* Already Subscribed Modal */}
       {showAlreadySubscribedModal && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowAlreadySubscribedModal(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.subscription.alreadySubscribed.title}</h2>
-            <p className="text-sm text-[#a0a0a0] mb-6">
+            <p className="text-sm text-[var(--theme-text-muted)] mb-6">
               {strings.subscription.alreadySubscribed.message}
             </p>
             <div className="flex gap-3">
@@ -1827,7 +1827,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </button>
               <button
                 onClick={() => setShowAlreadySubscribedModal(false)}
-                className="flex-1 border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 {strings.subscription.alreadySubscribed.closeButton}
               </button>
@@ -1839,7 +1839,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* Export Modal */}
       {showExportMenu && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowExportMenu(false)}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">export slate</h2>
             <div className="flex flex-col gap-3">
               <button
@@ -1847,7 +1847,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   exportToTxt();
                   setShowExportMenu(false);
                 }}
-                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
               >
                 {strings.writer.buttons.exportTxt}
               </button>
@@ -1856,14 +1856,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   exportToPdf();
                   setShowExportMenu(false);
                 }}
-                className="w-full p-4 bg-[#222] rounded-lg hover:bg-[#333] transition-colors text-left"
+                className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
               >
                 {strings.writer.buttons.exportPdf}
               </button>
             </div>
             <button
               onClick={() => setShowExportMenu(false)}
-              className="mt-6 w-full border border-[#333] py-2 md:py-3 rounded hover:bg-[#333] hover:text-white transition-all text-sm"
+              className="mt-6 w-full border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
             >
               cancel
             </button>
