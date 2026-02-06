@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import JSZip from 'jszip';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
-import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase } from '../crypto';
+import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 
@@ -78,6 +79,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   // Export slates state
   const [exportingSlates, setExportingSlates] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
+  const [exportMessageKind, setExportMessageKind] = useState(''); // 'progress' | 'success' | 'error'
 
   // Collapsible sections state
   const [showSessions, setShowSessions] = useState(false);
@@ -170,24 +172,169 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
   const exportSlates = async () => {
     setExportingSlates(true);
+    setExportMessageKind('progress');
     setExportMessage('');
 
     try {
-      const response = await fetch(`${API_URL}/account/export-slates`, {
-        method: 'POST',
-        credentials: 'include'
-      });
+      const downloadBlob = (blob, filename) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      };
 
-      const data = await response.json();
+      const parseSqliteUtc = (dateString) => {
+        if (!dateString) return null;
+        // Many timestamps in the DB are stored without timezone. Treat as UTC for consistent display.
+        let normalized = dateString.trim();
+        if (normalized.includes(' ') && !normalized.includes('T')) {
+          normalized = normalized.replace(' ', 'T');
+        }
+        const hasTz = /([zZ]|[+-]\d{2}:\d{2})$/.test(normalized);
+        if (!hasTz) normalized = `${normalized}Z`;
+        const d = new Date(normalized);
+        return isNaN(d.getTime()) ? null : d;
+      };
 
-      if (response.ok) {
-        setExportMessage(data.message || 'export started! check your email shortly.');
-      } else {
-        setExportMessage(data.error || 'failed to export slates. please try again.');
+      const formatExportDate = (dateString) => {
+        const d = parseSqliteUtc(dateString);
+        return d ? d.toLocaleString() : '';
+      };
+
+      const sanitizeFilenameBase = (name) => {
+        return (name || '')
+          .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, 200);
+      };
+
+      const makeUniqueFilename = (base, used, ext = '.txt') => {
+        const safeBase = sanitizeFilenameBase(base) || 'slate';
+        const initial = `${safeBase}${ext}`;
+        if (!used.has(initial)) {
+          used.set(initial, 1);
+          return initial;
+        }
+
+        const n = used.get(initial) + 1;
+        used.set(initial, n);
+        const candidate = `${safeBase}-${n}${ext}`;
+        // Extremely defensive: avoid accidental collisions if sanitization truncates.
+        if (!used.has(candidate)) {
+          used.set(candidate, 1);
+          return candidate;
+        }
+        let i = n;
+        while (used.has(`${safeBase}-${i}${ext}`)) i++;
+        const finalName = `${safeBase}-${i}${ext}`;
+        used.set(finalName, 1);
+        return finalName;
+      };
+
+      const listRes = await fetch(`${API_URL}/slates`, { credentials: 'include' });
+      const listData = await listRes.json();
+      if (!listRes.ok) {
+        setExportMessageKind('error');
+        setExportMessage(listData.error || strings.account.export.errors.failed);
+        return;
       }
+
+      const slates = Array.isArray(listData) ? listData : [];
+      if (slates.length === 0) {
+        setExportMessageKind('error');
+        setExportMessage(strings.account.export.noSlates);
+        return;
+      }
+
+      // Used for decrypting E2E blobs and encrypted titles. Null is fine for legacy users.
+      const slateKey = userId ? await getSlateKey(userId) : null;
+
+      const zip = new JSZip();
+      const usedNames = new Map();
+      let exported = 0;
+      let skipped = 0;
+      let needsUnlock = false;
+
+      for (let i = 0; i < slates.length; i++) {
+        setExportMessage(strings.account.export.progress(i + 1, slates.length));
+
+        const slateMeta = slates[i];
+        try {
+          const res = await fetch(`${API_URL}/slates/${encodeURIComponent(slateMeta.id)}`, { credentials: 'include' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'fetch failed');
+
+          const isEncrypted = !!data.encryptedContent || !!data.encrypted;
+
+          if (isEncrypted && !slateKey) {
+            needsUnlock = true;
+            break;
+          }
+
+          let content = '';
+          if (isEncrypted) {
+            content = await decryptContent(data.encryptedContent, slateKey);
+          } else if (typeof data.content === 'string') {
+            content = data.content;
+          }
+
+          // Prefer the resolved title on the full record; fall back to list title.
+          let title = (data.title || slateMeta.title || '').trim();
+          const encryptedTitle = data.encrypted_title || slateMeta.encrypted_title;
+          if ((!title || title === 'untitled') && encryptedTitle) {
+            if (slateKey) {
+              try {
+                title = (await decryptTitle(encryptedTitle, slateKey)).trim();
+              } catch {
+                // Ignore title decrypt failures; export content with a generic filename.
+              }
+            }
+          }
+
+          const fallbackTitle = `slate-${slateMeta.id}`;
+          const exportTitle = title || fallbackTitle;
+          const filename = makeUniqueFilename(exportTitle, usedNames, '.txt');
+
+          const createdAt = formatExportDate(data.created_at);
+          const updatedAt = formatExportDate(data.updated_at);
+          const header = `Title: ${exportTitle || 'Untitled'}\nCreated: ${createdAt}\nLast Updated: ${updatedAt}\n\n`;
+
+          zip.file(filename, `${header}${content}`);
+          exported++;
+        } catch (err) {
+          console.error('Export slate failed:', slateMeta?.id, err);
+          skipped++;
+        }
+      }
+
+      if (needsUnlock) {
+        setExportMessageKind('error');
+        setExportMessage(strings.account.export.errors.unlockRequired);
+        return;
+      }
+
+      if (exported === 0) {
+        setExportMessageKind('error');
+        setExportMessage(strings.account.export.errors.failed);
+        return;
+      }
+
+      setExportMessage(strings.account.export.preparing);
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const yyyyMmDd = new Date().toISOString().split('T')[0];
+      downloadBlob(zipBlob, `justtype-export-${yyyyMmDd}.zip`);
+
+      setExportMessageKind(skipped > 0 ? 'error' : 'success');
+      setExportMessage(strings.account.export.done(exported));
     } catch (err) {
       console.error('Export error:', err);
-      setExportMessage('failed to export slates. please try again.');
+      setExportMessageKind('error');
+      setExportMessage(strings.account.export.errors.failed);
     } finally {
       setExportingSlates(false);
     }
@@ -831,10 +978,14 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             disabled={exportingSlates}
             className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors disabled:opacity-50"
           >
-            {exportingSlates ? 'exporting...' : 'export data'}
+            {exportingSlates ? strings.account.export.exporting : strings.account.export.button}
           </button>
           {exportMessage && (
-            <span className={`px-4 py-2 ${exportMessage.includes('started') ? 'text-green-400' : 'text-red-400'}`}>
+            <span className={`px-4 py-2 ${
+              exportMessageKind === 'success' ? 'text-green-400' :
+              exportMessageKind === 'error' ? 'text-red-400' :
+              'text-[#666]'
+            }`}>
               {exportMessage}
             </span>
           )}
