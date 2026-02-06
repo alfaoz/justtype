@@ -80,11 +80,22 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [exportingSlates, setExportingSlates] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
   const [exportMessageKind, setExportMessageKind] = useState(''); // 'progress' | 'success' | 'error'
+  const [exportConfirmArmed, setExportConfirmArmed] = useState(false);
+  const exportConfirmTimeoutRef = useRef(null);
 
   // Collapsible sections state
   const [showSessions, setShowSessions] = useState(false);
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (exportConfirmTimeoutRef.current) {
+        clearTimeout(exportConfirmTimeoutRef.current);
+        exportConfirmTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -171,6 +182,28 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   };
 
   const exportSlates = async () => {
+    if (exportingSlates) return;
+
+    if (!exportConfirmArmed) {
+      setExportConfirmArmed(true);
+      setExportMessageKind('progress');
+      setExportMessage(strings.account.export.confirm);
+      if (exportConfirmTimeoutRef.current) clearTimeout(exportConfirmTimeoutRef.current);
+      exportConfirmTimeoutRef.current = setTimeout(() => {
+        setExportConfirmArmed(false);
+        setExportMessage('');
+        setExportMessageKind('');
+        exportConfirmTimeoutRef.current = null;
+      }, 8000);
+      return;
+    }
+
+    setExportConfirmArmed(false);
+    if (exportConfirmTimeoutRef.current) {
+      clearTimeout(exportConfirmTimeoutRef.current);
+      exportConfirmTimeoutRef.current = null;
+    }
+
     setExportingSlates(true);
     setExportMessageKind('progress');
     setExportMessage('');
@@ -236,6 +269,32 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         return finalName;
       };
 
+      const formatRetryAfter = (seconds) => {
+        const s = Math.max(0, Math.floor(seconds || 0));
+        const hours = Math.floor(s / 3600);
+        const mins = Math.floor((s % 3600) / 60);
+        if (hours > 0 && mins > 0) return `${hours}h ${mins}m`;
+        if (hours > 0) return `${hours}h`;
+        if (mins > 0) return `${mins}m`;
+        return `${s}s`;
+      };
+
+      // Avoid consuming the 24h cooldown if the user is E2E and not unlocked.
+      const meRes = await fetch(`${API_URL}/auth/me`, { credentials: 'include' });
+      const meData = await meRes.json();
+      if (!meRes.ok) {
+        setExportMessageKind('error');
+        setExportMessage(meData.error || strings.account.export.errors.failed);
+        return;
+      }
+
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      if (meData.e2eMigrated && !slateKey) {
+        setExportMessageKind('error');
+        setExportMessage(strings.account.export.errors.unlockRequired);
+        return;
+      }
+
       const listRes = await fetch(`${API_URL}/slates`, { credentials: 'include' });
       const listData = await listRes.json();
       if (!listRes.ok) {
@@ -251,8 +310,21 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         return;
       }
 
-      // Used for decrypting E2E blobs and encrypted titles. Null is fine for legacy users.
-      const slateKey = userId ? await getSlateKey(userId) : null;
+      // Claim the per-account 24h cooldown before doing heavy B2 downloads.
+      const claimRes = await fetch(`${API_URL}/account/export-all/claim`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const claimData = await claimRes.json();
+      if (!claimRes.ok) {
+        setExportMessageKind('error');
+        if (claimRes.status === 429 && claimData.retryAfterSeconds !== undefined) {
+          setExportMessage(strings.account.export.cooldown(formatRetryAfter(claimData.retryAfterSeconds)));
+        } else {
+          setExportMessage(claimData.error || strings.account.export.errors.failed);
+        }
+        return;
+      }
 
       const zip = new JSZip();
       const usedNames = new Map();
@@ -290,10 +362,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             if (slateKey) {
               try {
                 title = (await decryptTitle(encryptedTitle, slateKey)).trim();
-              } catch {
-                // Ignore title decrypt failures; export content with a generic filename.
-              }
+            } catch {
+              // Ignore title decrypt failures; export content with a generic filename.
             }
+          }
           }
 
           const fallbackTitle = `slate-${slateMeta.id}`;
@@ -978,7 +1050,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             disabled={exportingSlates}
             className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors disabled:opacity-50"
           >
-            {exportingSlates ? strings.account.export.exporting : strings.account.export.button}
+            {exportingSlates
+              ? strings.account.export.exporting
+              : (exportConfirmArmed ? strings.account.export.confirm : strings.account.export.button)
+            }
           </button>
           {exportMessage && (
             <span className={`px-4 py-2 ${

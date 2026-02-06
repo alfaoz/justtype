@@ -349,11 +349,13 @@ const strings = {
     },
     export: {
       button: 'export all slates',
+      confirm: 'click again to confirm',
       exporting: 'exporting...',
       progress: (current, total) => `exporting ${current}/${total}...`,
       preparing: 'preparing download...',
       done: (count) => `export ready (${count} ${count === 1 ? 'slate' : 'slates'}). your download should start automatically.`,
       noSlates: 'no slates to export',
+      cooldown: (time) => `export is limited to once per day. try again in ${time}.`,
       errors: {
         unlockRequired: 'please unlock your slates first, then try again.',
         failed: 'failed to export slates. please try again.'

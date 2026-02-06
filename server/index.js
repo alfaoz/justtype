@@ -4250,10 +4250,64 @@ app.post('/api/account/logout-all', authenticateToken, async (req, res) => {
   }
 });
 
-// Export all slates as ZIP (sent via email)
-const exportSlatesLimiter = createRateLimitMiddleware(3, 60 * 60 * 1000); // 3 per hour
-app.post('/api/account/export-slates', authenticateToken, exportSlatesLimiter, async (req, res) => {
+// Claim the 24h export cooldown for heavy export operations (per account, across devices)
+// Client should call this BEFORE fetching every slate for a full export.
+const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+app.post('/api/account/export-all/claim', authenticateToken, (req, res) => {
   try {
+    const now = Date.now();
+    const cooldownUntil = now + EXPORT_COOLDOWN_MS;
+
+    // Atomic check+set: only one request can claim when not in cooldown.
+    const result = db.prepare(`
+      UPDATE users
+      SET export_cooldown_until = ?
+      WHERE id = ?
+        AND (export_cooldown_until IS NULL OR export_cooldown_until <= ?)
+    `).run(cooldownUntil, req.user.id, now);
+
+    if (result.changes === 0) {
+      const row = db.prepare('SELECT export_cooldown_until FROM users WHERE id = ?').get(req.user.id);
+      const until = row?.export_cooldown_until || cooldownUntil;
+      const retryAfterSeconds = Math.max(0, Math.ceil((until - now) / 1000));
+      return res.status(429).json({
+        error: 'Export cooldown active. Please try again later.',
+        cooldownUntil: until,
+        retryAfterSeconds
+      });
+    }
+
+    res.json({ ok: true, cooldownUntil });
+  } catch (error) {
+    console.error('Export cooldown claim error:', error);
+    res.status(500).json({ error: 'Failed to start export. Please try again.' });
+  }
+});
+
+// Export all slates as ZIP (sent via email)
+app.post('/api/account/export-slates', authenticateToken, async (req, res) => {
+  try {
+    // Per-account 24h cooldown (prevents repeated heavy exports / B2 downloads)
+    const now = Date.now();
+    const cooldownUntil = now + EXPORT_COOLDOWN_MS;
+    const claim = db.prepare(`
+      UPDATE users
+      SET export_cooldown_until = ?
+      WHERE id = ?
+        AND (export_cooldown_until IS NULL OR export_cooldown_until <= ?)
+    `).run(cooldownUntil, req.user.id, now);
+
+    if (claim.changes === 0) {
+      const row = db.prepare('SELECT export_cooldown_until FROM users WHERE id = ?').get(req.user.id);
+      const until = row?.export_cooldown_until || cooldownUntil;
+      const retryAfterSeconds = Math.max(0, Math.ceil((until - now) / 1000));
+      return res.status(429).json({
+        error: 'Export cooldown active. Please try again later.',
+        cooldownUntil: until,
+        retryAfterSeconds
+      });
+    }
+
     const user = db.prepare('SELECT username, email FROM users WHERE id = ?').get(req.user.id);
 
     if (!user.email) {

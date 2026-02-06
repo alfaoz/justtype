@@ -455,6 +455,13 @@ try {
     console.log(`✓ Database migrated: Added pin_wrapped_key/pin_salt columns, migrated ${googleE2eUsers.length} Google E2E users`);
   }
 
+  // Add export cooldown column (epoch ms) for heavy export operations
+  const hasExportCooldownUntil = userColsFinal.some(col => col.name === 'export_cooldown_until');
+  if (!hasExportCooldownUntil) {
+    db.exec(`ALTER TABLE users ADD COLUMN export_cooldown_until INTEGER;`);
+    console.log('✓ Database migrated: Added export_cooldown_until column');
+  }
+
   // Create incidents tables for status page
   db.exec(`
     CREATE TABLE IF NOT EXISTS incidents (
