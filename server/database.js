@@ -328,6 +328,33 @@ try {
     console.log('✓ Database migrated: Added encrypted_title column to slates');
   }
 
+  // ZK title hygiene: if a private slate already has encrypted_title, wipe its plaintext title.
+  // (Title column is NOT NULL, so we store an empty string.)
+  try {
+    const needsWipe = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM slates
+      WHERE is_published = 0
+        AND encrypted_title IS NOT NULL
+        AND encrypted_title != ''
+        AND title != ''
+    `).get();
+
+    if (needsWipe && needsWipe.count > 0) {
+      db.prepare(`
+        UPDATE slates
+        SET title = ''
+        WHERE is_published = 0
+          AND encrypted_title IS NOT NULL
+          AND encrypted_title != ''
+      `).run();
+      console.log(`✓ Database migrated: Wiped plaintext titles for ${needsWipe.count} private slates`);
+    }
+  } catch (err) {
+    // Don't crash startup if this migration fails; log and continue.
+    console.warn('Database migration warning: Failed to wipe plaintext titles:', err);
+  }
+
   // Create CLI device codes table for OAuth device flow
   db.exec(`
     CREATE TABLE IF NOT EXISTS cli_device_codes (

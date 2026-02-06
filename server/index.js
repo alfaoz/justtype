@@ -2131,13 +2131,20 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
   const isE2E = req.e2e && encryptedContent;
 
-  if (!title || (!content && !encryptedContent)) {
-    return res.status(400).json({ error: 'Title and content required' });
-  }
-
-  // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
-  if (req.e2e && !encryptedContent) {
-    return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+  // Legacy users: title + plaintext required. E2E users: encrypted content + encrypted title required.
+  if (req.e2e) {
+    // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
+    if (!encryptedContent) {
+      return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+    }
+    // Titles must be zero-knowledge for E2E users — do not accept plaintext titles as the source of truth.
+    if (!encryptedTitle) {
+      return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
+    }
+  } else {
+    if (!title || !content) {
+      return res.status(400).json({ error: 'Title and content required' });
+    }
   }
 
   // Check content size (5 MB limit)
@@ -2182,12 +2189,15 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
       sizeBytes = Buffer.byteLength(content, 'utf8');
     }
 
-    // Save metadata to database with encryption_version = 1
-    const stmt = db.prepare(`
-      INSERT INTO slates (user_id, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(req.user.id, title, encryptedTitle || null, b2FileId, wordCount, charCount, sizeBytes, 1);
+	    // Save metadata to database with encryption_version = 1
+	    const stmt = db.prepare(`
+	      INSERT INTO slates (user_id, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	    `);
+	    // For E2E private slates, never store plaintext title in the DB (ZK). Keep it empty and rely on encrypted_title.
+	    const titleToStore = isE2E ? '' : title;
+	    const encryptedTitleToStore = isE2E ? encryptedTitle : null;
+	    const result = stmt.run(req.user.id, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2195,14 +2205,14 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     // Get updated slate count
     const updatedSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
 
-    res.status(201).json({
-      id: result.lastInsertRowid,
-      title,
-      word_count: wordCount,
-      char_count: charCount,
-      is_published: 0,
-      share_id: null,
-      slateCount: updatedSlateCount.count
+	    res.status(201).json({
+	      id: result.lastInsertRowid,
+	      title: isE2E ? '' : title,
+	      word_count: wordCount,
+	      char_count: charCount,
+	      is_published: 0,
+	      share_id: null,
+	      slateCount: updatedSlateCount.count
     });
   } catch (error) {
     console.error('Create slate error:', error);
@@ -2227,6 +2237,11 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
   // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
   if (userE2E && userE2E.e2e_migrated && !encryptedContent && content) {
     return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+  }
+
+  // E2E users must always provide encryptedTitle so private titles remain zero-knowledge.
+  if (isE2E && !encryptedTitle) {
+    return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
   }
 
   // Check content size (5 MB limit)
@@ -2340,19 +2355,23 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     }
 
     // Calculate stats
-    const wordCount = isE2E ? (clientWordCount || 0) : (content.trim() === '' ? 0 : content.trim().split(/\s+/).length);
-    const charCount = isE2E ? (clientCharCount || 0) : content.length;
-    const sizeBytes = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
+	    const wordCount = isE2E ? (clientWordCount || 0) : (content.trim() === '' ? 0 : content.trim().split(/\s+/).length);
+	    const charCount = isE2E ? (clientCharCount || 0) : content.length;
+	    const sizeBytes = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
 
-    const newPublishedState = slate.is_system_slate ? slate.is_published : 0;
-    const encryptionVersion = slate.is_system_slate ? 0 : 1;
-    const stmt = db.prepare(`
-      UPDATE slates
-      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
-          is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND user_id = ?
-    `);
-    stmt.run(title, encryptedTitle || null, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
+	    const newPublishedState = slate.is_system_slate ? slate.is_published : 0;
+	    const encryptionVersion = slate.is_system_slate ? 0 : 1;
+
+	    // For E2E private slates, never store plaintext title in the DB (ZK).
+	    const titleToStore = (!slate.is_system_slate && isE2E) ? '' : title;
+	    const encryptedTitleToStore = (!slate.is_system_slate && isE2E) ? encryptedTitle : (encryptedTitle || null);
+	    const stmt = db.prepare(`
+	      UPDATE slates
+	      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
+	          is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
+	      WHERE id = ? AND user_id = ?
+	    `);
+	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2384,6 +2403,11 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
 // Publish/unpublish slate
 app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
   const { isPublished, publicContent, publicTitle, encryptedTitle } = req.body;
+
+  // For E2E users, private titles must be zero-knowledge. When unpublishing, require an encrypted title.
+  if (req.e2e && isPublished === false && !encryptedTitle) {
+    return res.status(400).json({ error: 'Encrypted title required. Please unlock your slates first.', code: 'E2E_TITLE_REQUIRED' });
+  }
 
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -2439,9 +2463,14 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       // Publishing: store plaintext title for public view, clear encrypted
       titleToStore = publicTitle;
       encryptedTitleToStore = null;
-    } else if (!isPublished && encryptedTitle) {
-      // Unpublishing: encrypt title, keep plaintext as fallback
-      encryptedTitleToStore = encryptedTitle;
+    } else if (!isPublished) {
+      // Unpublishing: store encrypted title. For E2E users, wipe plaintext title (ZK).
+      if (encryptedTitle) {
+        encryptedTitleToStore = encryptedTitle;
+      }
+      if (req.e2e && !slate.is_system_slate) {
+        titleToStore = '';
+      }
     }
 
     const stmt = db.prepare(`
@@ -2522,13 +2551,20 @@ app.post('/api/slates/:id/migrate-title', authenticateToken, async (req, res) =>
       return res.status(404).json({ error: 'Slate not found' });
     }
 
-    // Only migrate unpublished slates without encrypted title
-    if (slate.is_published || slate.encrypted_title) {
+    // Only migrate unpublished slates. If already migrated, still wipe plaintext title if present.
+    if (slate.is_published) {
       return res.json({ success: true, skipped: true });
     }
 
-    db.prepare('UPDATE slates SET encrypted_title = ? WHERE id = ?')
-      .run(encryptedTitle, req.params.id);
+    if (slate.encrypted_title) {
+      // Already encrypted: just wipe plaintext title.
+      db.prepare('UPDATE slates SET title = ? WHERE id = ?')
+        .run('', req.params.id);
+      return res.json({ success: true, skipped: true, wipedPlaintextTitle: true });
+    }
+
+    db.prepare('UPDATE slates SET encrypted_title = ?, title = ? WHERE id = ?')
+      .run(encryptedTitle, '', req.params.id);
 
     res.json({ success: true });
   } catch (error) {
