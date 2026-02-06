@@ -230,6 +230,13 @@ const strings = {
       codePlaceholder: 'check your email for the code',
       newPassword: 'new password',
       newPasswordPlaceholder: 'at least 6 characters',
+      errors: {
+        recoveryRequired: 'recovery key is required',
+        newPasswordRequired: 'new password is required',
+        invalidRecovery: 'invalid recovery key. please check and try again.',
+        recoveryDataFailed: 'failed to load recovery data. please try again.',
+        resetFailed: 'failed to reset password',
+      },
       otpStep: {
         title: 'enter verification code',
         description: 'check your email for the 6-digit code',

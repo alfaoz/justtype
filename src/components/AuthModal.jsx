@@ -444,58 +444,128 @@ export function AuthModal({ onClose, onAuth }) {
   const [destructiveConfirmed, setDestructiveConfirmed] = useState(false);
   const [resetRecoveryPhrase, setResetRecoveryPhrase] = useState(null); // new phrase from server
 
+  const normalizeRecoveryPhrase = (phrase) => phrase.trim().toLowerCase().replace(/\s+/g, ' ');
+
   const handleResetPassword = async (method) => {
     setError('');
     setLoading(true);
 
     try {
-      let endpoint = `${API_URL}/auth/reset-password`;
-      let body = { email: resetEmail, code: resetOtp };
-
-      if (method === 'recovery') {
-        if (!resetRecoveryInput.trim()) {
-          throw new Error('Recovery key is required');
-        }
-        endpoint = `${API_URL}/auth/reset-password-with-recovery`;
-        body.recoveryPhrase = resetRecoveryInput.trim();
-      }
-
       // Get new password from the form
       const passwordInput = document.querySelector('#reset-new-password');
       if (!passwordInput || !passwordInput.value) {
-        throw new Error('New password is required');
+        throw new Error(strings.auth.resetPassword.errors.newPasswordRequired);
       }
-      body.newPassword = passwordInput.value;
+      const newPassword = passwordInput.value;
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      if (method === 'recovery') {
+        const recoveryPhrase = normalizeRecoveryPhrase(resetRecoveryInput);
+        if (!recoveryPhrase) {
+          throw new Error(strings.auth.resetPassword.errors.recoveryRequired);
+        }
 
-      const data = await response.json();
+        // Fetch wrapped recovery data so E2E users can unwrap/rewrap locally (ZK)
+        const recoveryRes = await fetch(`${API_URL}/auth/recovery-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: resetEmail, code: resetOtp }),
+        });
+        const recoveryData = await recoveryRes.json();
+        if (!recoveryRes.ok) {
+          throw new Error(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
+        }
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to reset password');
-      }
+        if (recoveryData.e2e) {
+          let slateKey;
+          try {
+            const recoveryDerivedKey = await deriveKey(recoveryPhrase, recoveryData.recoverySalt);
+            slateKey = await unwrapKey(recoveryData.recoveryWrappedKey, recoveryDerivedKey);
+          } catch (unwrapErr) {
+            console.error('E2E recovery unwrap failed:', unwrapErr);
+            throw new Error(strings.auth.resetPassword.errors.invalidRecovery);
+          }
 
-      setSuccess(data.message);
+          // Re-wrap slate key with new password + new recovery phrase (client-side)
+          const newEncryptionSalt = generateSalt();
+          const passwordDerivedKey = await deriveKey(newPassword, newEncryptionSalt);
+          const newWrappedKey = await wrapKey(slateKey, passwordDerivedKey);
 
-      // If a new recovery phrase was returned, show it
-      if (data.recoveryPhrase) {
-        setResetRecoveryPhrase(data.recoveryPhrase);
+          const newRecoveryPhrase = generateRecoveryPhrase(wordlist);
+          const newRecoverySalt = generateSalt();
+          const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
+          const newRecoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
+
+          const response = await fetch(`${API_URL}/auth/reset-password-with-recovery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: resetEmail,
+              code: resetOtp,
+              newPassword,
+              newWrappedKey,
+              newRecoveryWrappedKey,
+              newRecoverySalt,
+              newEncryptionSalt,
+            }),
+          });
+
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+          }
+
+          setSuccess(data.message);
+          setResetRecoveryPhrase(newRecoveryPhrase);
+          return;
+        }
+
+        // Non-E2E accounts: fallback to server-side recovery reset
+        const response = await fetch(`${API_URL}/auth/reset-password-with-recovery`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: resetEmail, code: resetOtp, newPassword, recoveryPhrase }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+        }
+
+        setSuccess(data.message);
+        if (data.recoveryPhrase) {
+          setResetRecoveryPhrase(data.recoveryPhrase);
+          return;
+        }
       } else {
-        // Go back to login after success
-        setTimeout(() => {
-          setShowResetPassword(false);
-          setResetStep('otp');
-          setResetOtp('');
-          setResetRecoveryInput('');
-          setIsLogin(true);
-          setError('');
-          setSuccess('');
-        }, 2000);
+        // Destructive reset (wipes slates)
+        const response = await fetch(`${API_URL}/auth/reset-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: resetEmail, code: resetOtp, newPassword }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+        }
+
+        setSuccess(data.message);
+        if (data.recoveryPhrase) {
+          setResetRecoveryPhrase(data.recoveryPhrase);
+          return;
+        }
       }
+
+      // Go back to login after success
+      setTimeout(() => {
+        setShowResetPassword(false);
+        setResetStep('otp');
+        setResetOtp('');
+        setResetRecoveryInput('');
+        setIsLogin(true);
+        setError('');
+        setSuccess('');
+      }, 2000);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -506,7 +576,7 @@ export function AuthModal({ onClose, onAuth }) {
   // Show forgot password form
   if (showForgotPassword) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">forgot password</h2>
 
@@ -597,7 +667,7 @@ export function AuthModal({ onClose, onAuth }) {
     };
 
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
 
           {/* Step 1: OTP entry */}
@@ -790,7 +860,7 @@ export function AuthModal({ onClose, onAuth }) {
   // Show verification form if needed
   if (showVerification) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">{strings.auth.verify.title}</h2>
 

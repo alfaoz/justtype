@@ -1709,10 +1709,13 @@ app.post('/api/auth/recovery-data', createRateLimitMiddleware('resetPassword'), 
   if (!email || !code) {
     return res.status(400).json({ error: 'Email and code are required' });
   }
-  const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt, encryption_salt, e2e_migrated FROM users WHERE email = ? AND reset_token = ?')
+  const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt, encryption_salt, e2e_migrated, reset_code_expires FROM users WHERE email = ? AND reset_token = ?')
     .get(email.toLowerCase(), code);
   if (!user) {
     return res.status(400).json({ error: 'Invalid reset code' });
+  }
+  if (new Date(user.reset_code_expires) < new Date()) {
+    return res.status(400).json({ error: 'Reset code has expired' });
   }
   res.json({
     recoveryWrappedKey: user.recovery_wrapped_key,
@@ -1751,15 +1754,17 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+    let newRecoveryPhrase = null;
 
     if (user.e2e_migrated && clientNewWrappedKey && clientNewRecoveryWrappedKey) {
+      if (!clientNewRecoverySalt || !clientNewEncryptionSalt) {
+        return res.status(400).json({ error: 'Missing E2E reset data' });
+      }
       // E2E user: client did all unwrap/rewrap locally
       const updateFields = [hashedPassword, clientNewWrappedKey, clientNewRecoveryWrappedKey, clientNewRecoverySalt];
       let sql = `UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?`;
-      if (clientNewEncryptionSalt) {
-        sql += `, encryption_salt = ?`;
-        updateFields.push(clientNewEncryptionSalt);
-      }
+      sql += `, encryption_salt = ?`;
+      updateFields.push(clientNewEncryptionSalt);
       sql += `, reset_token = NULL, reset_code_expires = NULL WHERE id = ?`;
       updateFields.push(user.id);
       db.prepare(sql).run(...updateFields);
@@ -1782,7 +1787,7 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
       const newWrappedKey = wrapKey(slateKey, newPasswordKey);
 
       const newRecoverySalt = crypto.randomBytes(32).toString('hex');
-      const newRecoveryPhrase = generateRecoveryPhrase();
+      newRecoveryPhrase = generateRecoveryPhrase();
       const newRecoveryKey = deriveEncryptionKey(newRecoveryPhrase, newRecoverySalt);
       const newRecoveryWrappedKey = wrapKey(slateKey, newRecoveryKey);
 
@@ -1798,9 +1803,8 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
 
     res.json({
       message: 'Password reset successfully! Your slates are preserved.',
-      // For E2E, client already has the recovery phrase; for non-E2E, server returns it
-      recoveryPhrase: user.e2e_migrated ? undefined : (recoveryPhrase ? undefined : null),
-      recoveryWrappedKey: user.e2e_migrated ? undefined : undefined,
+      // E2E: client generated/shows new recovery phrase; non-E2E: server returns it
+      recoveryPhrase: user.e2e_migrated ? undefined : newRecoveryPhrase,
       e2e: !!user.e2e_migrated
     });
   } catch (error) {
