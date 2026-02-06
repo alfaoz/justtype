@@ -24,7 +24,7 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-echo "[1/7] local preflight..."
+echo "[1/6] local preflight..."
 require_cmd git
 require_cmd node
 require_cmd npm
@@ -40,7 +40,7 @@ if [ -n "$(git status --porcelain)" ]; then
   fail "working tree is dirty; commit or stash first"
 fi
 
-echo "[2/7] version consistency check..."
+echo "[2/6] version consistency check..."
 PKG_VERSION="$(node -p "require('./package.json').version")"
 LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
 APP_VERSION="$(node -e "const fs=require('fs');const s=fs.readFileSync('src/version.js','utf8');const m=s.match(/VERSION\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]/);if(!m){process.exit(1)}process.stdout.write(m[1])")" || fail "could not read version from src/version.js"
@@ -52,7 +52,7 @@ echo "      src/version.js:    $APP_VERSION"
 [ "$PKG_VERSION" = "$LOCK_VERSION" ] || fail "package.json and package-lock.json versions differ"
 [ "$PKG_VERSION" = "$APP_VERSION" ] || fail "package.json and src/version.js versions differ"
 
-echo "[3/7] sync check with origin/$DEPLOY_BRANCH..."
+echo "[3/6] sync check with origin/$DEPLOY_BRANCH..."
 git fetch origin "$DEPLOY_BRANCH"
 
 LOCAL_HEAD="$(git rev-parse HEAD)"
@@ -69,17 +69,10 @@ else
   echo "      local has commits to push"
 fi
 
-echo "[4/7] local build verification..."
-if [ ! -x "node_modules/.bin/vite" ]; then
-  echo "      local dependencies missing, running npm ci..."
-  npm ci
-fi
-npm run build
-
-echo "[5/7] push to origin/$DEPLOY_BRANCH..."
+echo "[4/6] push to origin/$DEPLOY_BRANCH..."
 git push origin "$DEPLOY_BRANCH"
 
-echo "[6/7] remote deploy on $DEPLOY_SSH_TARGET..."
+echo "[5/6] remote deploy on $DEPLOY_SSH_TARGET..."
 ssh -p "$DEPLOY_PORT" "$DEPLOY_SSH_TARGET" \
   "DEPLOY_PATH='$DEPLOY_PATH' DEPLOY_BRANCH='$DEPLOY_BRANCH' REMOTE_APP_NAME='$REMOTE_APP_NAME' REMOTE_HEALTH_URL='$REMOTE_HEALTH_URL' bash -s" <<'EOF'
 set -euo pipefail
@@ -113,5 +106,5 @@ curl -fsS "$REMOTE_HEALTH_URL"
 echo ""
 EOF
 
-echo "[7/7] complete."
+echo "[6/6] complete."
 echo "safe deploy finished successfully."
