@@ -70,6 +70,10 @@ else
 fi
 
 echo "[4/7] local build verification..."
+if [ ! -x "node_modules/.bin/vite" ]; then
+  echo "      local dependencies missing, running npm ci..."
+  npm ci
+fi
 npm run build
 
 echo "[5/7] push to origin/$DEPLOY_BRANCH..."
