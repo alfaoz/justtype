@@ -1815,7 +1815,15 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
 
 // Reset password without recovery key (destructive - wipes all slates)
 app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'), async (req, res) => {
-  const { email, code, newPassword } = req.body;
+  const {
+    email,
+    code,
+    newPassword,
+    wrappedKey: clientWrappedKey,
+    encryptionSalt: clientEncryptionSalt,
+    recoveryWrappedKey: clientRecoveryWrappedKey,
+    recoverySalt: clientRecoverySalt,
+  } = req.body;
 
   if (!email || !code || !newPassword) {
     return res.status(400).json({ error: 'Email, code, and new password are required' });
@@ -1850,13 +1858,27 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
 
     // Set up fresh encryption with new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const salt = user.encryption_salt || getOrCreateEncryptionSalt(user.id);
-    const { wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey } = setupKeyWrapping(newPassword, salt);
+    let recoveryPhrase = undefined;
 
-    db.prepare(`
-      UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?,
-      key_migrated = 1, storage_used = 0, reset_token = NULL, reset_code_expires = NULL WHERE id = ?
-    `).run(hashedPassword, wrappedKey, recoveryWrappedKey, recoverySalt, user.id);
+    const hasClientKeys = !!(clientWrappedKey && clientEncryptionSalt && clientRecoveryWrappedKey && clientRecoverySalt);
+    if (hasClientKeys) {
+      // ZK/E2E destructive reset: client generated a fresh slate key and re-wrapped it.
+      db.prepare(`
+        UPDATE users SET password = ?, wrapped_key = ?, encryption_salt = ?, recovery_wrapped_key = ?, recovery_salt = ?,
+        key_migrated = 1, e2e_migrated = 1, storage_used = 0, reset_token = NULL, reset_code_expires = NULL
+        WHERE id = ?
+      `).run(hashedPassword, clientWrappedKey, clientEncryptionSalt, clientRecoveryWrappedKey, clientRecoverySalt, user.id);
+    } else {
+      // Legacy destructive reset (server-side wrapping). Ensure we don't leave an E2E flag pointing at a non-E2E key.
+      const salt = user.encryption_salt || getOrCreateEncryptionSalt(user.id);
+      const keyData = setupKeyWrapping(newPassword, salt);
+      recoveryPhrase = keyData.recoveryPhrase;
+
+      db.prepare(`
+        UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?,
+        key_migrated = 1, e2e_migrated = 0, storage_used = 0, reset_token = NULL, reset_code_expires = NULL WHERE id = ?
+      `).run(hashedPassword, keyData.wrappedKey, keyData.recoveryWrappedKey, keyData.recoverySalt, user.id);
+    }
 
     // Invalidate all existing sessions
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);

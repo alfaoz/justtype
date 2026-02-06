@@ -264,6 +264,7 @@ export function AuthModal({ onClose, onAuth }) {
       if (!isLogin) {
         setRegisteredEmail(email);
         setShowVerification(true);
+        setPendingAuthData(data);
         setSuccess(data.message);
         e.target.reset();
       } else if (data.requiresVerification) {
@@ -306,18 +307,22 @@ export function AuthModal({ onClose, onAuth }) {
 
       setSuccess(data.message);
 
-      // If this was a login requiring verification, complete the auth now
+      // Complete auth now (signup or login) after successful verification.
+      // For new signups, attach the client-generated recovery phrase so App can show it.
       if (pendingAuthData) {
-        // Update the email_verified status
-        pendingAuthData.user.email_verified = true;
-        onAuth(pendingAuthData);
-      } else if (pendingRecoveryPhrase) {
-        // Show recovery key modal after successful verification for new registrations
-        // Don't close yet - the recovery modal will handle it
-      } else {
-        // Close modal after successful verification for new registrations
-        setTimeout(() => onClose(), 2000);
+        const authDataToComplete = {
+          ...pendingAuthData,
+          user: { ...pendingAuthData.user, email_verified: true }
+        };
+        if (pendingRecoveryPhrase && !authDataToComplete.recoveryPhrase) {
+          authDataToComplete.recoveryPhrase = pendingRecoveryPhrase;
+        }
+        onAuth(authDataToComplete);
+        return;
       }
+
+      // Fallback: close after a short delay.
+      setTimeout(() => onClose(), 2000);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -537,11 +542,29 @@ export function AuthModal({ onClose, onAuth }) {
           return;
         }
       } else {
-        // Destructive reset (wipes slates)
+        // Destructive reset (wipes slates). Keep ZK by generating a fresh slate key client-side.
+        const slateKey = await generateSlateKey();
+        const newEncryptionSalt = generateSalt();
+        const passwordDerivedKey = await deriveKey(newPassword, newEncryptionSalt);
+        const wrappedKey = await wrapKey(slateKey, passwordDerivedKey);
+
+        const newRecoveryPhrase = generateRecoveryPhrase(wordlist);
+        const newRecoverySalt = generateSalt();
+        const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
+        const recoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
+
         const response = await fetch(`${API_URL}/auth/reset-password`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: resetEmail, code: resetOtp, newPassword }),
+          body: JSON.stringify({
+            email: resetEmail,
+            code: resetOtp,
+            newPassword,
+            wrappedKey,
+            encryptionSalt: newEncryptionSalt,
+            recoveryWrappedKey,
+            recoverySalt: newRecoverySalt,
+          }),
         });
 
         const data = await response.json();
@@ -550,10 +573,8 @@ export function AuthModal({ onClose, onAuth }) {
         }
 
         setSuccess(data.message);
-        if (data.recoveryPhrase) {
-          setResetRecoveryPhrase(data.recoveryPhrase);
-          return;
-        }
+        setResetRecoveryPhrase(newRecoveryPhrase);
+        return;
       }
 
       // Go back to login after success
@@ -841,19 +862,6 @@ export function AuthModal({ onClose, onAuth }) {
 
         </div>
       </div>
-    );
-  }
-
-  // Show recovery key modal after verification if we have a pending phrase
-  if (showVerification && pendingRecoveryPhrase && success) {
-    return (
-      <RecoveryKeyModal
-        recoveryPhrase={pendingRecoveryPhrase}
-        onAcknowledge={() => {
-          setPendingRecoveryPhrase(null);
-          onClose();
-        }}
-      />
     );
   }
 
