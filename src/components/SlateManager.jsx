@@ -481,7 +481,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={strings.slates.searchPlaceholder}
-                  className="w-full h-10 bg-[#141414] border border-[#333] rounded px-4 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
+                  className="w-full h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
                 />
               </div>
 
@@ -489,18 +489,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
               {tagFilter && (
                 <button
                   onClick={() => setTagFilter(null)}
-                  className="h-10 px-3 rounded border border-[#333] bg-[#141414] text-white/90 hover:border-[#666] transition-colors text-xs md:text-sm whitespace-nowrap"
+                  className="h-10 px-3 rounded border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)] transition-colors text-xs md:text-sm whitespace-nowrap"
                   title={strings.slates.tags.filterLabel(tagFilter)}
                 >
-                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[#666] ml-2">x</span>
+                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[var(--theme-text-dim)] ml-2">x</span>
                 </button>
               )}
 
               {/* View Mode Toggle */}
-              <div className="flex items-center border border-[#333] rounded overflow-hidden h-10 flex-shrink-0">
+              <div className="flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
                   title={strings.slates.viewToggle.list}
                 >
                   <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
@@ -511,7 +511,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                 </button>
                 <button
                   onClick={() => setViewMode('grid')}
-                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
                   title={strings.slates.viewToggle.grid}
                 >
                   <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
@@ -526,7 +526,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
             {/* Sort */}
             <div className="flex items-center gap-2 text-sm flex-wrap">
-              <span className="text-[#666]">{strings.slates.sortLabel}</span>
+              <span className="text-[var(--theme-text-dim)]">{strings.slates.sortLabel}</span>
               {[
                 { id: 'recent', label: strings.slates.sortOptions.recent },
                 { id: 'oldest', label: strings.slates.sortOptions.oldest },
@@ -539,8 +539,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   onClick={() => setSortBy(option.id)}
                   className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
                     sortBy === option.id
-                      ? 'bg-[#333] border-[#444] text-white'
-                      : 'bg-transparent border-[#333] text-[#666] hover:text-white hover:border-[#666]'
+                      ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-text)]'
+                      : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
                   }`}
                 >
                   {option.label}
@@ -574,36 +574,33 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
             const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
 
             const status = slate.is_published
-              ? { label: strings.slates.status.public, className: 'text-blue-300 border-blue-500/30 bg-blue-500/10' }
+              ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
               : slate.published_at
-                ? { label: strings.slates.status.wasPublic, className: 'text-orange-300 border-orange-500/30 bg-orange-500/10' }
-                : { label: strings.slates.status.private, className: 'text-white/70 border-[#333] bg-[#0f0f0f]' };
+                ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
 
             return (
               <div
                 key={slate.id}
                 onClick={() => onSelectSlate(slate)}
-                className="bg-[#141414] border border-[#2a2a2a] p-4 rounded-lg hover:border-[#666] hover:bg-[#171717] transition-all cursor-pointer group"
+                className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">
-                    {slate.title || strings.slates.untitled}
-                  </h3>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isPinned && (
+                      <svg className="w-3.5 h-3.5 text-[var(--theme-text-dim)] flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
+                      </svg>
+                    )}
+                    <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">
+                      {slate.title || strings.slates.untitled}
+                    </h3>
+                  </div>
 
                   <div className="relative flex items-center gap-1 flex-shrink-0">
                     <button
-                      onClick={(e) => togglePin(slate, e)}
-                      className={`p-1 rounded hover:bg-[#222] transition-colors ${isPinned ? 'text-white' : 'text-[#666] hover:text-white'}`}
-                      title={isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
-                      </svg>
-                    </button>
-
-                    <button
                       onClick={(e) => toggleMenu(slate.id, e)}
-                      className="p-1 rounded hover:bg-[#222] text-[#666] hover:text-white transition-colors"
+                      className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
                       title={strings.slates.menu.more}
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
@@ -614,16 +611,22 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                     </button>
 
                     {openMenuId === slate.id && (
-                      <div className="absolute right-0 top-full mt-1 bg-[#141414] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                      <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        <button
+                          onClick={(e) => togglePin(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
+                        >
+                          {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
+                        </button>
                         <button
                           onClick={(e) => openTagsEditor(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
                         >
                           {strings.slates.menu.tags}
                         </button>
                         <button
                           onClick={(e) => togglePublish(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
                         >
                           {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
                         </button>
@@ -632,7 +635,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                             setOpenMenuId(null);
                             showDeleteConfirmation(slate.id, slate.title, e);
                           }}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
                         >
                           {strings.slates.menu.delete}
                         </button>
@@ -653,20 +656,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                         e.preventDefault();
                         setTagFilter(tag);
                       }}
-                      className="text-xs px-2 py-0.5 rounded border border-[#333] text-white/70 hover:text-white hover:border-[#666] transition-colors"
+                      className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                       title={tag}
                     >
                       {tag}
                     </button>
                   ))}
                   {remainingTagCount > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded border border-[#333] text-[#666]">
+                    <span className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-dim)]">
                       +{remainingTagCount}
                     </span>
                   )}
                 </div>
 
-                <div className="mt-3 flex items-center justify-between text-xs text-[#666]">
+                <div className="mt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
                   <div className="flex items-center gap-3">
                     <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
                     <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
@@ -687,36 +690,33 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
             const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
 
             const status = slate.is_published
-              ? { label: strings.slates.status.public, className: 'text-blue-300 border-blue-500/30 bg-blue-500/10' }
+              ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
               : slate.published_at
-                ? { label: strings.slates.status.wasPublic, className: 'text-orange-300 border-orange-500/30 bg-orange-500/10' }
-                : { label: strings.slates.status.private, className: 'text-white/70 border-[#333] bg-[#0f0f0f]' };
+                ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
 
             return (
               <div
                 key={slate.id}
                 onClick={() => onSelectSlate(slate)}
-                className="bg-[#141414] border border-[#2a2a2a] p-4 rounded-lg hover:border-[#666] hover:bg-[#171717] transition-all cursor-pointer group flex flex-col min-h-[132px]"
+                className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group flex flex-col min-h-[132px]"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">
-                    {slate.title || strings.slates.untitled}
-                  </h3>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isPinned && (
+                      <svg className="w-3.5 h-3.5 text-[var(--theme-text-dim)] flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
+                      </svg>
+                    )}
+                    <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">
+                      {slate.title || strings.slates.untitled}
+                    </h3>
+                  </div>
 
                   <div className="relative flex items-center gap-1 flex-shrink-0">
                     <button
-                      onClick={(e) => togglePin(slate, e)}
-                      className={`p-1 rounded hover:bg-[#222] transition-colors ${isPinned ? 'text-white' : 'text-[#666] hover:text-white'}`}
-                      title={isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
-                    >
-                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
-                      </svg>
-                    </button>
-
-                    <button
                       onClick={(e) => toggleMenu(slate.id, e)}
-                      className="p-1 rounded hover:bg-[#222] text-[#666] hover:text-white transition-colors"
+                      className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
                       title={strings.slates.menu.more}
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
@@ -727,16 +727,22 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                     </button>
 
                     {openMenuId === slate.id && (
-                      <div className="absolute right-0 top-full mt-1 bg-[#141414] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                      <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        <button
+                          onClick={(e) => togglePin(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
+                        >
+                          {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
+                        </button>
                         <button
                           onClick={(e) => openTagsEditor(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
                         >
                           {strings.slates.menu.tags}
                         </button>
                         <button
                           onClick={(e) => togglePublish(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
                         >
                           {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
                         </button>
@@ -745,7 +751,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                             setOpenMenuId(null);
                             showDeleteConfirmation(slate.id, slate.title, e);
                           }}
-                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
+                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
                         >
                           {strings.slates.menu.delete}
                         </button>
@@ -766,20 +772,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                         e.preventDefault();
                         setTagFilter(tag);
                       }}
-                      className="text-xs px-2 py-0.5 rounded border border-[#333] text-white/70 hover:text-white hover:border-[#666] transition-colors"
+                      className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                       title={tag}
                     >
                       {tag}
                     </button>
                   ))}
                   {remainingTagCount > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded border border-[#333] text-[#666]">
+                    <span className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-dim)]">
                       +{remainingTagCount}
                     </span>
                   )}
                 </div>
 
-                <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[#666]">
+                <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
                   <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
                   <span>{formatDateShort(slate.updated_at)}</span>
                 </div>
@@ -818,22 +824,22 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
       {/* Tags Modal */}
       {tagsModal.show && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#141414] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-1">{strings.slates.tags.title}</h2>
-            <p className="text-xs text-[#666] mb-5 truncate">{tagsModal.slateTitle}</p>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-1">{strings.slates.tags.title}</h2>
+            <p className="text-xs text-[var(--theme-text-dim)] mb-5 truncate">{tagsModal.slateTitle}</p>
 
             <div className="flex flex-wrap gap-2 mb-4 min-h-[28px]">
               {tagsModal.tags.length === 0 ? (
-                <span className="text-xs text-[#666]">{strings.slates.tags.emptyHint}</span>
+                <span className="text-xs text-[var(--theme-text-dim)]">{strings.slates.tags.emptyHint}</span>
               ) : (
                 tagsModal.tags.map(tag => (
                   <button
                     key={tag}
                     onClick={() => removeTag(tag)}
-                    className="text-xs px-2 py-1 rounded border border-[#333] text-white/80 hover:text-white hover:border-[#666] transition-colors"
+                    className="text-xs px-2 py-1 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
                     title={tag}
                   >
-                    {tag} <span className="text-[#666] ml-2">x</span>
+                    {tag} <span className="text-[var(--theme-text-dim)] ml-2">x</span>
                   </button>
                 ))
               )}
@@ -851,18 +857,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   }
                 }}
                 placeholder={strings.slates.tags.addPlaceholder}
-                className="flex-1 h-10 bg-[#101010] border border-[#333] rounded px-3 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
+                className="flex-1 h-10 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
               />
               <button
                 onClick={addTagFromInput}
-                className="h-10 px-4 rounded border border-[#333] text-white/90 hover:bg-[#222] hover:border-[#666] transition-colors text-sm"
+                className="h-10 px-4 rounded border border-[var(--theme-border)] text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)] transition-colors text-sm"
               >
                 {strings.slates.tags.addButton}
               </button>
             </div>
 
             {tagError && (
-              <div className="text-xs text-red-400 mb-4">
+              <div className="text-xs text-[var(--theme-red)] mb-4">
                 {tagError}
               </div>
             )}
@@ -871,14 +877,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
               <button
                 onClick={closeTagsEditor}
                 disabled={tagsSaving}
-                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#222] transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-text)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {strings.slates.tags.cancel}
               </button>
               <button
                 onClick={saveTags}
                 disabled={tagsSaving}
-                className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex-1 bg-[var(--theme-accent)] text-[var(--theme-bg)] px-6 py-3 rounded hover:opacity-90 transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {tagsSaving ? strings.slates.tags.saving : strings.slates.tags.save}
               </button>
