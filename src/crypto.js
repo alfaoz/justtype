@@ -168,6 +168,23 @@ export async function decryptTitle(base64Blob, slateKeyBytes) {
   return new TextDecoder().decode(result);
 }
 
+// Encrypt an array of tags (strings). Returns base64 blob.
+export async function encryptTags(tags, slateKeyBytes) {
+  return encryptTitle(JSON.stringify(tags), slateKeyBytes);
+}
+
+// Decrypt a tags blob. Returns array of strings (best-effort).
+export async function decryptTags(base64Blob, slateKeyBytes) {
+  const plaintext = await decryptTitle(base64Blob, slateKeyBytes);
+  try {
+    const parsed = JSON.parse(plaintext);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(t => typeof t === 'string');
+  } catch {
+    return [];
+  }
+}
+
 // Generate a 12-word BIP39 recovery phrase
 export function generateRecoveryPhrase(wordlist) {
   const indices = crypto.getRandomValues(new Uint16Array(12));

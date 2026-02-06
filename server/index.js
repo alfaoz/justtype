@@ -2069,7 +2069,7 @@ app.get('/auth/google/link/callback',
 app.get('/api/slates', authenticateToken, (req, res) => {
   try {
     const slates = db.prepare(`
-      SELECT id, title, encrypted_title, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
+      SELECT id, title, encrypted_title, encrypted_tags, pinned_at, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
       FROM slates
       WHERE user_id = ?
     `).all(req.user.id);
@@ -2085,6 +2085,63 @@ app.get('/api/slates', authenticateToken, (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch slates' });
+  }
+});
+
+// Update slate metadata (pinning, tags, etc.)
+app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
+  const { pinned, encryptedTags } = req.body || {};
+
+  try {
+    const slate = db.prepare('SELECT id FROM slates WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.user.id);
+
+    if (!slate) {
+      return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    const updates = [];
+    const params = [];
+
+    let pinnedAt = undefined;
+    if (typeof pinned === 'boolean') {
+      pinnedAt = pinned ? Date.now() : null;
+      updates.push('pinned_at = ?');
+      params.push(pinnedAt);
+    } else if (pinned !== undefined) {
+      return res.status(400).json({ error: 'Invalid pinned value' });
+    }
+
+    if (encryptedTags !== undefined) {
+      const userCheck = db.prepare('SELECT e2e_migrated FROM users WHERE id = ?').get(req.user.id);
+      if (!userCheck || !userCheck.e2e_migrated) {
+        return res.status(400).json({ error: 'Tags require E2E to be enabled on your account.', code: 'E2E_REQUIRED' });
+      }
+
+      if (encryptedTags !== null && typeof encryptedTags !== 'string') {
+        return res.status(400).json({ error: 'Invalid encryptedTags value' });
+      }
+
+      // Avoid unbounded payloads.
+      if (typeof encryptedTags === 'string' && encryptedTags.length > 10000) {
+        return res.status(413).json({ error: 'Tags payload too large' });
+      }
+
+      updates.push('encrypted_tags = ?');
+      params.push(encryptedTags);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No metadata updates provided' });
+    }
+
+    db.prepare(`UPDATE slates SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`)
+      .run(...params, req.params.id, req.user.id);
+
+    res.json({ success: true, pinned_at: pinnedAt });
+  } catch (error) {
+    console.error('Update slate metadata error:', error);
+    res.status(500).json({ error: 'Failed to update slate metadata' });
   }
 });
 

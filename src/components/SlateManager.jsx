@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
-import { decryptTitle, encryptTitle } from '../crypto';
+import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
+
+const TAG_REGEX = /^[a-z0-9]+$/;
+const MAX_TAG_LENGTH = 24;
+const MAX_TAGS_PER_SLATE = 20;
 
 export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
   const [slates, setSlates] = useState([]);
@@ -10,13 +14,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
+  const [tagFilter, setTagFilter] = useState(null);
+  const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
+  const [tagInput, setTagInput] = useState('');
+  const [tagError, setTagError] = useState('');
+  const [tagsSaving, setTagsSaving] = useState(false);
 
   // Persist view mode to localStorage
   useEffect(() => {
     localStorage.setItem('justtype-slate-view', viewMode);
   }, [viewMode]);
+
+  // Debounce search so we don't re-filter on every keystroke for large slate lists.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchQuery(searchQuery), 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (token) {
@@ -46,22 +62,40 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
       });
       let data = await response.json();
 
+      if (!response.ok) {
+        throw new Error(data?.error || strings.errors.loadFailed);
+      }
+
       // Get slate key for decryption
       const slateKey = userId ? await getSlateKey(userId) : null;
 
       if (slateKey) {
-        // Decrypt encrypted titles for unpublished slates
+        // Decrypt encrypted titles (private) and tags (E2E-only)
         data = await Promise.all(data.map(async (slate) => {
+          let title = slate.title;
+
           if (slate.encrypted_title && !slate.is_published) {
             try {
               const decryptedTitle = await decryptTitle(slate.encrypted_title, slateKey);
-              return { ...slate, title: decryptedTitle };
+              title = decryptedTitle;
             } catch (err) {
               console.error('Failed to decrypt title for slate:', slate.id, err);
-              return { ...slate, title: '[encrypted]' };
+              title = strings.slates.lockedTitle;
             }
           }
-          return slate;
+
+          let tags = [];
+          if (slate.encrypted_tags) {
+            try {
+              tags = await decryptTags(slate.encrypted_tags, slateKey);
+            } catch (err) {
+              console.error('Failed to decrypt tags for slate:', slate.id, err);
+              tags = [];
+            }
+          }
+
+          const normalizedTitle = (typeof title === 'string' && title.trim()) ? title : strings.slates.untitled;
+          return { ...slate, title: normalizedTitle, tags };
         }));
 
         // Migration: encrypt plaintext titles for unpublished slates without encrypted_title
@@ -81,6 +115,15 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
             }
           }
         }
+      } else {
+        // Locked state: we can't decrypt private E2E titles/tags yet. Keep UI stable.
+        data = data.map(slate => ({
+          ...slate,
+          title: (typeof slate.title === 'string' && slate.title.trim())
+            ? slate.title
+            : (slate.encrypted_title ? strings.slates.lockedTitle : strings.slates.untitled),
+          tags: [],
+        }));
       }
 
       setSlates(data);
@@ -125,29 +168,205 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
     }
   };
 
-  const togglePublish = async (id, currentlyPublished, e) => {
+  const togglePin = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+
+    const isPinned = Boolean(slate.pinned_at);
+    try {
+      const response = await fetch(`${API_URL}/slates/${slate.id}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pinned: !isPinned }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSlates(prevSlates =>
+          prevSlates.map(s =>
+            s.id === slate.id
+              ? { ...s, pinned_at: data.pinned_at }
+              : s
+          )
+        );
+      } else {
+        alert(data.error || strings.errors.pinFailed);
+      }
+    } catch (err) {
+      console.error('Failed to toggle pin:', err);
+      alert(strings.errors.pinFailed);
+    }
+  };
+
+  const openTagsEditor = (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    setTagInput('');
+    setTagError('');
+    setTagsModal({
+      show: true,
+      slateId: slate.id,
+      slateTitle: slate.title || strings.slates.untitled,
+      tags: Array.isArray(slate.tags) ? slate.tags : [],
+    });
+  };
+
+  const closeTagsEditor = () => {
+    setTagsModal({ show: false, slateId: null, slateTitle: '', tags: [] });
+    setTagInput('');
+    setTagError('');
+    setTagsSaving(false);
+  };
+
+  const normalizeTag = (raw) => raw.trim().toLowerCase();
+
+  const addTagFromInput = () => {
+    const next = normalizeTag(tagInput);
+    setTagError('');
+
+    if (!next) return;
+    if (!TAG_REGEX.test(next)) {
+      setTagError(strings.slates.tags.invalidTag);
+      return;
+    }
+    if (next.length > MAX_TAG_LENGTH) {
+      setTagError(strings.slates.tags.tooLong(MAX_TAG_LENGTH));
+      return;
+    }
+    if (tagsModal.tags.length >= MAX_TAGS_PER_SLATE) {
+      setTagError(strings.slates.tags.tooMany(MAX_TAGS_PER_SLATE));
+      return;
+    }
+    if (tagsModal.tags.includes(next)) {
+      setTagInput('');
+      return;
+    }
+
+    setTagsModal(prev => ({ ...prev, tags: [...prev.tags, next] }));
+    setTagInput('');
+  };
+
+  const removeTag = (tag) => {
+    setTagsModal(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
+  };
+
+  const saveTags = async () => {
+    setTagError('');
+    setTagsSaving(true);
+
+    try {
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      if (!slateKey) {
+        setTagError(strings.slates.tags.unlockRequired);
+        setTagsSaving(false);
+        return;
+      }
+
+      const normalized = tagsModal.tags
+        .map(t => normalizeTag(t))
+        .filter(Boolean);
+
+      const encryptedTagsBlob = normalized.length > 0
+        ? await encryptTags(normalized, slateKey)
+        : null;
+
+      const response = await fetch(`${API_URL}/slates/${tagsModal.slateId}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ encryptedTags: encryptedTagsBlob }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setTagError(data.error || strings.errors.tagsSaveFailed);
+        setTagsSaving(false);
+        return;
+      }
+
+      setSlates(prevSlates =>
+        prevSlates.map(s =>
+          s.id === tagsModal.slateId
+            ? { ...s, tags: normalized, encrypted_tags: encryptedTagsBlob }
+            : s
+        )
+      );
+
+      closeTagsEditor();
+    } catch (err) {
+      console.error('Failed to save tags:', err);
+      setTagError(strings.errors.tagsSaveFailed);
+      setTagsSaving(false);
+    }
+  };
+
+  const togglePublish = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
 
     try {
-      const response = await fetch(`${API_URL}/slates/${id}/publish`, {
+      const nextPublished = !slate.is_published;
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      const looksE2E = Boolean(slate.encrypted_title) || slate.title === null;
+
+      const body = { isPublished: nextPublished };
+
+      if (slateKey) {
+        if (nextPublished) {
+          // Publishing an E2E slate requires a plaintext public copy.
+          const slateResp = await fetch(`${API_URL}/slates/${slate.id}`, { credentials: 'include' });
+          const slateData = await slateResp.json();
+
+          if (!slateResp.ok) {
+            alert(slateData.error || strings.errors.loadFailed);
+            return;
+          }
+
+          let plaintext = slateData.content || '';
+          if (slateData.encrypted && slateData.encryptedContent) {
+            plaintext = await decryptContent(slateData.encryptedContent, slateKey);
+          }
+
+          const firstLine = plaintext.split('\n')[0].trim();
+          body.publicContent = plaintext;
+          body.publicTitle = firstLine || strings.slates.untitled;
+        } else {
+          // Unpublishing an E2E slate requires an encrypted title (ZK).
+          const titleToEncrypt = (slate.title || strings.slates.untitled).trim() || strings.slates.untitled;
+          body.encryptedTitle = await encryptTitle(titleToEncrypt, slateKey);
+        }
+      } else if (looksE2E) {
+        alert(strings.slates.unlockRequired);
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/slates/${slate.id}/publish`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ isPublished: !currentlyPublished }),
+        body: JSON.stringify(body),
       });
 
       if (response.ok) {
         const data = await response.json();
         setSlates(prevSlates =>
           prevSlates.map(s =>
-            s.id === id
+            s.id === slate.id
               ? {
                   ...s,
-                  is_published: !currentlyPublished,
+                  is_published: nextPublished,
                   share_id: data.share_id,
-                  published_at: !currentlyPublished ? new Date().toISOString() : null,
+                  // published_at is kept even after unpublishing to track "was public"
+                  published_at: nextPublished ? (s.published_at || new Date().toISOString()) : s.published_at,
+                  // Keep local state in sync with server title-encryption behavior
+                  encrypted_title: !nextPublished && body.encryptedTitle ? body.encryptedTitle : null,
+                  title: nextPublished && body.publicTitle ? body.publicTitle : s.title,
                 }
               : s
           )
@@ -178,27 +397,57 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
-  // Filter and sort slates
-  const filteredAndSortedSlates = slates
-    .filter(slate => {
-      if (!searchQuery.trim()) return true;
-      return slate.title.toLowerCase().includes(searchQuery.toLowerCase());
-    })
-    .sort((a, b) => {
+  const filteredAndSortedSlates = useMemo(() => {
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    const activeTag = tagFilter;
+
+    const filtered = slates.filter(slate => {
+      const tags = Array.isArray(slate.tags) ? slate.tags : [];
+
+      if (activeTag && !tags.includes(activeTag)) {
+        return false;
+      }
+
+      if (!q) return true;
+
+      const title = (slate.title || '').toString().toLowerCase();
+      if (title.includes(q)) return true;
+
+      return tags.some(t => (t || '').toString().toLowerCase().includes(q));
+    });
+
+    const compareBySort = (a, b) => {
       switch (sortBy) {
         case 'oldest':
           return new Date(a.updated_at) - new Date(b.updated_at);
         case 'a-z':
-          return a.title.localeCompare(b.title);
+          return (a.title || '').toString().localeCompare((b.title || '').toString());
         case 'z-a':
-          return b.title.localeCompare(a.title);
+          return (b.title || '').toString().localeCompare((a.title || '').toString());
         case 'words':
-          return b.word_count - a.word_count;
+          return (b.word_count || 0) - (a.word_count || 0);
         case 'recent':
         default:
           return new Date(b.updated_at) - new Date(a.updated_at);
       }
+    };
+
+    return filtered.sort((a, b) => {
+      const aPinned = a.pinned_at ? 1 : 0;
+      const bPinned = b.pinned_at ? 1 : 0;
+
+      // Pinned always first; within pinned, newest pinned first.
+      if (aPinned && bPinned) {
+        const diff = (b.pinned_at || 0) - (a.pinned_at || 0);
+        if (diff !== 0) return diff;
+        return compareBySort(a, b);
+      }
+
+      if (aPinned !== bPinned) return bPinned - aPinned;
+
+      return compareBySort(a, b);
     });
+  }, [slates, debouncedSearchQuery, tagFilter, sortBy]);
 
   if (loading) {
     return (
@@ -221,69 +470,82 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
           </button>
         </div>
 
-        {/* Search and Sort Controls */}
+        {/* Search + Sort + Filters */}
         {slates.length > 0 && (
-          <div className="flex flex-col md:flex-row gap-3 mb-6">
-            {/* Search */}
-            <div className="flex-1">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="search titles..."
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
-              />
-            </div>
-            {/* Sort */}
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[#666]">sort:</span>
-              <div className="flex gap-1 flex-wrap">
-                {[
-                  { id: 'recent', label: 'recent' },
-                  { id: 'oldest', label: 'oldest' },
-                  { id: 'a-z', label: 'a-z' },
-                  { id: 'z-a', label: 'z-a' },
-                  { id: 'words', label: 'words' },
-                ].map(option => (
-                  <button
-                    key={option.id}
-                    onClick={() => setSortBy(option.id)}
-                    className={`px-2 py-1 rounded transition-colors ${
-                      sortBy === option.id
-                        ? 'bg-[#333] text-white'
-                        : 'text-[#666] hover:text-white'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+          <div className="flex flex-col gap-3 mb-6">
+            <div className="flex flex-col md:flex-row gap-3 md:items-center">
+              {/* Search */}
+              <div className="flex-1">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={strings.slates.searchPlaceholder}
+                  className="w-full h-10 bg-[#141414] border border-[#333] rounded px-4 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
+                />
+              </div>
+
+              {/* Active tag filter */}
+              {tagFilter && (
+                <button
+                  onClick={() => setTagFilter(null)}
+                  className="h-10 px-3 rounded border border-[#333] bg-[#141414] text-white/90 hover:border-[#666] transition-colors text-xs md:text-sm whitespace-nowrap"
+                  title={strings.slates.tags.filterLabel(tagFilter)}
+                >
+                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[#666] ml-2">x</span>
+                </button>
+              )}
+
+              {/* View Mode Toggle */}
+              <div className="flex items-center border border-[#333] rounded overflow-hidden h-10 flex-shrink-0">
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                  title={strings.slates.viewToggle.list}
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="1" y="2" width="14" height="2" rx="0.5"/>
+                    <rect x="1" y="7" width="14" height="2" rx="0.5"/>
+                    <rect x="1" y="12" width="14" height="2" rx="0.5"/>
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
+                  title={strings.slates.viewToggle.grid}
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="1" y="1" width="6" height="6" rx="1"/>
+                    <rect x="9" y="1" width="6" height="6" rx="1"/>
+                    <rect x="1" y="9" width="6" height="6" rx="1"/>
+                    <rect x="9" y="9" width="6" height="6" rx="1"/>
+                  </svg>
+                </button>
               </div>
             </div>
-            {/* View Mode Toggle */}
-            <div className="flex items-center border border-[#333] rounded overflow-hidden">
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 transition-colors ${viewMode === 'list' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
-                title="list view"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                  <rect x="1" y="2" width="14" height="2" rx="0.5"/>
-                  <rect x="1" y="7" width="14" height="2" rx="0.5"/>
-                  <rect x="1" y="12" width="14" height="2" rx="0.5"/>
-                </svg>
-              </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-2 transition-colors ${viewMode === 'grid' ? 'bg-[#333] text-white' : 'text-[#666] hover:text-white'}`}
-                title="grid view"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                  <rect x="1" y="1" width="6" height="6" rx="1"/>
-                  <rect x="9" y="1" width="6" height="6" rx="1"/>
-                  <rect x="1" y="9" width="6" height="6" rx="1"/>
-                  <rect x="9" y="9" width="6" height="6" rx="1"/>
-                </svg>
-              </button>
+
+            {/* Sort */}
+            <div className="flex items-center gap-2 text-sm flex-wrap">
+              <span className="text-[#666]">{strings.slates.sortLabel}</span>
+              {[
+                { id: 'recent', label: strings.slates.sortOptions.recent },
+                { id: 'oldest', label: strings.slates.sortOptions.oldest },
+                { id: 'a-z', label: strings.slates.sortOptions.az },
+                { id: 'z-a', label: strings.slates.sortOptions.za },
+                { id: 'words', label: strings.slates.sortOptions.words },
+              ].map(option => (
+                <button
+                  key={option.id}
+                  onClick={() => setSortBy(option.id)}
+                  className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
+                    sortBy === option.id
+                      ? 'bg-[#333] border-[#444] text-white'
+                      : 'bg-transparent border-[#333] text-[#666] hover:text-white hover:border-[#666]'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -300,140 +562,230 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
         </div>
       ) : filteredAndSortedSlates.length === 0 ? (
         <div className="text-center py-16">
-          <p className="text-[#666] text-sm md:text-base">no slates match "{searchQuery}"</p>
+          <p className="text-[#666] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
         </div>
       ) : viewMode === 'list' ? (
         /* List View */
         <div className="space-y-3">
-          {filteredAndSortedSlates.map((slate) => (
-            <div
-              key={slate.id}
-              onClick={() => onSelectSlate(slate)}
-              className="bg-[#1a1a1a] border border-[#333] p-3 md:p-4 rounded hover:border-[#666] transition-all cursor-pointer group"
-            >
-              <div className="flex justify-between items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-white text-sm md:text-lg mb-1 truncate">{slate.title}</h3>
-                  {/* Desktop stats */}
-                  <div className="hidden md:flex text-sm text-[#666] gap-4">
-                    <span>{strings.slates.stats.words(slate.word_count)}</span>
-                    <span>{strings.slates.stats.chars(slate.char_count)}</span>
-                    <span>{strings.slates.stats.updated(formatDate(slate.updated_at))}</span>
-                    {slate.is_published ? (
-                      <span className="text-blue-400">{strings.slates.stats.published(formatDate(slate.published_at))}</span>
-                    ) : slate.published_at ? (
-                      <span className="text-orange-400">{strings.slates.stats.privateDraft}</span>
-                    ) : (
-                      <span className="text-[#666]">{strings.slates.stats.unpublished}</span>
-                    )}
-                  </div>
-                  {/* Mobile stats */}
-                  <div className="md:hidden text-xs text-[#666] space-y-1">
-                    <div className="flex gap-3">
-                      <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
-                      <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
-                      <span>{formatDateShort(slate.updated_at)}</span>
-                    </div>
-                    {slate.is_published ? (
-                      <div className="text-blue-400">{strings.slates.stats.pubShort(formatDateShort(slate.published_at))}</div>
-                    ) : slate.published_at ? (
-                      <div className="text-orange-400">{strings.slates.stats.privateDraft}</div>
-                    ) : (
-                      <div className="text-[#666]">{strings.slates.stats.unpublished}</div>
+          {filteredAndSortedSlates.map((slate) => {
+            const isPinned = Boolean(slate.pinned_at);
+            const tags = Array.isArray(slate.tags) ? slate.tags : [];
+            const visibleTags = tags.slice(0, 4);
+            const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
+
+            const status = slate.is_published
+              ? { label: strings.slates.status.public, className: 'text-blue-300 border-blue-500/30 bg-blue-500/10' }
+              : slate.published_at
+                ? { label: strings.slates.status.wasPublic, className: 'text-orange-300 border-orange-500/30 bg-orange-500/10' }
+                : { label: strings.slates.status.private, className: 'text-white/70 border-[#333] bg-[#0f0f0f]' };
+
+            return (
+              <div
+                key={slate.id}
+                onClick={() => onSelectSlate(slate)}
+                className="bg-[#141414] border border-[#2a2a2a] p-4 rounded-lg hover:border-[#666] hover:bg-[#171717] transition-all cursor-pointer group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">
+                    {slate.title || strings.slates.untitled}
+                  </h3>
+
+                  <div className="relative flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={(e) => togglePin(slate, e)}
+                      className={`p-1 rounded hover:bg-[#222] transition-colors ${isPinned ? 'text-white' : 'text-[#666] hover:text-white'}`}
+                      title={isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
+                      </svg>
+                    </button>
+
+                    <button
+                      onClick={(e) => toggleMenu(slate.id, e)}
+                      className="p-1 rounded hover:bg-[#222] text-[#666] hover:text-white transition-colors"
+                      title={strings.slates.menu.more}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                        <circle cx="8" cy="2" r="1.5"/>
+                        <circle cx="8" cy="8" r="1.5"/>
+                        <circle cx="8" cy="14" r="1.5"/>
+                      </svg>
+                    </button>
+
+                    {openMenuId === slate.id && (
+                      <div className="absolute right-0 top-full mt-1 bg-[#141414] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        <button
+                          onClick={(e) => openTagsEditor(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                        >
+                          {strings.slates.menu.tags}
+                        </button>
+                        <button
+                          onClick={(e) => togglePublish(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                        >
+                          {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            setOpenMenuId(null);
+                            showDeleteConfirmation(slate.id, slate.title, e);
+                          }}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
+                        >
+                          {strings.slates.menu.delete}
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
-                <div className="relative flex-shrink-0">
-                  <button
-                    onClick={(e) => toggleMenu(slate.id, e)}
-                    className="md:opacity-0 md:group-hover:opacity-100 opacity-100 text-[#666] hover:text-white transition-opacity p-1"
-                  >
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 16 16">
-                      <circle cx="8" cy="2" r="1.5"/>
-                      <circle cx="8" cy="8" r="1.5"/>
-                      <circle cx="8" cy="14" r="1.5"/>
-                    </svg>
-                  </button>
-                  {openMenuId === slate.id && (
-                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[140px] z-10">
-                      <button
-                        onClick={(e) => togglePublish(slate.id, slate.is_published, e)}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
-                      >
-                        {slate.is_published ? 'make private' : 'make public'}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          setOpenMenuId(null);
-                          showDeleteConfirmation(slate.id, slate.title, e);
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
-                      >
-                        {strings.slates.menu.delete}
-                      </button>
-                    </div>
+
+                <div className="mt-3 flex flex-wrap gap-2 items-center min-h-[24px]">
+                  <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
+                    {status.label}
+                  </span>
+                  {visibleTags.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setTagFilter(tag);
+                      }}
+                      className="text-xs px-2 py-0.5 rounded border border-[#333] text-white/70 hover:text-white hover:border-[#666] transition-colors"
+                      title={tag}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                  {remainingTagCount > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded border border-[#333] text-[#666]">
+                      +{remainingTagCount}
+                    </span>
                   )}
                 </div>
+
+                <div className="mt-3 flex items-center justify-between text-xs text-[#666]">
+                  <div className="flex items-center gap-3">
+                    <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
+                    <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
+                  </div>
+                  <span>{formatDateShort(slate.updated_at)}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         /* Grid View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredAndSortedSlates.map((slate) => (
-            <div
-              key={slate.id}
-              onClick={() => onSelectSlate(slate)}
-              className="bg-[#1a1a1a] border border-[#333] p-4 rounded hover:border-[#666] transition-all cursor-pointer group flex flex-col"
-            >
-              <div className="flex justify-between items-start gap-2 mb-3">
-                <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">{slate.title}</h3>
-                <div className="relative flex-shrink-0">
-                  <button
-                    onClick={(e) => toggleMenu(slate.id, e)}
-                    className="md:opacity-0 md:group-hover:opacity-100 opacity-100 text-[#666] hover:text-white transition-opacity p-1"
-                  >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-                      <circle cx="8" cy="2" r="1.5"/>
-                      <circle cx="8" cy="8" r="1.5"/>
-                      <circle cx="8" cy="14" r="1.5"/>
-                    </svg>
-                  </button>
-                  {openMenuId === slate.id && (
-                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a1a] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[140px] z-10">
-                      <button
-                        onClick={(e) => togglePublish(slate.id, slate.is_published, e)}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
-                      >
-                        {slate.is_published ? 'make private' : 'make public'}
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          setOpenMenuId(null);
-                          showDeleteConfirmation(slate.id, slate.title, e);
-                        }}
-                        className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
-                      >
-                        {strings.slates.menu.delete}
-                      </button>
-                    </div>
+          {filteredAndSortedSlates.map((slate) => {
+            const isPinned = Boolean(slate.pinned_at);
+            const tags = Array.isArray(slate.tags) ? slate.tags : [];
+            const visibleTags = tags.slice(0, 3);
+            const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
+
+            const status = slate.is_published
+              ? { label: strings.slates.status.public, className: 'text-blue-300 border-blue-500/30 bg-blue-500/10' }
+              : slate.published_at
+                ? { label: strings.slates.status.wasPublic, className: 'text-orange-300 border-orange-500/30 bg-orange-500/10' }
+                : { label: strings.slates.status.private, className: 'text-white/70 border-[#333] bg-[#0f0f0f]' };
+
+            return (
+              <div
+                key={slate.id}
+                onClick={() => onSelectSlate(slate)}
+                className="bg-[#141414] border border-[#2a2a2a] p-4 rounded-lg hover:border-[#666] hover:bg-[#171717] transition-all cursor-pointer group flex flex-col min-h-[132px]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-white text-sm md:text-base font-medium truncate flex-1">
+                    {slate.title || strings.slates.untitled}
+                  </h3>
+
+                  <div className="relative flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={(e) => togglePin(slate, e)}
+                      className={`p-1 rounded hover:bg-[#222] transition-colors ${isPinned ? 'text-white' : 'text-[#666] hover:text-white'}`}
+                      title={isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
+                      </svg>
+                    </button>
+
+                    <button
+                      onClick={(e) => toggleMenu(slate.id, e)}
+                      className="p-1 rounded hover:bg-[#222] text-[#666] hover:text-white transition-colors"
+                      title={strings.slates.menu.more}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                        <circle cx="8" cy="2" r="1.5"/>
+                        <circle cx="8" cy="8" r="1.5"/>
+                        <circle cx="8" cy="14" r="1.5"/>
+                      </svg>
+                    </button>
+
+                    {openMenuId === slate.id && (
+                      <div className="absolute right-0 top-full mt-1 bg-[#141414] border border-[#333] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        <button
+                          onClick={(e) => openTagsEditor(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                        >
+                          {strings.slates.menu.tags}
+                        </button>
+                        <button
+                          onClick={(e) => togglePublish(slate, e)}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] hover:text-white transition-colors text-xs md:text-sm"
+                        >
+                          {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            setOpenMenuId(null);
+                            showDeleteConfirmation(slate.id, slate.title, e);
+                          }}
+                          className="w-full px-4 py-2 text-left hover:bg-[#333] text-red-500 hover:text-red-400 transition-colors text-xs md:text-sm"
+                        >
+                          {strings.slates.menu.delete}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2 items-center min-h-[24px]">
+                  <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
+                    {status.label}
+                  </span>
+                  {visibleTags.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setTagFilter(tag);
+                      }}
+                      className="text-xs px-2 py-0.5 rounded border border-[#333] text-white/70 hover:text-white hover:border-[#666] transition-colors"
+                      title={tag}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                  {remainingTagCount > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded border border-[#333] text-[#666]">
+                      +{remainingTagCount}
+                    </span>
                   )}
                 </div>
-              </div>
-              <div className="text-xs text-[#666] space-y-1 mt-auto">
-                <div className="flex justify-between">
+
+                <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[#666]">
                   <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
                   <span>{formatDateShort(slate.updated_at)}</span>
                 </div>
-                {slate.is_published ? (
-                  <div className="text-blue-400 text-xs">public</div>
-                ) : slate.published_at ? (
-                  <div className="text-orange-400 text-xs">draft (was public)</div>
-                ) : null}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -457,6 +809,78 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                 className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
               >
                 {strings.slates.deleteModal.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tags Modal */}
+      {tagsModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#141414] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-1">{strings.slates.tags.title}</h2>
+            <p className="text-xs text-[#666] mb-5 truncate">{tagsModal.slateTitle}</p>
+
+            <div className="flex flex-wrap gap-2 mb-4 min-h-[28px]">
+              {tagsModal.tags.length === 0 ? (
+                <span className="text-xs text-[#666]">{strings.slates.tags.emptyHint}</span>
+              ) : (
+                tagsModal.tags.map(tag => (
+                  <button
+                    key={tag}
+                    onClick={() => removeTag(tag)}
+                    className="text-xs px-2 py-1 rounded border border-[#333] text-white/80 hover:text-white hover:border-[#666] transition-colors"
+                    title={tag}
+                  >
+                    {tag} <span className="text-[#666] ml-2">x</span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addTagFromInput();
+                  }
+                }}
+                placeholder={strings.slates.tags.addPlaceholder}
+                className="flex-1 h-10 bg-[#101010] border border-[#333] rounded px-3 focus:outline-none focus:border-[#666] text-white text-sm placeholder-[#666]"
+              />
+              <button
+                onClick={addTagFromInput}
+                className="h-10 px-4 rounded border border-[#333] text-white/90 hover:bg-[#222] hover:border-[#666] transition-colors text-sm"
+              >
+                {strings.slates.tags.addButton}
+              </button>
+            </div>
+
+            {tagError && (
+              <div className="text-xs text-red-400 mb-4">
+                {tagError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeTagsEditor}
+                disabled={tagsSaving}
+                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#222] transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {strings.slates.tags.cancel}
+              </button>
+              <button
+                onClick={saveTags}
+                disabled={tagsSaving}
+                className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {tagsSaving ? strings.slates.tags.saving : strings.slates.tags.save}
               </button>
             </div>
           </div>

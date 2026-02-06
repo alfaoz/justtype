@@ -328,6 +328,30 @@ try {
     console.log('✓ Database migrated: Added encrypted_title column to slates');
   }
 
+  // Add pinned_at column to slates if it doesn't exist
+  const slateColumnsForPins = db.pragma('table_info(slates)');
+  const hasPinnedAt = slateColumnsForPins.some(col => col.name === 'pinned_at');
+  if (!hasPinnedAt) {
+    db.exec(`ALTER TABLE slates ADD COLUMN pinned_at INTEGER;`);
+    console.log('✓ Database migrated: Added pinned_at column to slates');
+  }
+
+  // Add encrypted_tags column to slates if it doesn't exist (E2E-only tags)
+  const slateColumnsForTags = db.pragma('table_info(slates)');
+  const hasEncryptedTags = slateColumnsForTags.some(col => col.name === 'encrypted_tags');
+  if (!hasEncryptedTags) {
+    db.exec(`ALTER TABLE slates ADD COLUMN encrypted_tags TEXT;`);
+    console.log('✓ Database migrated: Added encrypted_tags column to slates');
+  }
+
+  // Helpful indexes for slates list performance (safe to run repeatedly)
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_slates_user_pinned_at ON slates(user_id, pinned_at);`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_slates_user_updated_at ON slates(user_id, updated_at);`);
+  } catch (err) {
+    // Ignore if indexes can't be created for some reason; don't block startup.
+  }
+
   // ZK title hygiene: if a private slate already has encrypted_title, wipe its plaintext title.
   // (Title column is NOT NULL, so we store an empty string.)
   try {

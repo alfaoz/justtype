@@ -106,6 +106,28 @@ const strings = {
   slates: {
     title: 'my slates',
     newSlate: '+ new slate',
+    searchPlaceholder: 'search slates...',
+    sortLabel: 'sort:',
+    sortOptions: {
+      recent: 'recent',
+      oldest: 'oldest',
+      az: 'a-z',
+      za: 'z-a',
+      words: 'words',
+    },
+    viewToggle: {
+      list: 'list view',
+      grid: 'grid view',
+    },
+    lockedTitle: 'locked slate',
+    untitled: 'untitled slate',
+    unlockRequired: 'unlock your slates first.',
+    noMatches: (query) => `no slates match "${query}"`,
+    status: {
+      public: 'public',
+      private: 'private',
+      wasPublic: 'draft (was public)',
+    },
     empty: {
       message: 'no slates yet',
       cta: 'create your first slate!'
@@ -125,7 +147,29 @@ const strings = {
     menu: {
       publish: 'publish',
       unpublish: 'unpublish',
+      makePublic: 'make public',
+      makePrivate: 'make private',
+      tags: 'tags',
+      more: 'more',
       delete: 'delete'
+    },
+    pin: {
+      pin: 'pin',
+      unpin: 'unpin',
+    },
+    tags: {
+      filterLabel: (tag) => `tag: ${tag}`,
+      addPlaceholder: 'add tag...',
+      addButton: 'add',
+      saving: 'saving...',
+      save: 'save',
+      cancel: 'cancel',
+      title: 'tags',
+      emptyHint: 'no tags yet',
+      unlockRequired: 'unlock your slates to edit tags.',
+      invalidTag: 'tags must be alphanumeric with no spaces.',
+      tooLong: (max) => `tag too long (max ${max} chars).`,
+      tooMany: (max) => `too many tags (max ${max}).`,
     },
     deleteModal: {
       title: 'delete slate?',
@@ -773,6 +817,8 @@ take care!
     deleteFailed: 'failed to delete',
     deleteSlate: 'Failed to delete slate',
     publishFailed: 'Failed to update publish status',
+    pinFailed: 'Failed to update pin status',
+    tagsSaveFailed: 'Failed to save tags',
     loginFailed: 'login failed',
     signupFailed: 'signup failed',
     verificationFailed: 'verification failed',
