@@ -370,6 +370,7 @@ export function AuthModal({ onClose, onAuth }) {
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setLoading(true);
 
     const formData = new FormData(e.target);
@@ -429,7 +430,6 @@ export function AuthModal({ onClose, onAuth }) {
         throw new Error(data.error || 'Failed to send reset code');
       }
 
-      setSuccess(data.message);
       setResetEmail(email);
       setShowForgotPassword(false);
       setShowResetPassword(true);
