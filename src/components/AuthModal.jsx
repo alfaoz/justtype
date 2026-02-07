@@ -448,6 +448,7 @@ export function AuthModal({ onClose, onAuth }) {
   const [resetRecoveryInput, setResetRecoveryInput] = useState('');
   const [destructiveConfirmed, setDestructiveConfirmed] = useState(false);
   const [resetRecoveryPhrase, setResetRecoveryPhrase] = useState(null); // new phrase from server
+  const [resetRecoveryData, setResetRecoveryData] = useState(null); // cache /auth/recovery-data to validate OTP and avoid a second call
 
   const normalizeRecoveryPhrase = (phrase) => phrase.trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -484,20 +485,26 @@ export function AuthModal({ onClose, onAuth }) {
           throw new Error(strings.auth.resetPassword.errors.recoveryRequired);
         }
 
-        // Fetch wrapped recovery data so E2E users can unwrap/rewrap locally (ZK)
-        const recoveryRes = await fetch(`${API_URL}/auth/recovery-data`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: resetEmail, code: resetOtp }),
-        });
-        const recoveryData = await recoveryRes.json();
-        if (!recoveryRes.ok) {
-          const mapped = mapResetCodeError(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
-          if (mapped.codeIssue) {
-            setResetStep('otp');
-            setResetOtp('');
+        // Fetch wrapped recovery data so E2E users can unwrap/rewrap locally (ZK).
+        // We also cache this from the OTP step so we don't burn rate-limit quota with a second call.
+        let recoveryData = resetRecoveryData;
+        if (!recoveryData) {
+          const recoveryRes = await fetch(`${API_URL}/auth/recovery-data`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: resetEmail, code: resetOtp }),
+          });
+          recoveryData = await recoveryRes.json();
+          if (!recoveryRes.ok) {
+            const mapped = mapResetCodeError(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
+            if (mapped.codeIssue) {
+              setResetStep('otp');
+              setResetOtp('');
+              setResetRecoveryData(null);
+            }
+            throw new Error(mapped.message);
           }
-          throw new Error(mapped.message);
+          setResetRecoveryData(recoveryData);
         }
 
         if (recoveryData.e2e) {
@@ -562,6 +569,7 @@ export function AuthModal({ onClose, onAuth }) {
           if (mapped.codeIssue) {
             setResetStep('otp');
             setResetOtp('');
+            setResetRecoveryData(null);
           }
           throw new Error(mapped.message);
         }
@@ -603,6 +611,7 @@ export function AuthModal({ onClose, onAuth }) {
           if (mapped.codeIssue) {
             setResetStep('otp');
             setResetOtp('');
+            setResetRecoveryData(null);
           }
           throw new Error(mapped.message);
         }
@@ -704,6 +713,7 @@ export function AuthModal({ onClose, onAuth }) {
             setResetStep('otp');
             setResetOtp('');
             setResetRecoveryInput('');
+            setResetRecoveryData(null);
             setIsLogin(true);
             setError('');
             setSuccess('');
@@ -736,7 +746,10 @@ export function AuthModal({ onClose, onAuth }) {
                 <input
                   type="text"
                   value={resetOtp}
-                  onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e) => {
+                    setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    setResetRecoveryData(null);
+                  }}
                   maxLength={6}
                   className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder="000000"
@@ -748,14 +761,41 @@ export function AuthModal({ onClose, onAuth }) {
               {error && <div className="text-red-500 text-sm">{error}</div>}
 
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (resetOtp.length !== 6) {
                     setError('enter the 6-digit code from your email');
                     return;
                   }
                   setError('');
-                  setResetStep('recovery-entry');
+                  setLoading(true);
+
+                  try {
+                    // Validate the code before we let the user continue.
+                    // This avoids typing the recovery key when the user pasted an old/invalid email code.
+                    const recoveryRes = await fetch(`${API_URL}/auth/recovery-data`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email: resetEmail, code: resetOtp }),
+                    });
+                    const recoveryData = await recoveryRes.json();
+                    if (!recoveryRes.ok) {
+                      const mapped = mapResetCodeError(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
+                      if (mapped.codeIssue) {
+                        setResetOtp('');
+                        setResetRecoveryData(null);
+                      }
+                      throw new Error(mapped.message);
+                    }
+
+                    setResetRecoveryData(recoveryData);
+                    setResetStep('recovery-entry');
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
+                disabled={loading}
                 className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.otpStep.submit}
@@ -768,6 +808,7 @@ export function AuthModal({ onClose, onAuth }) {
                   setShowResetPassword(false);
                   setShowForgotPassword(true);
                 }}
+                disabled={loading}
                 className="w-full py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
               >
                 {strings.auth.resetPassword.otpStep.sendNewCode}
