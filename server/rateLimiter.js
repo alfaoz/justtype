@@ -125,19 +125,12 @@ class RateLimiter {
 const rateLimiter = new RateLimiter();
 
 function getClientIp(req) {
-  // Handle X-Forwarded-For with comma-separated IPs; take the first (client) IP
-  let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-
-  if (Array.isArray(ipAddress)) {
-    ipAddress = ipAddress[0] || '';
-  }
+  // Prefer Express's `req.ip` which respects the app's `trust proxy` setting.
+  // This avoids trusting spoofable X-Forwarded-For headers when the app is hit directly.
+  let ipAddress = (req && req.ip) || (req && req.socket && req.socket.remoteAddress) || '';
 
   if (typeof ipAddress !== 'string') {
     ipAddress = '';
-  }
-
-  if (ipAddress.includes(',')) {
-    ipAddress = ipAddress.split(',')[0].trim();
   }
 
   // Clean up IPv6-mapped IPv4 addresses (::ffff:127.0.0.1 -> 127.0.0.1)

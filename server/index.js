@@ -258,33 +258,79 @@ const unwrapKey = (wrappedKeyBase64, wrappingKey) => {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]);
 };
 
-// Decode base64 input strictly (prevents silently accepting malformed base64)
-const decodeBase64Strict = (base64) => {
+// Decode base64 input strictly, but tolerate base64url + missing padding.
+// This prevents silently accepting malformed base64 while staying compatible across clients.
+const decodeBase64Strict = (base64, { maxBytes } = {}) => {
   if (typeof base64 !== 'string') {
-    throw new Error('Invalid base64');
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
   }
 
-  const value = base64.trim();
+  let value = base64.trim();
   if (!value) {
-    throw new Error('Invalid base64');
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
   }
 
-  // Require valid base64 alphabet and padding only at the end.
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
-    throw new Error('Invalid base64');
+  // JSON shouldn't contain whitespace, but be defensive.
+  value = value.replace(/\s+/g, '');
+
+  // Allow base64url (RFC 4648) by normalizing to standard base64 alphabet.
+  value = value.replace(/-/g, '+').replace(/_/g, '/');
+
+  // Require only base64 alphabet chars + optional padding at the end.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
   }
 
-  // btoa() output is always padded to a multiple of 4 characters.
-  if (value.length % 4 !== 0) {
-    throw new Error('Invalid base64');
+  // Strip padding; we'll re-pad properly.
+  const unpadded = value.replace(/=+$/, '');
+  const paddingCount = value.length - unpadded.length;
+  if (!unpadded) {
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
   }
 
-  const buf = Buffer.from(value, 'base64');
+  // base64 length mod 4 cannot be 1.
+  const remainder = unpadded.length % 4;
+  if (remainder === 1) {
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
+  }
+
+  const paddingNeeded = (4 - remainder) % 4;
+
+  // If padding was provided by the caller, require it to be correct (but allow missing padding).
+  if (paddingCount !== 0 && paddingCount !== paddingNeeded) {
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
+  }
+  const padded = unpadded + '='.repeat(paddingNeeded);
+  const decodedSize = (padded.length / 4) * 3 - paddingNeeded;
+
+  if (typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 0 && decodedSize > maxBytes) {
+    const err = new Error('Base64 too large');
+    err.code = 'BASE64_TOO_LARGE';
+    err.decodedBytes = decodedSize;
+    err.maxBytes = maxBytes;
+    throw err;
+  }
+
+  const buf = Buffer.from(padded, 'base64');
 
   // Round-trip check (ignoring padding) to catch forgiving decoders.
   const normalize = (s) => s.replace(/=+$/, '');
-  if (normalize(buf.toString('base64')) !== normalize(value)) {
-    throw new Error('Invalid base64');
+  if (normalize(buf.toString('base64')) !== normalize(padded)) {
+    const err = new Error('Invalid base64');
+    err.code = 'BASE64_INVALID';
+    throw err;
   }
 
   return buf;
@@ -611,7 +657,8 @@ take care!
   }
 });
 
-app.use(express.json({ limit: '5mb' })); // Lower limit to prevent bandwidth abuse
+// 8mb allows ~5mb encrypted slates sent as base64 (4/3 overhead) plus JSON overhead.
+app.use(express.json({ limit: '8mb' }));
 app.use(passport.initialize());
 
 // Handle payload too large errors
@@ -625,8 +672,8 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Trust proxy for correct IP addresses when behind reverse proxy (nginx, etc)
-app.set('trust proxy', true);
+// Trust loopback proxy only (nginx on the same host). This prevents spoofed X-Forwarded-For when hit directly.
+app.set('trust proxy', 'loopback');
 
 // CLI version checking middleware - respond with latest version when CLI sends its version
 app.use((req, res, next) => {
@@ -1421,7 +1468,7 @@ app.put('/api/preferences', authenticateToken, (req, res) => {
 // ============================================================================
 
 // Generate device code
-app.post('/api/cli/device-code', createRateLimitMiddleware('deviceCode'), (req, res) => {
+app.post('/api/cli/device-code', createRateLimitMiddleware('requestDeviceCode'), (req, res) => {
   try {
     // Generate codes
     const deviceCode = crypto.randomBytes(32).toString('hex');
@@ -2274,6 +2321,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
   const isE2E = !!req.e2e;
   let encryptedBuffer = null;
+  const maxSize = 5 * 1024 * 1024; // 5 MB
 
   // Legacy users: title + plaintext required. E2E users: encrypted content + encrypted title required.
   if (req.e2e) {
@@ -2287,8 +2335,13 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     }
 
     try {
-      encryptedBuffer = decodeBase64Strict(encryptedContent);
+      encryptedBuffer = decodeBase64Strict(encryptedContent, { maxBytes: maxSize });
     } catch (err) {
+      if (err && err.code === 'BASE64_TOO_LARGE') {
+        return res.status(413).json({
+          error: `Content too large. Maximum size is 5 MB, your content is ${(err.decodedBytes / 1024 / 1024).toFixed(2)} MB.`
+        });
+      }
       return res.status(400).json({ error: 'Invalid encrypted content', code: 'E2E_INVALID_CONTENT' });
     }
   } else {
@@ -2299,7 +2352,6 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
   // Check content size (5 MB limit)
   const contentSize = isE2E ? encryptedBuffer.length : Buffer.byteLength(content, 'utf8');
-  const maxSize = 5 * 1024 * 1024; // 5 MB
   if (contentSize > maxSize) {
     return res.status(413).json({
       error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
@@ -2377,45 +2429,60 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
 // Update slate
 app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateSlate'), async (req, res) => {
-  const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
-
-  // Determine if E2E
-  const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
-  const isE2E = userE2E && userE2E.e2e_migrated && encryptedContent;
-  let encryptedBuffer = null;
-
-  // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
-  if (userE2E && userE2E.e2e_migrated && !encryptedContent && content) {
-    return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
-  }
-
-  // E2E users must always provide encryptedTitle so private titles remain zero-knowledge.
-  if (isE2E && !encryptedTitle) {
-    return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
-  }
-
-  if (isE2E) {
-    try {
-      encryptedBuffer = decodeBase64Strict(encryptedContent);
-    } catch (err) {
-      return res.status(400).json({ error: 'Invalid encrypted content', code: 'E2E_INVALID_CONTENT' });
-    }
-  }
-
-  // Check content size (5 MB limit)
-  const contentSize = isE2E ? encryptedBuffer.length : Buffer.byteLength(content || '', 'utf8');
+  const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body || {};
   const maxSize = 5 * 1024 * 1024; // 5 MB
-  if (contentSize > maxSize) {
-    return res.status(413).json({
-      error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
-    });
-  }
 
   try {
+    // Determine if this user is E2E migrated
+    const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
+
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    const isE2E = !!(userE2E && userE2E.e2e_migrated && !slate.is_system_slate);
+    let encryptedBuffer = null;
+
+    if (isE2E) {
+      // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
+      if (content) {
+        return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+      }
+
+      if (typeof encryptedContent !== 'string' || !encryptedContent.trim()) {
+        return res.status(400).json({ error: 'Encrypted content required. Please unlock your slates first.', code: 'E2E_PLAINTEXT_REJECTED' });
+      }
+
+      // E2E users must always provide encryptedTitle so private titles remain zero-knowledge.
+      if (typeof encryptedTitle !== 'string' || !encryptedTitle.trim()) {
+        return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
+      }
+
+      try {
+        encryptedBuffer = decodeBase64Strict(encryptedContent, { maxBytes: maxSize });
+      } catch (err) {
+        if (err && err.code === 'BASE64_TOO_LARGE') {
+          return res.status(413).json({
+            error: `Content too large. Maximum size is 5 MB, your content is ${(err.decodedBytes / 1024 / 1024).toFixed(2)} MB.`
+          });
+        }
+        return res.status(400).json({ error: 'Invalid encrypted content', code: 'E2E_INVALID_CONTENT' });
+      }
+    } else {
+      // Legacy/system updates require plaintext title + content.
+      if (typeof title !== 'string' || typeof content !== 'string') {
+        return res.status(400).json({ error: 'Title and content required' });
+      }
+    }
+
+    // Check content size (5 MB limit)
+    const contentSize = isE2E ? encryptedBuffer.length : Buffer.byteLength(content, 'utf8');
+    if (contentSize > maxSize) {
+      return res.status(413).json({
+        error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
+      });
     }
 
     // Get encryption key - handle based on slate type and user auth method
