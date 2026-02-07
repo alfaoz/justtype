@@ -15,6 +15,7 @@ class RateLimiter {
     // Auth operations (IP-based)
     register: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
     login: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 per 15 minutes per IP
+    verifyEmail: { max: 20, windowMs: 15 * 60 * 1000 }, // 20 per 15 minutes per IP
     forgotPassword: { max: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour per IP
     resetPassword: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 per 15 minutes per IP
     resendVerification: { max: 1, windowMs: 60 * 1000 }, // 1 per 60 seconds per IP
@@ -123,30 +124,57 @@ class RateLimiter {
 // Middleware factory
 const rateLimiter = new RateLimiter();
 
+function getClientIp(req) {
+  // Handle X-Forwarded-For with comma-separated IPs; take the first (client) IP
+  let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+
+  if (Array.isArray(ipAddress)) {
+    ipAddress = ipAddress[0] || '';
+  }
+
+  if (typeof ipAddress !== 'string') {
+    ipAddress = '';
+  }
+
+  if (ipAddress.includes(',')) {
+    ipAddress = ipAddress.split(',')[0].trim();
+  }
+
+  // Clean up IPv6-mapped IPv4 addresses (::ffff:127.0.0.1 -> 127.0.0.1)
+  if (ipAddress.startsWith('::ffff:')) {
+    ipAddress = ipAddress.substring(7);
+  }
+
+  // Normalize localhost IPv6 for consistent bucketing
+  if (ipAddress === '::1') {
+    ipAddress = '127.0.0.1';
+  }
+
+  return ipAddress || 'unknown';
+}
+
 function createRateLimitMiddleware(operation) {
+  const ipBasedOperations = new Set([
+    'register',
+    'login',
+    'verifyEmail',
+    'forgotPassword',
+    'resetPassword',
+    'resendVerification',
+    'adminAuth',
+    'viewPublicSlate',
+    'requestDeviceCode',
+  ]);
+
   return (req, res, next) => {
-    // Use IP-based limiting for unauthenticated auth operations
     let identifier;
-    if (['register', 'login', 'forgotPassword', 'resetPassword', 'resendVerification', 'adminAuth', 'viewPublicSlate', 'requestDeviceCode'].includes(operation)) {
-      // Get IP address - handle X-Forwarded-For with comma-separated IPs
-      let ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const hasUser = !!(req.user && req.user.id);
 
-      // X-Forwarded-For can be "client, proxy1, proxy2" - take the first (client) IP
-      if (ipAddress.includes(',')) {
-        ipAddress = ipAddress.split(',')[0].trim();
-      }
-
-      // Remove IPv6 prefix if present
-      if (ipAddress.startsWith('::ffff:')) {
-        ipAddress = ipAddress.substring(7);
-      }
-
-      identifier = `ip:${ipAddress}`;
+    // If the operation is explicitly IP-based OR we don't have a user yet, fall back to IP-based limiting.
+    // This prevents unauthenticated routes from silently bypassing rate limits.
+    if (ipBasedOperations.has(operation) || !hasUser) {
+      identifier = `ip:${getClientIp(req)}`;
     } else {
-      // Skip rate limiting if no user (shouldn't happen with authenticateToken)
-      if (!req.user || !req.user.id) {
-        return next();
-      }
       identifier = req.user.id;
     }
 

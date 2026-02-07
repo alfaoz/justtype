@@ -168,6 +168,7 @@ const generateUniqueShareId = () => {
 
 // In-memory cache for encryption keys (keyed by userId)
 const encryptionKeyCache = new Map();
+const ENCRYPTION_KEY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Derive encryption key from password + salt using PBKDF2
 const deriveEncryptionKey = (password, salt) => {
@@ -192,24 +193,39 @@ const getOrCreateEncryptionSalt = (userId) => {
 
 // Cache encryption key for a user session
 const cacheEncryptionKey = (userId, encryptionKey) => {
-  encryptionKeyCache.set(userId, {
-    key: encryptionKey,
-    timestamp: Date.now()
-  });
+  const existing = encryptionKeyCache.get(userId);
+  if (existing && existing.timeoutId) {
+    clearTimeout(existing.timeoutId);
+  }
 
   // Auto-expire keys after 24 hours
-  setTimeout(() => {
-    encryptionKeyCache.delete(userId);
-  }, 24 * 60 * 60 * 1000);
+  const timeoutId = setTimeout(() => {
+    // Only delete if this is still the latest timer for this user.
+    const current = encryptionKeyCache.get(userId);
+    if (current && current.timeoutId === timeoutId) {
+      encryptionKeyCache.delete(userId);
+    }
+  }, ENCRYPTION_KEY_CACHE_TTL_MS);
+
+  encryptionKeyCache.set(userId, {
+    key: encryptionKey,
+    timestamp: Date.now(),
+    timeoutId
+  });
+};
+
+const deleteCachedEncryptionKey = (userId) => {
+  const existing = encryptionKeyCache.get(userId);
+  if (existing && existing.timeoutId) {
+    clearTimeout(existing.timeoutId);
+  }
+  encryptionKeyCache.delete(userId);
 };
 
 // Get cached encryption key for a user
 const getCachedEncryptionKey = (userId) => {
   const cached = encryptionKeyCache.get(userId);
-  if (cached) {
-    return cached.key;
-  }
-  return null;
+  return cached ? cached.key : null;
 };
 
 // Generate a 12-word BIP39 recovery phrase (128 bits of entropy)
@@ -240,6 +256,38 @@ const unwrapKey = (wrappedKeyBase64, wrappingKey) => {
   const decipher = crypto.createDecipheriv('aes-256-gcm', wrappingKey, iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+};
+
+// Decode base64 input strictly (prevents silently accepting malformed base64)
+const decodeBase64Strict = (base64) => {
+  if (typeof base64 !== 'string') {
+    throw new Error('Invalid base64');
+  }
+
+  const value = base64.trim();
+  if (!value) {
+    throw new Error('Invalid base64');
+  }
+
+  // Require valid base64 alphabet and padding only at the end.
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    throw new Error('Invalid base64');
+  }
+
+  // btoa() output is always padded to a multiple of 4 characters.
+  if (value.length % 4 !== 0) {
+    throw new Error('Invalid base64');
+  }
+
+  const buf = Buffer.from(value, 'base64');
+
+  // Round-trip check (ignoring padding) to catch forgiving decoders.
+  const normalize = (s) => s.replace(/=+$/, '');
+  if (normalize(buf.toString('base64')) !== normalize(value)) {
+    throw new Error('Invalid base64');
+  }
+
+  return buf;
 };
 
 // Generate a new random slate key and wrap it with both password and recovery phrase
@@ -1052,7 +1100,19 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
+    // Google-only accounts do not support password login.
+    // (Hardening: avoids bcrypt throwing on non-hash sentinel values.)
+    if (user.auth_provider === 'google' || user.password === 'google-oauth-no-password' || !user.password) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    let validPassword = false;
+    try {
+      validPassword = await bcrypt.compare(password, user.password);
+    } catch (err) {
+      // Treat bcrypt errors as invalid credentials to avoid 500s + account-type leakage.
+      validPassword = false;
+    }
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -1181,7 +1241,7 @@ app.post('/api/auth/logout', authenticateToken, async (req, res) => {
 });
 
 // Verify email with code
-app.post('/api/auth/verify-email', async (req, res) => {
+app.post('/api/auth/verify-email', createRateLimitMiddleware('verifyEmail'), async (req, res) => {
   const { email, code } = req.body;
 
   if (!email || !code) {
@@ -1799,7 +1859,7 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
 
     // Invalidate all existing sessions
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
-    encryptionKeyCache.delete(user.id);
+    deleteCachedEncryptionKey(user.id);
 
     res.json({
       message: 'Password reset successfully! Your slates are preserved.',
@@ -1882,7 +1942,7 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
 
     // Invalidate all existing sessions
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
-    encryptionKeyCache.delete(user.id);
+    deleteCachedEncryptionKey(user.id);
 
     res.json({
       message: 'Password reset successfully. All slates have been deleted.',
@@ -2212,7 +2272,8 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
   const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
 
-  const isE2E = req.e2e && encryptedContent;
+  const isE2E = !!req.e2e;
+  let encryptedBuffer = null;
 
   // Legacy users: title + plaintext required. E2E users: encrypted content + encrypted title required.
   if (req.e2e) {
@@ -2224,6 +2285,12 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     if (!encryptedTitle) {
       return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
     }
+
+    try {
+      encryptedBuffer = decodeBase64Strict(encryptedContent);
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid encrypted content', code: 'E2E_INVALID_CONTENT' });
+    }
   } else {
     if (!title || !content) {
       return res.status(400).json({ error: 'Title and content required' });
@@ -2231,7 +2298,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
   }
 
   // Check content size (5 MB limit)
-  const contentSize = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
+  const contentSize = isE2E ? encryptedBuffer.length : Buffer.byteLength(content, 'utf8');
   const maxSize = 5 * 1024 * 1024; // 5 MB
   if (contentSize > maxSize) {
     return res.status(413).json({
@@ -2258,18 +2325,17 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
     if (isE2E) {
       // E2E: upload pre-encrypted blob directly
-      const encryptedBuffer = Buffer.from(encryptedContent, 'base64');
       b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
       wordCount = clientWordCount || 0;
       charCount = clientCharCount || 0;
-      sizeBytes = clientSizeBytes || 0;
+      sizeBytes = contentSize;
     } else {
       // Legacy: server encrypts
       const encryptionKey = req.encryptionKey;
       b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
       wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
       charCount = content.length;
-      sizeBytes = Buffer.byteLength(content, 'utf8');
+      sizeBytes = contentSize;
     }
 
 	    // Save metadata to database with encryption_version = 1
@@ -2310,12 +2376,13 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 });
 
 // Update slate
-app.put('/api/slates/:id', authenticateToken, async (req, res) => {
+app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateSlate'), async (req, res) => {
   const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
 
   // Determine if E2E
   const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
   const isE2E = userE2E && userE2E.e2e_migrated && encryptedContent;
+  let encryptedBuffer = null;
 
   // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
   if (userE2E && userE2E.e2e_migrated && !encryptedContent && content) {
@@ -2327,25 +2394,22 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'Encrypted title required. Please update your app and try again.', code: 'E2E_TITLE_REQUIRED' });
   }
 
+  if (isE2E) {
+    try {
+      encryptedBuffer = decodeBase64Strict(encryptedContent);
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid encrypted content', code: 'E2E_INVALID_CONTENT' });
+    }
+  }
+
   // Check content size (5 MB limit)
-  const contentSize = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content || '', 'utf8');
+  const contentSize = isE2E ? encryptedBuffer.length : Buffer.byteLength(content || '', 'utf8');
   const maxSize = 5 * 1024 * 1024; // 5 MB
   if (contentSize > maxSize) {
     return res.status(413).json({
       error: `Content too large. Maximum size is 5 MB, your content is ${(contentSize / 1024 / 1024).toFixed(2)} MB.`
     });
   }
-
-  // Apply rate limiting
-  const rateLimitMiddleware = createRateLimitMiddleware('updateSlate');
-  await new Promise((resolve, reject) => {
-    rateLimitMiddleware(req, res, (err) => {
-      if (err) reject(err);
-      else resolve();
-    });
-  }).catch(err => {
-    return res.status(429).json({ error: 'Too many requests' });
-  });
 
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -2390,19 +2454,15 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
     }
 
     // Auto-unpublish if slate is currently published (unless it's a system slate)
+    const oldB2FileId = slate.b2_file_id;
+    const oldPublicFileId = slate.b2_public_file_id;
     let wasUnpublished = false;
     let newPublicFileId = slate.b2_public_file_id;
+    let publicFileIdToDelete = null;
 
     if (slate.is_published && !slate.is_system_slate) {
       wasUnpublished = true;
-
-      if (slate.b2_public_file_id) {
-        try {
-          await b2Storage.deleteSlate(slate.b2_public_file_id);
-        } catch (err) {
-          console.warn('Failed to delete public B2 file:', err);
-        }
-      }
+      publicFileIdToDelete = oldPublicFileId;
       newPublicFileId = null;
     }
 
@@ -2415,32 +2475,16 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
       newPublicFileId = b2FileId;
     } else if (isE2E) {
       const slateId = `${req.user.id}-${Date.now()}`;
-      const encryptedBuffer = Buffer.from(encryptedContent, 'base64');
       b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
     } else {
       const slateId = `${req.user.id}-${Date.now()}`;
       b2FileId = await b2Storage.uploadSlate(slateId, content, encryptionKey);
     }
 
-    // Delete old version from B2
-    try {
-      await b2Storage.deleteSlate(slate.b2_file_id);
-    } catch (err) {
-      console.warn('Failed to delete old B2 file:', err);
-    }
-
-    if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) {
-      try {
-        await b2Storage.deleteSlate(slate.b2_public_file_id);
-      } catch (err) {
-        console.warn('Failed to delete old public B2 file:', err);
-      }
-    }
-
     // Calculate stats
 	    const wordCount = isE2E ? (clientWordCount || 0) : (content.trim() === '' ? 0 : content.trim().split(/\s+/).length);
 	    const charCount = isE2E ? (clientCharCount || 0) : content.length;
-	    const sizeBytes = isE2E ? (clientSizeBytes || 0) : Buffer.byteLength(content, 'utf8');
+	    const sizeBytes = contentSize;
 
 	    const newPublishedState = slate.is_system_slate ? slate.is_published : 0;
 	    const encryptionVersion = slate.is_system_slate ? 0 : 1;
@@ -2455,6 +2499,24 @@ app.put('/api/slates/:id', authenticateToken, async (req, res) => {
 	      WHERE id = ? AND user_id = ?
 	    `);
 	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
+
+    // Best-effort cleanup of old B2 files AFTER the DB update (prevents data loss if the DB write fails).
+    const fileIdsToDelete = new Set();
+    if (oldB2FileId) fileIdsToDelete.add(oldB2FileId);
+    if (oldPublicFileId && oldPublicFileId !== oldB2FileId) fileIdsToDelete.add(oldPublicFileId);
+    if (publicFileIdToDelete) fileIdsToDelete.add(publicFileIdToDelete);
+
+    // Never delete newly-referenced files.
+    fileIdsToDelete.delete(b2FileId);
+    if (newPublicFileId) fileIdsToDelete.delete(newPublicFileId);
+
+    for (const fileId of fileIdsToDelete) {
+      try {
+        await b2Storage.deleteSlate(fileId);
+      } catch (err) {
+        console.warn('Failed to delete old B2 file:', err);
+      }
+    }
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2733,7 +2795,7 @@ app.get('/api/health', (req, res) => {
 // ============ ADMIN ROUTES ============
 
 // Admin authentication (rate-limited)
-app.post('/api/admin/auth', async (req, res) => {
+app.post('/api/admin/auth', createRateLimitMiddleware('adminAuth'), async (req, res) => {
   const { password } = req.body;
   const adminSecret = process.env.ADMIN_SECRET || process.env.ADMIN_PASSWORD;
 
@@ -2749,7 +2811,10 @@ app.post('/api/admin/auth', async (req, res) => {
     const adminToken = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
 
     // Log admin login
-    logAdminAction('admin_login', null, null, 'Admin logged in', req.adminIp || req.ip);
+    logAdminAction('admin_login', {
+      ipAddress: req.adminIp || req.ip,
+      details: { message: 'Admin logged in' }
+    });
 
     // Email admin token if ADMIN_EMAIL is configured
     const adminEmail = process.env.ADMIN_EMAIL;
@@ -3969,7 +4034,7 @@ app.post('/api/account/finalize-e2e-migration', authenticateToken, (req, res) =>
       `).run(wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt, req.user.id);
     }
     // Clear server-side cache — no longer needed for E2E users
-    encryptionKeyCache.delete(req.user.id);
+    deleteCachedEncryptionKey(req.user.id);
     res.json({ success: true });
   } catch (error) {
     console.error('Finalize E2E migration error:', error);
@@ -4552,14 +4617,20 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id FROM slates WHERE user_id = ?').all(userId);
+    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(userId);
 
     // Delete slates from B2
     for (const slate of slates) {
-      try {
-        await b2Storage.deleteSlate(slate.b2_file_id);
-      } catch (err) {
-        console.error(`Failed to delete B2 file ${slate.b2_file_id}:`, err);
+      const fileIdsToDelete = new Set();
+      if (slate.b2_file_id) fileIdsToDelete.add(slate.b2_file_id);
+      if (slate.b2_public_file_id) fileIdsToDelete.add(slate.b2_public_file_id);
+
+      for (const fileId of fileIdsToDelete) {
+        try {
+          await b2Storage.deleteSlate(fileId);
+        } catch (err) {
+          console.error(`Failed to delete B2 file ${fileId}:`, err);
+        }
       }
     }
 
@@ -4986,7 +5057,12 @@ app.get('*', (req, res) => {
 const runCleanup = async () => {
   try {
     // Clean up expired verification codes
-    const expiredCodes = db.prepare('UPDATE users SET verification_token = NULL, verification_code_expires = NULL WHERE verification_code_expires < datetime(\'now\')').run();
+    const expiredCodes = db.prepare(`
+      UPDATE users
+      SET verification_token = NULL, verification_code_expires = NULL
+      WHERE verification_code_expires IS NOT NULL
+      AND datetime(verification_code_expires) < datetime('now')
+    `).run();
 
     // Clean up old sessions (older than 30 days)
     const oldSessions = db.prepare('DELETE FROM sessions WHERE datetime(last_activity) < datetime(\'now\', \'-30 days\')').run();

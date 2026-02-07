@@ -610,10 +610,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       let body;
       if (slateKey) {
         const encrypted = await encryptContent(content, slateKey);
+        const encryptedTitleBlob = await encryptTitle(titleToSave, slateKey);
         const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
         const charCount = content.length;
         const sizeBytes = new TextEncoder().encode(content).length;
-        body = { title: titleToSave, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
+        // ZK titles: do not send plaintext titles to the server for E2E slates.
+        body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
       } else {
         body = { title: titleToSave, content };
       }
