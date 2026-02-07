@@ -44,12 +44,7 @@ export function AuthModal({ onClose, onAuth }) {
             },
           });
 
-          // Execute immediately after rendering so token is ready
-          setTimeout(() => {
-            if (turnstileWidgetId.current !== null && window.turnstile) {
-              window.turnstile.execute(turnstileWidgetId.current);
-            }
-          }, 100);
+          // Execute on submit (reduces background Turnstile noise + "already executing" warnings)
         } catch (err) {
           console.error('Turnstile render error:', err);
         }
@@ -99,12 +94,7 @@ export function AuthModal({ onClose, onAuth }) {
             },
           });
 
-          // Execute immediately after rendering so token is ready
-          setTimeout(() => {
-            if (forgotPasswordWidgetId.current !== null && window.turnstile) {
-              window.turnstile.execute(forgotPasswordWidgetId.current);
-            }
-          }, 100);
+          // Execute on submit (reduces background Turnstile noise + "already executing" warnings)
         } catch (err) {
           console.error('Turnstile render error:', err);
         }
@@ -213,11 +203,6 @@ export function AuthModal({ onClose, onAuth }) {
           window.turnstile.reset(turnstileWidgetId.current);
           setTurnstileToken('');
           turnstileTokenRef.current = '';
-          setTimeout(() => {
-            if (window.turnstile && turnstileWidgetId.current !== null) {
-              window.turnstile.execute(turnstileWidgetId.current);
-            }
-          }, 100);
         }
         throw new Error(data.error || 'Authentication failed');
       }
@@ -384,6 +369,7 @@ export function AuthModal({ onClose, onAuth }) {
 
         // Try executing if needed
         if (window.turnstile && forgotPasswordWidgetId.current !== null) {
+          window.turnstile.reset(forgotPasswordWidgetId.current);
           window.turnstile.execute(forgotPasswordWidgetId.current);
         }
 
@@ -420,12 +406,6 @@ export function AuthModal({ onClose, onAuth }) {
           window.turnstile.reset(forgotPasswordWidgetId.current);
           setTurnstileToken('');
           turnstileTokenRef.current = '';
-          // Re-execute for next attempt
-          setTimeout(() => {
-            if (window.turnstile && forgotPasswordWidgetId.current !== null) {
-              window.turnstile.execute(forgotPasswordWidgetId.current);
-            }
-          }, 100);
         }
         throw new Error(data.error || 'Failed to send reset code');
       }
@@ -652,6 +632,7 @@ export function AuthModal({ onClose, onAuth }) {
                 type="email"
                 name="email"
                 required
+                autoComplete="email"
                 defaultValue={resetEmail || ''}
                 className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder="your@email.com"
@@ -744,17 +725,19 @@ export function AuthModal({ onClose, onAuth }) {
               <div>
                 <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.code}</label>
                 <input
-                  type="text"
-                  value={resetOtp}
-                  onChange={(e) => {
-                    setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
-                    setResetRecoveryData(null);
-                  }}
-                  maxLength={6}
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-                  placeholder="000000"
-                  autoFocus
-                />
+                    type="text"
+                    value={resetOtp}
+                    onChange={(e) => {
+                      setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
+                      setResetRecoveryData(null);
+                    }}
+                    inputMode="numeric"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    placeholder="000000"
+                    autoFocus
+                  />
                 <p className="text-xs opacity-50 mt-1">{strings.auth.resetPassword.otpStep.description}</p>
               </div>
 
@@ -870,13 +853,14 @@ export function AuthModal({ onClose, onAuth }) {
               <div>
                 <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
                 <input
-                  id="reset-new-password"
-                  type="password"
-                  minLength={6}
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-                  placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
-                  autoFocus
-                />
+                    id="reset-new-password"
+                    type="password"
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
+                    autoFocus
+                  />
               </div>
 
               {success && <div className="text-green-500 text-sm">{success}</div>}
@@ -920,13 +904,14 @@ export function AuthModal({ onClose, onAuth }) {
               <div>
                 <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
                 <input
-                  id="reset-new-password"
-                  type="password"
-                  minLength={6}
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-                  placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
-                  autoFocus
-                />
+                    id="reset-new-password"
+                    type="password"
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
+                    autoFocus
+                  />
               </div>
 
               {success && <div className="text-green-500 text-sm">{success}</div>}
@@ -964,15 +949,17 @@ export function AuthModal({ onClose, onAuth }) {
           <form onSubmit={handleVerify} className="space-y-4">
             <div>
               <label className="block text-sm opacity-70 mb-2">{strings.auth.verify.label}</label>
-              <input
-                type="text"
-                name="code"
-                required
-                maxLength={6}
-                pattern="[0-9]{6}"
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-                placeholder={strings.auth.verify.codePlaceholder}
-              />
+                <input
+                  type="text"
+                  name="code"
+                  required
+                  maxLength={6}
+                  pattern="[0-9]{6}"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                  placeholder={strings.auth.verify.codePlaceholder}
+                />
               <p className="text-xs opacity-50 mt-1">{strings.auth.verify.instructions(registeredEmail)}</p>
             </div>
 
@@ -1020,17 +1007,18 @@ export function AuthModal({ onClose, onAuth }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.username : strings.auth.signup.username}</label>
-            <input
-              type="text"
-              name="username"
-              required
-              minLength={3}
-              maxLength={20}
-              pattern="[a-z0-9][a-z0-9._\-]*[a-z0-9]|[a-z0-9]"
-              title="username can only contain lowercase letters, numbers, dots, hyphens, and underscores"
-              onChange={(e) => {
-                e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
-              }}
+              <input
+                type="text"
+                name="username"
+                required
+                minLength={3}
+                maxLength={20}
+                autoComplete="username"
+                pattern="[a-z0-9][a-z0-9._\-]*[a-z0-9]|[a-z0-9]"
+                title="username can only contain lowercase letters, numbers, dots, hyphens, and underscores"
+                onChange={(e) => {
+                  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+                }}
               className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
             />
@@ -1039,26 +1027,28 @@ export function AuthModal({ onClose, onAuth }) {
           {!isLogin && (
             <div>
               <label className="block text-sm opacity-70 mb-2">{strings.auth.signup.email}</label>
-              <input
-                type="email"
-                name="email"
-                required
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-                placeholder={strings.auth.signup.emailPlaceholder}
-              />
+                <input
+                  type="email"
+                  name="email"
+                  required
+                  autoComplete="email"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                  placeholder={strings.auth.signup.emailPlaceholder}
+                />
             </div>
           )}
 
           <div>
             <label className="block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.password : strings.auth.signup.password}</label>
-            <input
-              type="password"
-              name="password"
-              required
-              minLength={6}
-              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-              placeholder={isLogin ? strings.auth.login.passwordPlaceholder : strings.auth.signup.passwordPlaceholder}
-            />
+              <input
+                type="password"
+                name="password"
+                required
+                minLength={6}
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                placeholder={isLogin ? strings.auth.login.passwordPlaceholder : strings.auth.signup.passwordPlaceholder}
+              />
           </div>
 
           {!isLogin && (
