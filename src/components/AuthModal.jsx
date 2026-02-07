@@ -24,10 +24,70 @@ export function AuthModal({ onClose, onAuth }) {
   const [resendCooldown, setResendCooldown] = useState(0);
   const [pendingRecoveryPhrase, setPendingRecoveryPhrase] = useState(null);
   const turnstileTokenRef = useRef('');
+  const turnstileExecutingRef = useRef(false);
   const turnstileWidgetId = useRef(null);
   const forgotPasswordWidgetId = useRef(null);
   const turnstileRef = useRef(null);
   const forgotPasswordTurnstileRef = useRef(null);
+
+  const getTurnstileResponse = (widgetId) => {
+    if (!window.turnstile || widgetId === null || widgetId === undefined) return '';
+    try {
+      return window.turnstile.getResponse(widgetId) || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const waitForTurnstileToken = async (widgetId, { timeoutMs = 15000 } = {}) => {
+    // Token already captured via callback.
+    if (turnstileTokenRef.current) return turnstileTokenRef.current;
+
+    // Some browsers/extensions can suppress callbacks; fall back to polling getResponse().
+    const existing = getTurnstileResponse(widgetId);
+    if (existing) {
+      setTurnstileToken(existing);
+      turnstileTokenRef.current = existing;
+      return existing;
+    }
+
+    if (!window.turnstile || widgetId === null || widgetId === undefined) {
+      throw new Error(strings.auth.turnstile.unavailable);
+    }
+
+    // Avoid spamming execute() if it's already in progress.
+    if (!turnstileExecutingRef.current) {
+      turnstileExecutingRef.current = true;
+      try {
+        window.turnstile.execute(widgetId);
+      } catch (err) {
+        // execute() usually doesn't throw; keep the UX resilient.
+      }
+    }
+
+    const start = Date.now();
+    while (!turnstileTokenRef.current && (Date.now() - start) < timeoutMs) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const resp = getTurnstileResponse(widgetId);
+      if (resp) {
+        setTurnstileToken(resp);
+        turnstileTokenRef.current = resp;
+        turnstileExecutingRef.current = false;
+        return resp;
+      }
+    }
+
+    // Timed out: reset for a clean retry.
+    turnstileExecutingRef.current = false;
+    try {
+      window.turnstile.reset(widgetId);
+    } catch (err) {
+      // ignore
+    }
+    setTurnstileToken('');
+    turnstileTokenRef.current = '';
+    throw new Error(strings.auth.turnstile.tryAgain);
+  };
 
   // Initialize Turnstile widget when modal opens
   useEffect(() => {
@@ -41,6 +101,17 @@ export function AuthModal({ onClose, onAuth }) {
             callback: (token) => {
               setTurnstileToken(token);
               turnstileTokenRef.current = token;
+              turnstileExecutingRef.current = false;
+            },
+            'expired-callback': () => {
+              setTurnstileToken('');
+              turnstileTokenRef.current = '';
+              turnstileExecutingRef.current = false;
+            },
+            'error-callback': () => {
+              setTurnstileToken('');
+              turnstileTokenRef.current = '';
+              turnstileExecutingRef.current = false;
             },
           });
 
@@ -91,6 +162,17 @@ export function AuthModal({ onClose, onAuth }) {
             callback: (token) => {
               setTurnstileToken(token);
               turnstileTokenRef.current = token;
+              turnstileExecutingRef.current = false;
+            },
+            'expired-callback': () => {
+              setTurnstileToken('');
+              turnstileTokenRef.current = '';
+              turnstileExecutingRef.current = false;
+            },
+            'error-callback': () => {
+              setTurnstileToken('');
+              turnstileTokenRef.current = '';
+              turnstileExecutingRef.current = false;
             },
           });
 
@@ -135,27 +217,10 @@ export function AuthModal({ onClose, onAuth }) {
         // Show spinning animation after 50ms delay
         const animationTimeout = setTimeout(() => setShowLoadingAnimation(true), 50);
 
-        // Try executing if needed (reset first to avoid "already executing" warning)
-        if (window.turnstile && turnstileWidgetId.current !== null) {
-          window.turnstile.reset(turnstileWidgetId.current);
-          window.turnstile.execute(turnstileWidgetId.current);
-        }
-
-        // Wait up to 3 seconds for token, checking every 500ms
-        let attempts = 0;
-        while (!turnstileTokenRef.current && attempts < 6) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-          attempts++;
-        }
+        await waitForTurnstileToken(turnstileWidgetId.current, { timeoutMs: 15000 });
 
         clearTimeout(animationTimeout);
         setShowLoadingAnimation(false);
-
-        // Check if we have a token after waiting
-        if (!turnstileTokenRef.current) {
-          setLoading(false);
-          throw new Error('verification in progress. please try again in a moment.');
-        }
       }
 
       setShowLoadingAnimation(true);
@@ -203,9 +268,22 @@ export function AuthModal({ onClose, onAuth }) {
           window.turnstile.reset(turnstileWidgetId.current);
           setTurnstileToken('');
           turnstileTokenRef.current = '';
+          turnstileExecutingRef.current = false;
         }
         throw new Error(data.error || 'Authentication failed');
       }
+
+      // Turnstile tokens are one-time; reset to avoid reusing a spent token if the user stays in the modal.
+      if (window.turnstile && turnstileWidgetId.current !== null) {
+        try {
+          window.turnstile.reset(turnstileWidgetId.current);
+        } catch (err) {
+          // ignore
+        }
+      }
+      setTurnstileToken('');
+      turnstileTokenRef.current = '';
+      turnstileExecutingRef.current = false;
 
       // Handle E2E key storage after successful auth
       if (data.user?.id) {
@@ -367,27 +445,10 @@ export function AuthModal({ onClose, onAuth }) {
         // Show spinning animation after 50ms delay
         const animationTimeout = setTimeout(() => setShowLoadingAnimation(true), 50);
 
-        // Try executing if needed
-        if (window.turnstile && forgotPasswordWidgetId.current !== null) {
-          window.turnstile.reset(forgotPasswordWidgetId.current);
-          window.turnstile.execute(forgotPasswordWidgetId.current);
-        }
-
-        // Wait up to 3 seconds for token, checking every 500ms
-        let attempts = 0;
-        while (!turnstileTokenRef.current && attempts < 6) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-          attempts++;
-        }
+        await waitForTurnstileToken(forgotPasswordWidgetId.current, { timeoutMs: 15000 });
 
         clearTimeout(animationTimeout);
         setShowLoadingAnimation(false);
-
-        // Check if we have a token after waiting
-        if (!turnstileTokenRef.current) {
-          setLoading(false);
-          throw new Error('verification in progress. please try again in a moment.');
-        }
       }
 
       setShowLoadingAnimation(true);
@@ -406,9 +467,22 @@ export function AuthModal({ onClose, onAuth }) {
           window.turnstile.reset(forgotPasswordWidgetId.current);
           setTurnstileToken('');
           turnstileTokenRef.current = '';
+          turnstileExecutingRef.current = false;
         }
         throw new Error(data.error || 'Failed to send reset code');
       }
+
+      // Turnstile tokens are one-time; reset to avoid reusing a spent token if the user retries.
+      if (window.turnstile && forgotPasswordWidgetId.current !== null) {
+        try {
+          window.turnstile.reset(forgotPasswordWidgetId.current);
+        } catch (err) {
+          // ignore
+        }
+      }
+      setTurnstileToken('');
+      turnstileTokenRef.current = '';
+      turnstileExecutingRef.current = false;
 
       setResetEmail(email);
       setShowForgotPassword(false);

@@ -267,6 +267,10 @@ const strings = {
       slatesPreserved: 'your slates are preserved.',
       slatesDeleted: (count) => `${count} slate${count !== 1 ? 's' : ''} deleted.`,
     },
+    turnstile: {
+      unavailable: 'verification unavailable. please refresh and try again.',
+      tryAgain: 'verification in progress. please try again in a moment. if this persists, disable ad blockers / strict tracking and refresh.',
+    },
     recoveryKey: {
       title: 'your recovery key',
       description: 'this is your recovery key. it is the only way to recover your slates if you forget your password. save it somewhere safe.',
