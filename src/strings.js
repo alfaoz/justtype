@@ -231,6 +231,8 @@ const strings = {
       newPassword: 'new password',
       newPasswordPlaceholder: 'at least 6 characters',
       errors: {
+        invalidOrUsedCode: 'invalid or used reset code. send a new one and try again.',
+        codeExpired: 'reset code expired. send a new one and try again.',
         recoveryRequired: 'recovery key is required',
         newPasswordRequired: 'new password is required',
         invalidRecovery: 'invalid recovery key. please check and try again.',
@@ -239,8 +241,9 @@ const strings = {
       },
       otpStep: {
         title: 'enter verification code',
-        description: 'check your email for the 6-digit code',
+        description: 'check your email for the 6-digit code. use the most recent one.',
         submit: 'continue',
+        sendNewCode: 'send a new reset code',
       },
       recoveryEntry: {
         title: 'enter your recovery key',

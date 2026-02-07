@@ -451,6 +451,21 @@ export function AuthModal({ onClose, onAuth }) {
 
   const normalizeRecoveryPhrase = (phrase) => phrase.trim().toLowerCase().replace(/\s+/g, ' ');
 
+  const mapResetCodeError = (rawMessage) => {
+    const message = (rawMessage || '').toString();
+    const lower = message.toLowerCase();
+
+    if (lower.includes('invalid reset code')) {
+      return { message: strings.auth.resetPassword.errors.invalidOrUsedCode, codeIssue: true };
+    }
+
+    if (lower.includes('reset code has expired')) {
+      return { message: strings.auth.resetPassword.errors.codeExpired, codeIssue: true };
+    }
+
+    return { message, codeIssue: false };
+  };
+
   const handleResetPassword = async (method) => {
     setError('');
     setLoading(true);
@@ -477,7 +492,12 @@ export function AuthModal({ onClose, onAuth }) {
         });
         const recoveryData = await recoveryRes.json();
         if (!recoveryRes.ok) {
-          throw new Error(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
+          const mapped = mapResetCodeError(recoveryData.error || strings.auth.resetPassword.errors.recoveryDataFailed);
+          if (mapped.codeIssue) {
+            setResetStep('otp');
+            setResetOtp('');
+          }
+          throw new Error(mapped.message);
         }
 
         if (recoveryData.e2e) {
@@ -516,7 +536,12 @@ export function AuthModal({ onClose, onAuth }) {
 
           const data = await response.json();
           if (!response.ok) {
-            throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+            const mapped = mapResetCodeError(data.error || strings.auth.resetPassword.errors.resetFailed);
+            if (mapped.codeIssue) {
+              setResetStep('otp');
+              setResetOtp('');
+            }
+            throw new Error(mapped.message);
           }
 
           setSuccess(data.message);
@@ -533,7 +558,12 @@ export function AuthModal({ onClose, onAuth }) {
 
         const data = await response.json();
         if (!response.ok) {
-          throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+          const mapped = mapResetCodeError(data.error || strings.auth.resetPassword.errors.resetFailed);
+          if (mapped.codeIssue) {
+            setResetStep('otp');
+            setResetOtp('');
+          }
+          throw new Error(mapped.message);
         }
 
         setSuccess(data.message);
@@ -569,7 +599,12 @@ export function AuthModal({ onClose, onAuth }) {
 
         const data = await response.json();
         if (!response.ok) {
-          throw new Error(data.error || strings.auth.resetPassword.errors.resetFailed);
+          const mapped = mapResetCodeError(data.error || strings.auth.resetPassword.errors.resetFailed);
+          if (mapped.codeIssue) {
+            setResetStep('otp');
+            setResetOtp('');
+          }
+          throw new Error(mapped.message);
         }
 
         setSuccess(data.message);
@@ -608,6 +643,7 @@ export function AuthModal({ onClose, onAuth }) {
                 type="email"
                 name="email"
                 required
+                defaultValue={resetEmail || ''}
                 className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder="your@email.com"
               />
@@ -723,6 +759,18 @@ export function AuthModal({ onClose, onAuth }) {
                 className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.otpStep.submit}
+              </button>
+
+              <button
+                onClick={() => {
+                  setError('');
+                  setSuccess('');
+                  setShowResetPassword(false);
+                  setShowForgotPassword(true);
+                }}
+                className="w-full py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
+              >
+                {strings.auth.resetPassword.otpStep.sendNewCode}
               </button>
 
               <button
