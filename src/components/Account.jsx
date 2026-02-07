@@ -984,9 +984,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               <span className="text-[#666]">current plan:</span>
               <div className="flex items-center gap-3">
                 <span className="text-white">
-                  {storageInfo.supporterTier === 'quarterly' ? 'supporter · unlimited' :
-                   storageInfo.supporterTier === 'one_time' ? 'supporter · 50MB' :
-                   'free · 5MB'}
+                  {storageInfo.supporterTier === 'quarterly'
+                    ? strings.subscription.manage.plans.quarterly
+                    : storageInfo.supporterTier === 'one_time'
+                    ? strings.subscription.manage.plans.oneTime
+                    : strings.subscription.manage.plans.free}
                 </span>
                 {storageInfo.supporterTier === 'quarterly' && (
                   <button
