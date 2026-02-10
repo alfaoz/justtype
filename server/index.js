@@ -2202,7 +2202,7 @@ app.get('/auth/google/link/callback',
 app.get('/api/slates', authenticateToken, (req, res) => {
   try {
     const slates = db.prepare(`
-      SELECT id, title, encrypted_title, encrypted_tags, pinned_at, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
+      SELECT id, slate_number, title, encrypted_title, encrypted_tags, pinned_at, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
       FROM slates
       WHERE user_id = ?
     `).all(req.user.id);
@@ -2226,7 +2226,7 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
   const { pinned, encryptedTags } = req.body || {};
 
   try {
-    const slate = db.prepare('SELECT id FROM slates WHERE id = ? AND user_id = ?')
+    const slate = db.prepare('SELECT id, slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
       .get(req.params.id, req.user.id);
 
     if (!slate) {
@@ -2268,7 +2268,7 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
       return res.status(400).json({ error: 'No metadata updates provided' });
     }
 
-    db.prepare(`UPDATE slates SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`)
+    db.prepare(`UPDATE slates SET ${updates.join(', ')} WHERE slate_number = ? AND user_id = ?`)
       .run(...params, req.params.id, req.user.id);
 
     res.json({ success: true, pinned_at: pinnedAt });
@@ -2282,7 +2282,7 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
 app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, res) => {
   try {
     const slate = db.prepare(`
-      SELECT * FROM slates WHERE id = ? AND user_id = ?
+      SELECT * FROM slates WHERE slate_number = ? AND user_id = ?
     `).get(req.params.id, req.user.id);
 
     if (!slate) {
@@ -2391,14 +2391,15 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     }
 
 	    // Save metadata to database with encryption_version = 1
-	    const stmt = db.prepare(`
-	      INSERT INTO slates (user_id, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
-	      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	    `);
 	    // For E2E private slates, never store plaintext title in the DB (ZK). Keep it empty and rely on encrypted_title.
 	    const titleToStore = isE2E ? '' : title;
 	    const encryptedTitleToStore = isE2E ? encryptedTitle : null;
-	    const result = stmt.run(req.user.id, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1);
+	    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+	    const stmt = db.prepare(`
+	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	    `);
+	    const result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2407,7 +2408,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     const updatedSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
 
 	    res.status(201).json({
-	      id: result.lastInsertRowid,
+	      slate_number: nextNumber,
 	      title: isE2E ? '' : title,
 	      word_count: wordCount,
 	      char_count: charCount,
@@ -2436,7 +2437,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     // Determine if this user is E2E migrated
     const userE2E = db.prepare('SELECT e2e_migrated, auth_provider, encrypted_key FROM users WHERE id = ?').get(req.user.id);
 
-    const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
@@ -2563,7 +2564,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 	      UPDATE slates
 	      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
 	          is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
-	      WHERE id = ? AND user_id = ?
+	      WHERE slate_number = ? AND user_id = ?
 	    `);
 	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
 
@@ -2622,7 +2623,7 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
   }
 
   try {
-    const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
@@ -2688,7 +2689,7 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
     const stmt = db.prepare(`
       UPDATE slates
       SET is_published = ?, share_id = ?, published_at = ?, b2_public_file_id = ?, title = ?, encrypted_title = ?
-      WHERE id = ? AND user_id = ?
+      WHERE slate_number = ? AND user_id = ?
     `);
     stmt.run(isPublished ? 1 : 0, shareId, publishedAt, publicFileId, titleToStore, encryptedTitleToStore, req.params.id, req.user.id);
 
@@ -2710,7 +2711,7 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
 // Delete slate
 app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
   try {
-    const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
@@ -2729,7 +2730,7 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
     }
 
     // Delete from database
-    db.prepare('DELETE FROM slates WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+    db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2756,7 +2757,7 @@ app.post('/api/slates/:id/migrate-title', authenticateToken, async (req, res) =>
   }
 
   try {
-    const slate = db.prepare('SELECT * FROM slates WHERE id = ? AND user_id = ?')
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
       .get(req.params.id, req.user.id);
 
     if (!slate) {
@@ -2771,12 +2772,12 @@ app.post('/api/slates/:id/migrate-title', authenticateToken, async (req, res) =>
     if (slate.encrypted_title) {
       // Already encrypted: just wipe plaintext title.
       db.prepare('UPDATE slates SET title = ? WHERE id = ?')
-        .run('', req.params.id);
+        .run('', slate.id);
       return res.json({ success: true, skipped: true, wipedPlaintextTitle: true });
     }
 
     db.prepare('UPDATE slates SET encrypted_title = ?, title = ? WHERE id = ?')
-      .run(encryptedTitle, '', req.params.id);
+      .run(encryptedTitle, '', slate.id);
 
     res.json({ success: true });
   } catch (error) {
@@ -4567,7 +4568,7 @@ app.post('/api/account/export-slates', authenticateToken, async (req, res) => {
 
     // Get all slates for the user
     const slates = db.prepare(`
-      SELECT id, title, b2_file_id, created_at, updated_at
+      SELECT id, slate_number, title, b2_file_id, created_at, updated_at
       FROM slates
       WHERE user_id = ?
       ORDER BY updated_at DESC
@@ -4620,7 +4621,7 @@ app.post('/api/account/export-slates', authenticateToken, async (req, res) => {
             }
 
             // Sanitize filename (remove invalid characters)
-            const sanitizedTitle = (slate.title || `slate-${slate.id}`)
+            const sanitizedTitle = (slate.title || `slate-${slate.slate_number}`)
               .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
               .substring(0, 200); // Limit length
 

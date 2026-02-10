@@ -252,7 +252,7 @@ export default function App() {
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
-          setCurrentSlate({ id: parseInt(slateId) });
+          setCurrentSlate({ slate_number: parseInt(slateId) });
           setView('writer');
         }
       } else if (path === '/slates') {
@@ -343,7 +343,7 @@ export default function App() {
           // Navigate back to writer
           if (lastSlateRef.current) {
             setCurrentSlate(lastSlateRef.current);
-            window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
+            window.history.pushState({}, '', `/slate/${lastSlateRef.current.slate_number}`);
           } else {
             window.history.pushState({}, '', '/');
           }
@@ -608,7 +608,7 @@ export default function App() {
     setCurrentSlate(slate);
     setView('writer');
     setZenMode(false); // Reset zen mode when switching slates
-    window.history.pushState({}, '', `/slate/${slate.id}`);
+    window.history.pushState({}, '', `/slate/${slate.slate_number}`);
   };
 
   const handleNewSlate = async () => {
@@ -676,7 +676,7 @@ export default function App() {
       // Switching from slates/account/manage-subscription to writer - restore last slate
       if (lastSlateRef.current) {
         setCurrentSlate(lastSlateRef.current);
-        window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
+        window.history.pushState({}, '', `/slate/${lastSlateRef.current.slate_number}`);
       } else {
         window.history.pushState({}, '', '/');
       }
@@ -701,7 +701,7 @@ export default function App() {
         setCurrentSlate(data);
         setView('writer');
         setZenMode(false);
-        window.history.pushState({}, '', `/slate/${data.id}`);
+        window.history.pushState({}, '', `/slate/${data.slate_number}`);
       } else if (type === 'newSlate') {
         if (writerRef.current) {
           await writerRef.current.saveBeforeNavigate();
@@ -1001,7 +1001,7 @@ export default function App() {
                   if (view === 'account') {
                     if (lastSlateRef.current) {
                       setCurrentSlate(lastSlateRef.current);
-                      window.history.pushState({}, '', `/slate/${lastSlateRef.current.id}`);
+                      window.history.pushState({}, '', `/slate/${lastSlateRef.current.slate_number}`);
                     } else {
                       window.history.pushState({}, '', '/');
                     }

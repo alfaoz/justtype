@@ -134,7 +134,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     if (currentSlate && token) {
       setIsLoading(true);
-      loadSlate(currentSlate.id);
+      loadSlate(currentSlate.slate_number);
     } else if (!currentSlate && !content.trim()) {
       // Only clear content if there's no current slate AND no content
       // This prevents clearing user's work when they log in after writing
@@ -620,7 +620,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         body = { title: titleToSave, content };
       }
 
-      const response = await fetch(`${API_URL}/slates/${currentSlate.id}`, {
+      const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -693,7 +693,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     try {
       const method = currentSlate ? 'PUT' : 'POST';
       const url = currentSlate
-        ? `${API_URL}/slates/${currentSlate.id}`
+        ? `${API_URL}/slates/${currentSlate.slate_number}`
         : `${API_URL}/slates`;
 
       // Try E2E encryption
@@ -852,7 +852,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         }
       }
 
-      const response = await fetch(`${API_URL}/slates/${currentSlate.id}/publish`, {
+      const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}/publish`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

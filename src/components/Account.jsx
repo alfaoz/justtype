@@ -337,7 +337,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
         const slateMeta = slates[i];
         try {
-          const res = await fetch(`${API_URL}/slates/${encodeURIComponent(slateMeta.id)}`, { credentials: 'include' });
+          const res = await fetch(`${API_URL}/slates/${encodeURIComponent(slateMeta.slate_number)}`, { credentials: 'include' });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || 'fetch failed');
 
@@ -368,7 +368,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           }
           }
 
-          const fallbackTitle = `slate-${slateMeta.id}`;
+          const fallbackTitle = `slate-${slateMeta.slate_number}`;
           const exportTitle = title || fallbackTitle;
           const filename = makeUniqueFilename(exportTitle, usedNames, '.txt');
 

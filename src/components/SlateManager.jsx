@@ -104,7 +104,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
           for (const slate of needsMigration) {
             try {
               const encryptedTitleBlob = await encryptTitle(slate.title, slateKey);
-              await fetch(`${API_URL}/slates/${slate.id}/migrate-title`, {
+              await fetch(`${API_URL}/slates/${slate.slate_number}/migrate-title`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
@@ -157,7 +157,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
       });
 
       if (response.ok) {
-        setSlates(prevSlates => prevSlates.filter(s => s.id !== id));
+        setSlates(prevSlates => prevSlates.filter(s => s.slate_number !== id));
       } else {
         const data = await response.json();
         alert(data.error || strings.errors.deleteSlate);
@@ -175,7 +175,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
     const isPinned = Boolean(slate.pinned_at);
     try {
-      const response = await fetch(`${API_URL}/slates/${slate.id}/metadata`, {
+      const response = await fetch(`${API_URL}/slates/${slate.slate_number}/metadata`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -187,7 +187,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
       if (response.ok) {
         setSlates(prevSlates =>
           prevSlates.map(s =>
-            s.id === slate.id
+            s.slate_number === slate.slate_number
               ? { ...s, pinned_at: data.pinned_at }
               : s
           )
@@ -209,7 +209,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
     setTagError('');
     setTagsModal({
       show: true,
-      slateId: slate.id,
+      slateId: slate.slate_number,
       slateTitle: slate.title || strings.slates.untitled,
       tags: Array.isArray(slate.tags) ? slate.tags : [],
     });
@@ -291,7 +291,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
       setSlates(prevSlates =>
         prevSlates.map(s =>
-          s.id === tagsModal.slateId
+          s.slate_number === tagsModal.slateId
             ? { ...s, tags: normalized, encrypted_tags: encryptedTagsBlob }
             : s
         )
@@ -320,7 +320,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
       if (slateKey) {
         if (nextPublished) {
           // Publishing an E2E slate requires a plaintext public copy.
-          const slateResp = await fetch(`${API_URL}/slates/${slate.id}`, { credentials: 'include' });
+          const slateResp = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
           const slateData = await slateResp.json();
 
           if (!slateResp.ok) {
@@ -346,7 +346,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
         return;
       }
 
-      const response = await fetch(`${API_URL}/slates/${slate.id}/publish`, {
+      const response = await fetch(`${API_URL}/slates/${slate.slate_number}/publish`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -357,7 +357,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
         const data = await response.json();
         setSlates(prevSlates =>
           prevSlates.map(s =>
-            s.id === slate.id
+            s.slate_number === slate.slate_number
               ? {
                   ...s,
                   is_published: nextPublished,
@@ -581,7 +581,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
             return (
               <div
-                key={slate.id}
+                key={slate.slate_number}
                 onClick={() => onSelectSlate(slate)}
                 className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group"
               >
@@ -599,7 +599,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
                   <div className="relative flex items-center gap-1 flex-shrink-0">
                     <button
-                      onClick={(e) => toggleMenu(slate.id, e)}
+                      onClick={(e) => toggleMenu(slate.slate_number, e)}
                       className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
                       title={strings.slates.menu.more}
                     >
@@ -610,7 +610,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                       </svg>
                     </button>
 
-                    {openMenuId === slate.id && (
+                    {openMenuId === slate.slate_number && (
                       <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
                         <button
                           onClick={(e) => togglePin(slate, e)}
@@ -633,7 +633,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                         <button
                           onClick={(e) => {
                             setOpenMenuId(null);
-                            showDeleteConfirmation(slate.id, slate.title, e);
+                            showDeleteConfirmation(slate.slate_number, slate.title, e);
                           }}
                           className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
                         >
@@ -697,7 +697,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
             return (
               <div
-                key={slate.id}
+                key={slate.slate_number}
                 onClick={() => onSelectSlate(slate)}
                 className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group flex flex-col min-h-[132px]"
               >
@@ -715,7 +715,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
                   <div className="relative flex items-center gap-1 flex-shrink-0">
                     <button
-                      onClick={(e) => toggleMenu(slate.id, e)}
+                      onClick={(e) => toggleMenu(slate.slate_number, e)}
                       className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
                       title={strings.slates.menu.more}
                     >
@@ -726,7 +726,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                       </svg>
                     </button>
 
-                    {openMenuId === slate.id && (
+                    {openMenuId === slate.slate_number && (
                       <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
                         <button
                           onClick={(e) => togglePin(slate, e)}
@@ -749,7 +749,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                         <button
                           onClick={(e) => {
                             setOpenMenuId(null);
-                            showDeleteConfirmation(slate.id, slate.title, e);
+                            showDeleteConfirmation(slate.slate_number, slate.title, e);
                           }}
                           className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
                         >

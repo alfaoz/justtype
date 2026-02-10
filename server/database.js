@@ -344,6 +344,22 @@ try {
     console.log('✓ Database migrated: Added encrypted_tags column to slates');
   }
 
+  // Add per-user sequential slate_number column
+  const slateColumnsForNumber = db.pragma('table_info(slates)');
+  const hasSlateNumber = slateColumnsForNumber.some(col => col.name === 'slate_number');
+  if (!hasSlateNumber) {
+    db.exec(`ALTER TABLE slates ADD COLUMN slate_number INTEGER;`);
+    // Backfill: assign sequential numbers per user ordered by creation (id)
+    const users = db.prepare('SELECT DISTINCT user_id FROM slates').all();
+    for (const { user_id } of users) {
+      const userSlates = db.prepare('SELECT id FROM slates WHERE user_id = ? ORDER BY id').all(user_id);
+      const update = db.prepare('UPDATE slates SET slate_number = ? WHERE id = ?');
+      userSlates.forEach((slate, i) => update.run(i + 1, slate.id));
+    }
+    db.exec(`CREATE UNIQUE INDEX idx_slates_user_slate_number ON slates(user_id, slate_number);`);
+    console.log('✓ Database migrated: Added per-user slate_number column');
+  }
+
   // Helpful indexes for slates list performance (safe to run repeatedly)
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_slates_user_pinned_at ON slates(user_id, pinned_at);`);
