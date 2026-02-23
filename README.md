@@ -14,7 +14,7 @@ a simple writing interface with cloud saved slates, shareable urls, export to tx
 
 ## how encryption works
 
-your password is never sent to the server in plaintext. on signup, a unique salt is generated and stored. your password is derived into a 256-bit encryption key using pbkdf2 with 100k iterations of sha-256.
+on signup, a unique salt is generated and stored. your password is derived into an encryption key.
 
 every private slate is encrypted client-side with aes-256-gcm before upload. the encrypted payload is structured as `iv (16 bytes) + auth tag (16 bytes) + ciphertext`, stored on backblaze b2. the server only ever handles ciphertext. decryption happens in your browser when you load a slate.
 
