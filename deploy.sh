@@ -36,6 +36,16 @@ npm install --include=dev
 echo "building frontend..."
 npm run build
 
+# rebuild admin console if present
+if [ -d "admin" ] && [ -f "admin/package.json" ]; then
+  echo ""
+  echo "rebuilding admin console..."
+  cd admin && npm install && npm run build && cd ..
+  rm -rf admin-dist
+  cp -r admin/dist/ admin-dist
+  echo "admin console built"
+fi
+
 # show local hashes
 echo ""
 echo "local build hashes:"

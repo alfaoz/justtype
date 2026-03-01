@@ -488,6 +488,72 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [content, title, token, currentSlate]);
 
+  // Tab-to-indent handler for textarea
+  const handleTextareaKeyDown = (e) => {
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const indent = '    '; // 4 spaces
+
+    if (start === end) {
+      // No selection — insert/remove indent at cursor
+      if (e.shiftKey) {
+        // Unindent current line
+        const lineStart = content.lastIndexOf('\n', start - 1) + 1;
+        const lineText = content.substring(lineStart, start);
+        const spaces = lineText.match(/^ {1,4}/);
+        if (spaces) {
+          const removeCount = spaces[0].length;
+          const newContent = content.substring(0, lineStart) + content.substring(lineStart + removeCount);
+          setContent(newContent);
+          requestAnimationFrame(() => {
+            textarea.selectionStart = textarea.selectionEnd = start - removeCount;
+          });
+        }
+      } else {
+        // Insert indent at cursor
+        const newContent = content.substring(0, start) + indent + content.substring(end);
+        setContent(newContent);
+        requestAnimationFrame(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + indent.length;
+        });
+      }
+    } else {
+      // Selection — indent/unindent all selected lines
+      const lineStart = content.lastIndexOf('\n', start - 1) + 1;
+      const selectedText = content.substring(lineStart, end);
+      const lines = selectedText.split('\n');
+
+      let newLines;
+      let offset = 0;
+      if (e.shiftKey) {
+        newLines = lines.map(line => {
+          const spaces = line.match(/^ {1,4}/);
+          if (spaces) {
+            offset -= spaces[0].length;
+            return line.substring(spaces[0].length);
+          }
+          return line;
+        });
+      } else {
+        newLines = lines.map(line => {
+          offset += indent.length;
+          return indent + line;
+        });
+      }
+
+      const newContent = content.substring(0, lineStart) + newLines.join('\n') + content.substring(end);
+      setContent(newContent);
+      requestAnimationFrame(() => {
+        textarea.selectionStart = lineStart;
+        textarea.selectionEnd = lineStart + newLines.join('\n').length;
+      });
+    }
+  };
+
   // Save before navigation (popstate/back/forward)
   useEffect(() => {
     const handlePopstate = async (e) => {
@@ -1090,6 +1156,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onKeyDown={handleTextareaKeyDown}
           placeholder={strings.writer.contentPlaceholder}
           spellCheck={false}
           className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}

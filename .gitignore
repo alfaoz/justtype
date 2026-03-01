@@ -30,6 +30,10 @@ CLAUDE.md
 
 # Build
 dist/
+admin-dist/
+
+# Admin console (private repo)
+admin/
 session2.txt
 
 # Plans & internal docs

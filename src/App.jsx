@@ -3,7 +3,6 @@ import { Writer } from './components/Writer';
 import { SlateManager } from './components/SlateManager';
 import { PublicViewer } from './components/PublicViewer';
 import { AuthModal } from './components/AuthModal';
-import { AdminConsole } from './components/AdminConsole';
 import { Account } from './components/Account';
 import { ManageSubscription } from './components/ManageSubscription';
 import { NotFound } from './components/NotFound';
@@ -23,7 +22,7 @@ import { strings } from './strings';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
 
 export default function App() {
-  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'admin' | 'notfound'
+  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
   // Token state is now just a marker - actual auth is via HttpOnly cookie
   // We check if user might be logged in based on stored username
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
@@ -231,8 +230,6 @@ export default function App() {
       }
       if (path.startsWith('/s/')) {
         setView('public');
-      } else if (path.startsWith('/holyfuckwhereami')) {
-        setView('admin');
       } else if (path === '/terms') {
         // Redirect to published system slate
         window.location.href = '/s/terms';
@@ -806,10 +803,6 @@ export default function App() {
     return <PublicViewer />;
   }
 
-  // Admin console
-  if (view === 'admin') {
-    return <AdminConsole />;
-  }
 
   // 404 Not Found
   if (view === 'notfound') {
@@ -1109,6 +1102,10 @@ export default function App() {
               recoveryKeyPending={recoveryKeyPending}
               onRecoveryKeyShown={(phrase) => {
                 setPendingRecoveryPhrase(phrase);
+              }}
+              onUsernameUpdate={(newUsername) => {
+                setUsername(newUsername);
+                localStorage.setItem('justtype-username', newUsername);
               }}
               onEmailUpdate={(newEmail, verified) => {
                 setEmail(newEmail);

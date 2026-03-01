@@ -341,6 +341,21 @@ const strings = {
       notVerified: 'not verified', // should be deprecared as well -alfa
       change: 'change'
     },
+    usernameChange: {
+      title: 'change username',
+      placeholder: 'new username',
+      submit: 'change username',
+      submitting: 'changing...',
+      success: 'username changed!',
+      cooldown: (date) => `you can change your username again on ${date}`,
+      errors: {
+        taken: 'username already taken',
+        invalid: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores',
+        tooShort: 'username must be between 3 and 20 characters',
+        cooldown: 'you can only change your username once every 90 days',
+        failed: 'failed to change username'
+      }
+    },
     password: {
       title: 'change password',
       currentPlaceholder: 'current password',
@@ -563,100 +578,6 @@ const strings = {
       message: 'you already have an active subscription. manage it from your account page.',
       manageButton: 'manage subscription',
       closeButton: 'close'
-    }
-  },
-
-  // what is this? :0
-  admin: {
-    login: {
-      title: 'admin console',
-      tokenLabel: 'admin token',
-      tokenPlaceholder: 'enter admin token',
-      submit: 'login',
-      errors: {
-        authFailed: 'Authentication failed',
-        failed: 'Failed to authenticate'
-      }
-    },
-    dashboard: {
-      title: 'admin console',
-      logout: 'logout',
-      tabs: {
-        overview: 'Overview',
-        users: 'Users',
-        logs: 'Logs',
-        health: 'Health',
-        announcements: 'Announcements',
-        feedback: 'Feedback',
-        status: 'Status'
-      },
-      stats: {
-        title: 'stats',
-        totalUsers: 'total users:',
-        totalSlates: 'total slates:',
-        publishedSlates: 'published slates:'
-      },
-      users: {
-        title: 'users',
-        loading: 'loading...',
-        loadingUsers: 'loading users...',
-        slateCount: (count) => `${count} slates`,
-        verified: 'verified',
-        notVerified: 'not verified', // should be deprecated!
-        joined: (date) => `joined ${date}`,
-        deleteUser: 'delete user',
-        noUsers: 'no users found',
-        table: {
-          id: 'id',
-          username: 'username',
-          email: 'email',
-          verified: 'verified',
-          slates: 'slates',
-          storage: 'storage',
-          joined: 'joined',
-          actions: 'actions'
-        },
-        pagination: {
-          showing: (start, end, total) => `showing ${start}-${end} of ${total} users`,
-          prev: 'prev',
-          next: 'next'
-        },
-        deleteConfirm: (username) => `Are you sure you want to delete user "${username}"? This will delete all their slates and cannot be undone.`,
-        deleteSuccess: (username) => `User "${username}" deleted successfully`,
-        errors: {
-          fetchFailed: 'Failed to fetch users',
-          deleteFailed: 'Failed to delete user'
-        }
-      },
-      overview: {
-        b2Title: 'b2 storage usage',
-        classB: 'class b (reads)',
-        classC: 'class c (writes)',
-        bandwidth: 'bandwidth',
-        dailyCap: (percent, limit) => `${percent}% of ${limit} daily cap`,
-        quickStats: 'quick stats',
-        totalUsers: 'total users',
-        totalSlates: 'total slates',
-        published: 'published',
-        storageUsed: 'storage used',
-        todayGrowth: (count) => `+${count} today`
-      },
-      logs: {
-        title: 'activity logs',
-        loading: 'loading...',
-        noLogs: 'no logs found',
-        table: {
-          time: 'time',
-          action: 'action',
-          target: 'target',
-          details: 'details',
-          ip: 'ip address'
-        }
-      },
-      health: {
-        title: 'system health',
-        loading: 'loading...'
-      }
     }
   },
 

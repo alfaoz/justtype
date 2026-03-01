@@ -802,6 +802,15 @@ app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
   }
 }));
 
+// Serve admin console (built separately, not in public repo)
+const adminDistPath = path.join(__dirname, '..', 'admin-dist');
+if (fs.existsSync(adminDistPath)) {
+  app.use('/holyfuckwhereami', express.static(adminDistPath));
+  app.get('/holyfuckwhereami/*', (req, res) => {
+    res.sendFile(path.join(adminDistPath, 'index.html'));
+  });
+}
+
 // Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
@@ -2365,12 +2374,6 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
   }
 
   try {
-    // Check slate limit (50 slates per user)
-    const slateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
-    if (slateCount.count >= 50) {
-      return res.status(403).json({ error: 'Slate limit reached (50 max). Delete some slates to create new ones.' });
-    }
-
     const slateId = `${req.user.id}-${Date.now()}`;
     let b2FileId;
     let wordCount, charCount, sizeBytes;
@@ -3828,6 +3831,82 @@ function fireSignupAutomations(userId, username) {
 setInterval(runAutomations, 60 * 60 * 1000);
 // Also run once on startup after a short delay
 setTimeout(runAutomations, 10000);
+
+// ============ USERNAME CHANGE ROUTES ============
+
+// Change username (once per 90 days)
+app.post('/api/account/change-username', authenticateToken, (req, res) => {
+  let { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+
+  // Validate username: same rules as signup
+  username = username.toLowerCase().trim();
+  if (!/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(username) || /[._-]{2}/.test(username)) {
+    return res.status(400).json({ error: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores' });
+  }
+
+  if (username.length < 3 || username.length > 20) {
+    return res.status(400).json({ error: 'username must be between 3 and 20 characters' });
+  }
+
+  try {
+    const user = db.prepare('SELECT username, username_changed_at FROM users WHERE id = ?').get(req.user.id);
+
+    if (username === user.username) {
+      return res.status(400).json({ error: 'that is already your username' });
+    }
+
+    // Check 90-day cooldown
+    if (user.username_changed_at) {
+      const lastChanged = new Date(user.username_changed_at);
+      const now = new Date();
+      const daysSince = (now - lastChanged) / (1000 * 60 * 60 * 24);
+      if (daysSince < 90) {
+        const nextDate = new Date(lastChanged.getTime() + 90 * 24 * 60 * 60 * 1000);
+        const formatted = nextDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return res.status(429).json({ error: `you can only change your username once every 90 days. try again after ${formatted}` });
+      }
+    }
+
+    // Try to update — UNIQUE constraint will catch duplicates
+    const result = db.prepare('UPDATE users SET username = ?, username_changed_at = CURRENT_TIMESTAMP WHERE id = ?').run(username, req.user.id);
+
+    if (result.changes === 0) {
+      return res.status(500).json({ error: 'failed to change username' });
+    }
+
+    res.json({ success: true, username });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.message?.includes('UNIQUE constraint')) {
+      return res.status(409).json({ error: 'username already taken' });
+    }
+    console.error('Change username error:', error);
+    res.status(500).json({ error: 'failed to change username' });
+  }
+});
+
+// Check username availability
+app.get('/api/account/check-username/:username', authenticateToken, (req, res) => {
+  let username = req.params.username.toLowerCase().trim();
+
+  // Validate format
+  if (username.length < 3 || username.length > 20) {
+    return res.json({ available: false, reason: 'username must be between 3 and 20 characters' });
+  }
+  if (!/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/.test(username) || /[._-]{2}/.test(username)) {
+    return res.json({ available: false, reason: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores' });
+  }
+
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (existing && existing.id !== req.user.id) {
+    return res.json({ available: false, reason: 'username already taken' });
+  }
+
+  res.json({ available: true });
+});
 
 // ============ FEEDBACK ROUTES ============
 

@@ -556,6 +556,13 @@ try {
   `);
   console.log('✓ Incidents tables initialized');
 
+  // Add username_changed_at column
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN username_changed_at DATETIME DEFAULT NULL`);
+  } catch (e) {
+    // Column already exists
+  }
+
   // Create feedback table
   db.exec(`
     CREATE TABLE IF NOT EXISTS feedback (

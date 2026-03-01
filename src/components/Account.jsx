@@ -7,7 +7,7 @@ import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, de
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 
-export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, recoveryKeyPending, onRecoveryKeyShown }) {
+export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, onUsernameUpdate, recoveryKeyPending, onRecoveryKeyShown }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -26,6 +26,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [emailError, setEmailError] = useState('');
   const [emailSuccess, setEmailSuccess] = useState('');
   const [changingEmail, setChangingEmail] = useState(false);
+
+  const [showUsernameModal, setShowUsernameModal] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [usernameError, setUsernameError] = useState('');
+  const [changingUsername, setChangingUsername] = useState(false);
+  const [usernameAvailable, setUsernameAvailable] = useState(null); // null | true | false
+  const [usernameCheckReason, setUsernameCheckReason] = useState('');
+  const [checkingUsername, setCheckingUsername] = useState(false);
+  const usernameCheckTimeout = useRef(null);
 
   const [sessions, setSessions] = useState([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
@@ -609,6 +618,63 @@ export function Account({ token, username, userId, email, emailVerified, authPro
     }
   };
 
+  const checkUsernameAvailability = (value) => {
+    clearTimeout(usernameCheckTimeout.current);
+    setUsernameAvailable(null);
+    setUsernameCheckReason('');
+    setUsernameError('');
+
+    if (!value || value === username) {
+      setCheckingUsername(false);
+      return;
+    }
+
+    setCheckingUsername(true);
+    usernameCheckTimeout.current = setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_URL}/account/check-username/${encodeURIComponent(value)}`, {
+          credentials: 'include',
+        });
+        const data = await response.json();
+        setUsernameAvailable(data.available);
+        setUsernameCheckReason(data.available ? '' : data.reason);
+      } catch {
+        setUsernameAvailable(null);
+      } finally {
+        setCheckingUsername(false);
+      }
+    }, 400);
+  };
+
+  const handleChangeUsername = async (e) => {
+    e.preventDefault();
+    setUsernameError('');
+    setChangingUsername(true);
+
+    try {
+      const response = await fetch(`${API_URL}/account/change-username`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username: newUsername })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        onUsernameUpdate(data.username);
+        setShowUsernameModal(false);
+        setNewUsername('');
+      } else {
+        setUsernameError(data.error || strings.account.usernameChange.errors.failed);
+      }
+    } catch (err) {
+      setUsernameError(strings.account.usernameChange.errors.failed);
+    } finally {
+      setChangingUsername(false);
+    }
+  };
+
   const handleChangeEmail = async (e) => {
     e.preventDefault();
     setEmailError('');
@@ -915,7 +981,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           {/* Username */}
           <div className="flex items-center justify-between py-3 border-b border-[#222]">
             <span className="text-[#666]">username:</span>
-            <span className="text-white">{username}</span>
+            <div className="flex items-center gap-3">
+              <span className="text-white">{username}</span>
+              <button
+                onClick={() => setShowUsernameModal(true)}
+                className="text-[#666] hover:text-white transition-colors text-xs"
+              >
+                change
+              </button>
+            </div>
           </div>
 
           {/* Email */}
@@ -1106,7 +1180,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             <div className="flex justify-between text-sm mb-2">
               <span className="text-[#666]">storage</span>
               <span className={storageInfo.percentage >= 100 ? 'text-red-400' : 'text-orange-400'}>
-                {storageInfo.percentage.toFixed(0)}%
+                {storageInfo.percentage.toFixed(5)}%
               </span>
             </div>
             <div className="w-full bg-[#111] rounded-full h-1.5 overflow-hidden">
@@ -1404,6 +1478,67 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Username Change Modal */}
+      {showUsernameModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-6">{strings.account.usernameChange.title}</h2>
+            <form onSubmit={handleChangeUsername} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  value={newUsername}
+                  onChange={(e) => {
+                    const val = e.target.value.toLowerCase();
+                    setNewUsername(val);
+                    checkUsernameAvailability(val);
+                  }}
+                  placeholder={strings.account.usernameChange.placeholder}
+                  className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                  required
+                  autoFocus
+                  maxLength={20}
+                />
+                {newUsername && newUsername !== username && (
+                  <div className="mt-2 text-xs">
+                    {checkingUsername ? (
+                      <span className="text-[#666]">checking...</span>
+                    ) : usernameAvailable === true ? (
+                      <span className="text-green-400">available</span>
+                    ) : usernameAvailable === false ? (
+                      <span className="text-red-400">{usernameCheckReason}</span>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+              {usernameError && <p className="text-red-400 text-xs md:text-sm">{usernameError}</p>}
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={changingUsername || !newUsername.trim() || usernameAvailable === false || checkingUsername}
+                  className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                >
+                  {changingUsername ? strings.account.usernameChange.submitting : strings.account.usernameChange.submit}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUsernameModal(false);
+                    setNewUsername('');
+                    setUsernameError('');
+                    setUsernameAvailable(null);
+                    setUsernameCheckReason('');
+                  }}
+                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                >
+                  cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
