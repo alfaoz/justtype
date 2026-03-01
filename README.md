@@ -24,8 +24,6 @@ published slates are the exception. publishing stores a separate unencrypted cop
 
 you can verify all of this yourself. the source is right here, and the [/verify](https://justtype.io/verify) page lets you confirm the code running in your browser matches this repo through three-way hash comparison (server, github actions, browser-computed). for a deeper dive on the encryption architecture, key management, and recovery system, see the [encryption deep dive](docs/encryption.md).
 
-> don't trust me? i wouldn't either. check `server/index.js`, `server/b2Storage.js`, and `src/crypto.js`.
-
 ## tech stack
 
 react, tailwind css, node.js, express, sqlite, backblaze b2, resend.
