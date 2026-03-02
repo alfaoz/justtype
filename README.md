@@ -69,10 +69,9 @@ the system slates are protected from deletion but can be edited by logging in as
 
 found a bug? security issue? want to add a feature? need a friend?
 
-- **security issues:** email hi@justtype.io (not github issues)
-- **bugs/features:** open an issue or pr
-- **style guide:** see CONTRIBUTING.md
-  
+- **security issues:** email hi@justtype.io (avoid github issues!)
+- **bugs/features:** open an issue, pr, or [submit feedback](https://justtype.io/verify)
+    
 ## license
 
-mit
+gnu gplv3
