@@ -20,7 +20,7 @@ const SCOPES = {
   'email': 'see your verified email address',
   'slates:read:public': 'read your published slates (title and full text)',
   'slates:read:meta': 'see your slate list, counts, and dates (private titles stay encrypted)',
-  'slates:read:private': 'download your private slates (delivered encrypted — readable only with your key)'
+  'slates:read:private': 'read private slates you choose to share with it (you pick which ones; revocable anytime)'
 };
 
 const ACCESS_TTL = 3600;            // 1 hour
@@ -166,7 +166,7 @@ function mountOAuth(app, deps) {
     const site = client.website
       ? `<div class="sub" style="margin-top:-1rem"><a href="${escapeHtml(client.website)}" target="_blank" rel="noopener">${escapeHtml(client.website)}</a></div>` : '';
     const privacyNote = scopeList.includes('slates:read:private')
-      ? `<div class="note">heads up: your private slates are end-to-end encrypted. this app will receive them <strong>still encrypted</strong> — it can only read them if you separately give it your key. justtype never hands over your password or decryption key.</div>` : '';
+      ? `<div class="note">your private slates stay end-to-end encrypted. approving this does <strong>not</strong> hand them over — afterwards you choose, in your justtype account, exactly which private slates to share with this app, and you can stop sharing anytime. justtype never shares your password or master key.</div>` : '';
     return `
       <h1>authorize ${escapeHtml(client.name)}</h1>
       <p class="sub"><span class="app">${escapeHtml(client.name)}</span> wants permission to:</p>
