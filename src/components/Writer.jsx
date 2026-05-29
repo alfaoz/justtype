@@ -1759,6 +1759,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <VerifyBadge className="text-[var(--theme-text-dim)]">verify</VerifyBadge>
                 <span className="mx-1">·</span>
                 <a href="/status" className="text-[var(--theme-text-dim)] hover:text-white hover:underline transition-colors">status</a>
+                <span className="mx-1">·</span>
+                <a href="/dev" className="text-[var(--theme-text-dim)] hover:text-white hover:underline transition-colors">developers</a>
               </p>
             </div>
             <button

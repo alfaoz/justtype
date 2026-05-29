@@ -380,37 +380,6 @@ const strings = {
       revoke: 'revoke',
       revoking: 'revoking...'
     },
-    developerApps: {
-      title: 'developer apps',
-      loading: 'loading...',
-      description: 'build "sign in with justtype" into your own app. register one here to get a client id, then follow the docs.',
-      createButton: '+ register an app',
-      namePlaceholder: 'app name',
-      websitePlaceholder: 'website (optional)',
-      redirectsPlaceholder: 'redirect uris (one per line)\nhttps://yourapp.com/callback',
-      scopesLabel: 'scopes',
-      scopeLabels: {
-        identity: 'identity — confirm username',
-        email: 'email — verified email address',
-        public: 'published slates — read public posts',
-        meta: 'slate metadata — list, counts, dates',
-        private: 'private slates — delivered encrypted only'
-      },
-      redirectsLabel: 'redirects',
-      create: 'create app',
-      creating: 'creating...',
-      cancel: 'cancel',
-      delete: 'delete',
-      deleting: 'deleting...',
-      copyHint: 'click to copy client id',
-      copied: 'copied!',
-      errors: {
-        nameRequired: 'app name is required.',
-        redirectRequired: 'at least one redirect uri is required.',
-        scopeRequired: 'select at least one scope.',
-        createFailed: 'could not create app. check your redirect uris (https only).'
-      }
-    },
     sessions: {
       title: 'sessions',
       loading: 'loading sessions...',
@@ -898,6 +867,108 @@ take care!
     footer: {
       home: 'just type',
       github: 'github'
+    }
+  },
+
+  dev: {
+    title: 'justtype developer',
+    subtitle: 'build "sign in with justtype" into your own app.',
+    copy: 'copy',
+    copied: 'copied!',
+    loading: 'loading...',
+    gate: {
+      message: 'sign in with your justtype account to register apps and get your keys.',
+      login: 'log in with justtype'
+    },
+    tabs: { docs: 'docs', apps: 'your apps', wizard: 'wizard' },
+    scopes: {
+      identity: 'confirm who they are (username)',
+      email: 'their verified email address',
+      public: 'read their published slates (title + text)',
+      meta: 'list slates, counts, dates (private titles stay encrypted)',
+      private: 'download private slates — delivered encrypted only'
+    },
+    docs: {
+      what: {
+        title: 'what this is',
+        body: 'a standard oauth 2.0 authorization-code flow with PKCE — the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their public content.'
+      },
+      encryption: {
+        title: 'the one rule',
+        body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata — but it can never read private writing. private slates are returned as ciphertext only; justtype never hands out a user\'s password or key. treat this as an identity + published-content api.'
+      },
+      scopes: { title: 'scopes' },
+      flow: {
+        title: 'the flow',
+        steps: [
+          'register an app here → get a client_id',
+          'make a PKCE verifier + S256 challenge',
+          'redirect the user to /oauth/authorize with the challenge',
+          'they approve on a justtype consent screen → you get a one-time ?code=',
+          'POST the code + verifier to /oauth/token → access token (use as Bearer)'
+        ]
+      },
+      endpoints: {
+        title: 'endpoints',
+        list: [
+          ['GET', '/oauth/authorize', 'start the flow (browser redirect)'],
+          ['POST', '/oauth/token', 'exchange code, or refresh (rotates both tokens)'],
+          ['POST', '/oauth/revoke', 'revoke an access or refresh token'],
+          ['GET', '/api/oauth/userinfo', 'scope: identity → { id, username, email? }'],
+          ['GET', '/api/oauth/slates', 'scope: slates:read:meta → slate list + counts'],
+          ['GET', '/api/oauth/slates/published', 'scope: slates:read:public → full published text'],
+          ['GET', '/api/oauth/slates/:n', 'scope: slates:read:private → ciphertext only'],
+          ['GET', '/api/oauth/scopes', 'the scope catalogue (no auth)']
+        ]
+      },
+      tokens: {
+        title: 'tokens',
+        points: [
+          'access token: scoped JWT, 1 hour. only works on /api/oauth/* — never as a justtype login.',
+          'refresh token: opaque, 90 days, single-use (rotates on every refresh).',
+          'authorization code: single-use, expires in 60 seconds.',
+          'always verify state. always use S256 PKCE. https only. users can revoke you from their account.'
+        ]
+      },
+      wizardHint: 'tip: the wizard tab fills all of this in with your real client_id and gives you copy-paste code.'
+    },
+    apps: {
+      empty: 'no apps yet. register one to get a client_id.',
+      createButton: '+ register an app',
+      openWizard: 'open the wizard',
+      namePlaceholder: 'app name',
+      websitePlaceholder: 'website (optional)',
+      redirectsPlaceholder: 'redirect uris (one per line)\nhttps://yourapp.com/callback',
+      scopesLabel: 'scopes',
+      redirectsLabel: 'redirects',
+      create: 'create app',
+      creating: 'creating...',
+      cancel: 'cancel',
+      delete: 'delete',
+      deleting: 'deleting...',
+      copyHint: 'click to copy client id'
+    },
+    errors: {
+      nameRequired: 'app name is required.',
+      redirectRequired: 'at least one redirect uri is required.',
+      scopeRequired: 'select at least one scope.',
+      createFailed: 'could not create app. check your redirect uris (https only).'
+    },
+    wizard: {
+      back: '← back',
+      step1: {
+        title: 'step 1 — pick an app',
+        body: 'choose which of your apps this integration is for.',
+        noApps: 'you have no apps yet.',
+        goCreate: 'register one first →'
+      },
+      step2: { title: 'step 2 — pick your stack' },
+      step3: {
+        title: 'step 3 — your code',
+        appLabel: 'app',
+        body: 'this is the full login flow, filled in with your client. drop it into your app and you have "sign in with justtype" working.',
+        note: 'public clients use PKCE and need no secret. keep tokens server-side where you can; for SPAs, hold them in memory.'
+      }
     }
   }
 };

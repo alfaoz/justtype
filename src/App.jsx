@@ -9,6 +9,7 @@ import { NotFound } from './components/NotFound';
 import { CommandPalette } from './components/CommandPalette';
 import { CliPair } from './components/CliPair';
 import { Cli } from './components/Cli';
+import { DevPortal } from './components/DevPortal';
 import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
 import { Status } from './components/Status';
@@ -276,6 +277,8 @@ export default function App() {
         setView('cli-pair');
       } else if (path === '/cli') {
         setView('cli-info');
+      } else if (path === '/dev') {
+        setView('dev');
       } else if (path === '/feedback') {
         setView('feedback');
       } else if (path === '/verify') {
@@ -841,6 +844,21 @@ export default function App() {
   // CLI Info
   if (view === 'cli-info') {
     return <Cli />;
+  }
+
+  // Developer portal
+  if (view === 'dev') {
+    return (
+      <>
+        <DevPortal token={token} username={username} onLogin={() => setShowAuthModal(true)} />
+        {showAuthModal && (
+          <AuthModal
+            onClose={() => setShowAuthModal(false)}
+            onAuth={handleAuth}
+          />
+        )}
+      </>
+    );
   }
 
   // Feedback
