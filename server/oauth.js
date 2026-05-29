@@ -185,8 +185,12 @@ function mountOAuth(app, deps) {
 
   // --- client registration (self-serve, requires a logged-in user) --------
 
+  // A registered app public key is base64 SPKI DER (RSA-OAEP). Light validation.
+  const validPublicKey = (pk) =>
+    typeof pk === 'string' && pk.length >= 100 && pk.length <= 4000 && /^[A-Za-z0-9+/=]+$/.test(pk);
+
   app.post('/api/oauth/clients', deps.authenticateToken, (req, res) => {
-    const { name, website, redirect_uris, scopes, confidential } = req.body || {};
+    const { name, website, redirect_uris, scopes, confidential, public_key } = req.body || {};
     if (!name || typeof name !== 'string' || name.length > 80) {
       return res.status(400).json({ error: 'A valid app name is required (max 80 chars).' });
     }
@@ -205,6 +209,12 @@ function mountOAuth(app, deps) {
     if (website && (typeof website !== 'string' || website.length > 200)) {
       return res.status(400).json({ error: 'Invalid website URL.' });
     }
+    if (public_key && !validPublicKey(public_key)) {
+      return res.status(400).json({ error: 'Invalid public key (expected base64 SPKI).' });
+    }
+    if (requested.includes('slates:read:private') && !public_key) {
+      return res.status(400).json({ error: 'The slates:read:private scope requires a public key for key delegation.' });
+    }
 
     const clientId = 'jt_' + randomToken(16);
     const isConfidential = !!confidential;
@@ -215,11 +225,11 @@ function mountOAuth(app, deps) {
     }
 
     db.prepare(`INSERT INTO oauth_clients
-      (client_id, client_secret_hash, name, website, redirect_uris, allowed_scopes, is_confidential, owner_user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (client_id, client_secret_hash, name, website, redirect_uris, allowed_scopes, is_confidential, owner_user_id, public_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       clientId, secretHash, name, website || null,
       JSON.stringify(redirect_uris), requested.join(' '),
-      isConfidential ? 1 : 0, req.user.id
+      isConfidential ? 1 : 0, req.user.id, public_key || null
     );
 
     res.json({
@@ -227,26 +237,39 @@ function mountOAuth(app, deps) {
       client_secret: clientSecret, // shown ONCE; not retrievable later
       name, website: website || null,
       redirect_uris, scopes: requested,
-      is_confidential: isConfidential
+      is_confidential: isConfidential,
+      has_public_key: !!public_key
     });
   });
 
   app.get('/api/oauth/clients', deps.authenticateToken, (req, res) => {
     const rows = db.prepare(
-      'SELECT client_id, name, website, redirect_uris, allowed_scopes, is_confidential, created_at FROM oauth_clients WHERE owner_user_id = ? ORDER BY created_at DESC'
+      'SELECT client_id, name, website, redirect_uris, allowed_scopes, is_confidential, public_key, created_at FROM oauth_clients WHERE owner_user_id = ? ORDER BY created_at DESC'
     ).all(req.user.id);
     res.json(rows.map(r => ({
       client_id: r.client_id, name: r.name, website: r.website,
       redirect_uris: JSON.parse(r.redirect_uris || '[]'),
       scopes: (r.allowed_scopes || '').split(' ').filter(Boolean),
-      is_confidential: !!r.is_confidential, created_at: r.created_at
+      is_confidential: !!r.is_confidential, has_public_key: !!r.public_key, created_at: r.created_at
     })));
+  });
+
+  // Rotate / set an app's public key (owner only).
+  app.put('/api/oauth/clients/:clientId/public-key', deps.authenticateToken, (req, res) => {
+    const { public_key } = req.body || {};
+    if (!validPublicKey(public_key)) return res.status(400).json({ error: 'Invalid public key (expected base64 SPKI).' });
+    const client = db.prepare('SELECT id FROM oauth_clients WHERE client_id = ? AND owner_user_id = ?')
+      .get(req.params.clientId, req.user.id);
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+    db.prepare('UPDATE oauth_clients SET public_key = ? WHERE client_id = ?').run(public_key, req.params.clientId);
+    res.json({ success: true });
   });
 
   app.delete('/api/oauth/clients/:clientId', deps.authenticateToken, (req, res) => {
     const client = db.prepare('SELECT id FROM oauth_clients WHERE client_id = ? AND owner_user_id = ?')
       .get(req.params.clientId, req.user.id);
     if (!client) return res.status(404).json({ error: 'Client not found' });
+    db.prepare('DELETE FROM oauth_slate_grants WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_tokens WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_codes WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_clients WHERE client_id = ?').run(req.params.clientId);
@@ -538,16 +561,62 @@ function mountOAuth(app, deps) {
     }
   });
 
-  // Single private slate — ciphertext + metadata only (zero-knowledge).
+  // List the private slates the user has delegated to THIS app (readable ones).
+  app.get('/api/oauth/shared', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    const rows = db.prepare(`SELECT g.slate_number, g.updated_at AS shared_at,
+        s.word_count, s.char_count, s.created_at, s.updated_at
+      FROM oauth_slate_grants g JOIN slates s
+        ON s.slate_number = g.slate_number AND s.user_id = g.user_id
+      WHERE g.client_id = ? AND g.user_id = ? ORDER BY g.updated_at DESC`)
+      .all(req.oauth.clientId, req.oauth.userId);
+    res.json(rows.map(r => ({
+      slate_number: r.slate_number,
+      shared_at: r.shared_at,
+      word_count: r.word_count, char_count: r.char_count,
+      created_at: r.created_at, updated_at: r.updated_at
+    })));
+  });
+
+  // Single private slate. If the user delegated this slate to the calling app,
+  // return the app-readable re-wrapped blob (decryptable with the app's private
+  // key). Otherwise return the owner-encrypted ciphertext, which the app cannot
+  // read — justtype stays zero-knowledge either way.
   app.get('/api/oauth/slates/:n', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
     try {
       const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
         .get(req.params.n, req.oauth.userId);
       if (!slate) return res.status(404).json({ error: 'not_found' });
 
-      const userRow = db.prepare('SELECT e2e_migrated FROM users WHERE id = ?').get(req.oauth.userId);
-      const isE2E = !!(userRow && userRow.e2e_migrated);
+      const grant = db.prepare(
+        'SELECT wrapped_key, enc_content, enc_title, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
+      ).get(req.oauth.clientId, req.oauth.userId, slate.slate_number);
 
+      const base = {
+        slate_number: slate.slate_number,
+        is_published: !!slate.is_published,
+        share_id: slate.share_id || null,
+        title: slate.is_published ? slate.title : null,
+        word_count: slate.word_count, char_count: slate.char_count,
+        created_at: slate.created_at, updated_at: slate.updated_at
+      };
+
+      if (grant) {
+        // Delegated: the user re-wrapped this slate to your public key.
+        // enc_content decrypts (with the unwrapped content key) to JSON { content, uploadedAt }.
+        // enc_title decrypts to the raw title string (null if untitled).
+        return res.json({
+          ...base,
+          delegated: true,
+          key_scheme: 'rsa-oaep-sha256',
+          content_scheme: 'aes-256-gcm',
+          wrapped_key: grant.wrapped_key,
+          enc_content: grant.enc_content,
+          enc_title: grant.enc_title || null,
+          shared_at: grant.updated_at
+        });
+      }
+
+      // Not delegated: owner-encrypted ciphertext only (unreadable by the app).
       let raw = null;
       try {
         const buf = await b2Storage.downloadRawFile(slate.b2_file_id);
@@ -555,17 +624,12 @@ function mountOAuth(app, deps) {
       } catch { raw = null; }
 
       res.json({
-        slate_number: slate.slate_number,
-        is_published: !!slate.is_published,
-        share_id: slate.share_id || null,
-        title: slate.is_published ? slate.title : null,
+        ...base,
+        delegated: false,
         title_encrypted: !slate.is_published && !!slate.encrypted_title,
-        word_count: slate.word_count, char_count: slate.char_count,
-        created_at: slate.created_at, updated_at: slate.updated_at,
         encrypted: true,
-        encryption_scheme: isE2E ? 'e2e-aes-256-gcm' : 'server-aes-256-gcm',
         encrypted_content: raw,
-        note: 'content is encrypted; decryption requires the owner\'s key, which justtype does not provide via this api'
+        note: 'this slate has not been shared with your app. ask the user to delegate it; otherwise it stays end-to-end encrypted and unreadable.'
       });
     } catch (e) {
       res.status(500).json({ error: 'server_error' });
@@ -576,15 +640,23 @@ function mountOAuth(app, deps) {
 
   app.get('/api/account/connected-apps', deps.authenticateToken, (req, res) => {
     const rows = db.prepare(`SELECT t.client_id, t.scope, MIN(t.created_at) AS authorized_at,
-        MAX(t.last_used_at) AS last_used_at, c.name, c.website
+        MAX(t.last_used_at) AS last_used_at, c.name, c.website, c.public_key
       FROM oauth_tokens t JOIN oauth_clients c ON c.client_id = t.client_id
       WHERE t.user_id = ? AND t.revoked = 0 AND t.refresh_expires_at > ?
       GROUP BY t.client_id ORDER BY last_used_at DESC`).all(req.user.id, now());
-    res.json(rows.map(r => ({
-      client_id: r.client_id, name: r.name, website: r.website,
-      scopes: (r.scope || '').split(' ').filter(Boolean),
-      authorized_at: r.authorized_at, last_used_at: r.last_used_at
-    })));
+    res.json(rows.map(r => {
+      const scopes = (r.scope || '').split(' ').filter(Boolean);
+      const sharedCount = db.prepare('SELECT COUNT(*) AS n FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?')
+        .get(r.client_id, req.user.id).n;
+      return {
+        client_id: r.client_id, name: r.name, website: r.website,
+        scopes,
+        can_share: scopes.includes('slates:read:private') && !!r.public_key,
+        has_public_key: !!r.public_key,
+        shared_count: sharedCount,
+        authorized_at: r.authorized_at, last_used_at: r.last_used_at
+      };
+    }));
   });
 
   app.post('/api/account/connected-apps/revoke', deps.authenticateToken, (req, res) => {
@@ -592,7 +664,93 @@ function mountOAuth(app, deps) {
     if (!client_id) return res.status(400).json({ error: 'client_id required' });
     const result = db.prepare('UPDATE oauth_tokens SET revoked = 1 WHERE user_id = ? AND client_id = ?')
       .run(req.user.id, client_id);
+    // Revoking access also revokes any delegated private-slate read access.
+    db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
     res.json({ success: true, revoked: result.changes });
+  });
+
+  // --- private-slate delegation (key re-wrapping), owner-driven -----------
+  // The browser does all crypto; these endpoints only move opaque blobs.
+
+  const MAX_GRANT_BLOB = 8 * 1024 * 1024; // 8MB base64 ceiling per field
+
+  // Confirm the user has actually authorized this client with the private scope,
+  // and the client has a public key to wrap to. Returns the client row or null.
+  const grantableClient = (userId, clientId) => {
+    const client = db.prepare('SELECT client_id, name, public_key FROM oauth_clients WHERE client_id = ?').get(clientId);
+    if (!client || !client.public_key) return null;
+    const tok = db.prepare(`SELECT scope FROM oauth_tokens
+      WHERE user_id = ? AND client_id = ? AND revoked = 0 AND refresh_expires_at > ?
+      ORDER BY created_at DESC LIMIT 1`).get(userId, clientId, now());
+    if (!tok) return null;
+    if (!(tok.scope || '').split(' ').includes('slates:read:private')) return null;
+    return client;
+  };
+
+  // The app's public key + which slates are currently shared (for the share UI).
+  app.get('/api/account/slate-grants/:clientId', deps.authenticateToken, (req, res) => {
+    const client = grantableClient(req.user.id, req.params.clientId);
+    if (!client) return res.status(404).json({ error: 'not_grantable' });
+    const rows = db.prepare('SELECT slate_number, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?')
+      .all(req.params.clientId, req.user.id);
+    res.json({
+      client_id: client.client_id,
+      name: client.name,
+      public_key: client.public_key,
+      shared: rows.map(r => ({ slate_number: r.slate_number, updated_at: r.updated_at }))
+    });
+  });
+
+  // Which apps a given slate is shared with (+ their public keys) — for live re-sync on save.
+  app.get('/api/account/slate-grants/by-slate/:n', deps.authenticateToken, (req, res) => {
+    const rows = db.prepare(`SELECT g.client_id, c.public_key, c.name
+      FROM oauth_slate_grants g JOIN oauth_clients c ON c.client_id = g.client_id
+      WHERE g.user_id = ? AND g.slate_number = ?`).all(req.user.id, req.params.n);
+    res.json(rows.filter(r => r.public_key).map(r => ({ client_id: r.client_id, public_key: r.public_key, name: r.name })));
+  });
+
+  // Upsert a re-wrapped slate blob (share, or refresh an existing share).
+  app.post('/api/account/slate-grants', deps.authenticateToken, (req, res) => {
+    const { client_id, slate_number, wrapped_key, enc_content, enc_title } = req.body || {};
+    if (!client_id || slate_number == null || !wrapped_key || !enc_content) {
+      return res.status(400).json({ error: 'missing required fields' });
+    }
+    if ([wrapped_key, enc_content, enc_title].some(v => v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB))) {
+      return res.status(413).json({ error: 'blob too large' });
+    }
+    if (!grantableClient(req.user.id, client_id)) {
+      return res.status(403).json({ error: 'client not authorized for private slates' });
+    }
+    const slate = db.prepare('SELECT slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
+      .get(slate_number, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'slate not found' });
+
+    db.prepare(`INSERT INTO oauth_slate_grants
+        (client_id, user_id, slate_number, wrapped_key, enc_content, enc_title, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+      ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
+        wrapped_key = excluded.wrapped_key,
+        enc_content = excluded.enc_content,
+        enc_title = excluded.enc_title,
+        updated_at = strftime('%s','now')`).run(
+      client_id, req.user.id, slate_number, wrapped_key, enc_content, enc_title || null
+    );
+    res.json({ success: true });
+  });
+
+  // Unshare one slate, or all slates, from an app.
+  app.delete('/api/account/slate-grants', deps.authenticateToken, (req, res) => {
+    const { client_id, slate_number } = req.body || {};
+    if (!client_id) return res.status(400).json({ error: 'client_id required' });
+    let result;
+    if (slate_number == null) {
+      result = db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?')
+        .run(req.user.id, client_id);
+    } else {
+      result = db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ? AND slate_number = ?')
+        .run(req.user.id, client_id, slate_number);
+    }
+    res.json({ success: true, removed: result.changes });
   });
 
   // Expose scope catalogue (handy for docs / dynamic UIs).

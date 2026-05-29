@@ -1,0 +1,173 @@
+import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config';
+import { strings } from '../strings';
+import { getSlateKey } from '../keyStore';
+import { decryptContent, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
+
+// Modal for choosing which private slates to share with a connected app.
+// All crypto runs here in the browser: each shared slate is decrypted with the
+// user's master key, re-encrypted under a fresh content key, and that key is
+// wrapped to the app's public key. justtype only ever stores opaque blobs.
+export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
+  const s = strings.account.shareSlates;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [slates, setSlates] = useState([]);          // [{ slate_number, title }]
+  const [shared, setShared] = useState(new Set());    // slate_numbers currently shared
+  const [busy, setBusy] = useState(new Set());        // slate_numbers mid-toggle
+  const [appKey, setAppKey] = useState(null);         // imported public key
+  const [slateKey, setSlateKey] = useState(null);     // user's master key
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const mk = userId ? await getSlateKey(userId) : null;
+        if (!mk) { if (!cancelled) { setError(s.locked); setLoading(false); } return; }
+
+        const [grantRes, listRes] = await Promise.all([
+          fetch(`${API_URL}/account/slate-grants/${encodeURIComponent(clientId)}`, { credentials: 'include' }),
+          fetch(`${API_URL}/slates`, { credentials: 'include' })
+        ]);
+        const grantData = await grantRes.json();
+        const listData = await listRes.json();
+        if (!grantRes.ok) throw new Error(grantData.error || 'not grantable');
+        if (!listRes.ok) throw new Error(listData.error || 'failed to load slates');
+
+        const pubKey = await importAppPublicKey(grantData.public_key);
+        const sharedSet = new Set((grantData.shared || []).map((g) => g.slate_number));
+
+        // Only private (unpublished) slates — published ones are already readable
+        // via the public scope. Decrypt titles for display.
+        const all = Array.isArray(listData) ? listData : [];
+        const privateSlates = [];
+        for (const meta of all) {
+          if (meta.is_published) continue;
+          let title = (meta.title || '').trim();
+          if ((!title || title === 'untitled') && meta.encrypted_title) {
+            try { title = (await decryptTitle(meta.encrypted_title, mk)).trim(); } catch { title = ''; }
+          }
+          privateSlates.push({ slate_number: meta.slate_number, title: title || s.untitled });
+        }
+        privateSlates.sort((a, b) => b.slate_number - a.slate_number);
+
+        if (!cancelled) {
+          setSlateKey(mk);
+          setAppKey(pubKey);
+          setShared(sharedSet);
+          setSlates(privateSlates);
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!cancelled) { setError(e.message || s.loadError); setLoading(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clientId, userId]);
+
+  const setBusyFor = (n, on) => setBusy((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(n); else next.delete(n);
+    return next;
+  });
+
+  const toggle = async (n) => {
+    if (busy.has(n)) return;
+    setError('');
+    setBusyFor(n, true);
+    try {
+      if (shared.has(n)) {
+        const res = await fetch(`${API_URL}/account/slate-grants`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ client_id: clientId, slate_number: n })
+        });
+        if (!res.ok) throw new Error(s.toggleError);
+        setShared((prev) => { const x = new Set(prev); x.delete(n); return x; });
+      } else {
+        // Fetch + decrypt the slate, re-encrypt for the app, upload the blobs.
+        const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}`, { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || s.toggleError);
+        const content = data.encryptedContent
+          ? await decryptContent(data.encryptedContent, slateKey)
+          : (typeof data.content === 'string' ? data.content : '');
+        let title = (data.title || '').trim();
+        const encTitle = data.encrypted_title;
+        if ((!title || title === 'untitled') && encTitle) {
+          try { title = (await decryptTitle(encTitle, slateKey)).trim(); } catch { title = ''; }
+        }
+        const grant = await reencryptForApp(content, title, appKey);
+        const up = await fetch(`${API_URL}/account/slate-grants`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ client_id: clientId, slate_number: n, ...grant })
+        });
+        if (!up.ok) throw new Error(s.toggleError);
+        setShared((prev) => { const x = new Set(prev); x.add(n); return x; });
+      }
+      onChanged?.();
+    } catch (e) {
+      setError(e.message || s.toggleError);
+    } finally {
+      setBusyFor(n, false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={onClose}>
+      <div className="bg-[#111] border border-[#333] rounded-lg w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="p-4 border-b border-[#333]">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-white text-sm">{s.title}</h3>
+            <button onClick={onClose} className="text-[#666] hover:text-white text-sm">✕</button>
+          </div>
+          <p className="text-xs text-[#666] mt-1">{s.subtitle(appName)}</p>
+        </div>
+
+        <div className="p-4 overflow-y-auto">
+          {loading ? (
+            <p className="text-[#666] text-sm">{s.loading}</p>
+          ) : error && slates.length === 0 ? (
+            <p className="text-red-400 text-sm">{error}</p>
+          ) : slates.length === 0 ? (
+            <p className="text-[#666] text-sm">{s.none}</p>
+          ) : (
+            <div className="space-y-1.5">
+              {slates.map((sl) => {
+                const on = shared.has(sl.slate_number);
+                const working = busy.has(sl.slate_number);
+                return (
+                  <button
+                    key={sl.slate_number}
+                    onClick={() => toggle(sl.slate_number)}
+                    disabled={working}
+                    className={`w-full text-left flex items-center gap-3 rounded px-3 py-2 border transition-colors disabled:opacity-60 ${
+                      on ? 'border-[#333] bg-[#1a1a1a]' : 'border-transparent hover:bg-[#1a1a1a]'
+                    }`}
+                  >
+                    <span className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
+                      on ? 'bg-white text-black border-white' : 'border-[#666] text-transparent'
+                    }`}>✓</span>
+                    <span className="flex-1 min-w-0 truncate text-sm text-[#d4d4d4]">{sl.title}</span>
+                    <span className="text-[10px] text-[#666] shrink-0">
+                      {working ? s.working : (on ? s.shared : s.share)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {error && slates.length > 0 && <p className="text-red-400 text-xs mt-3">{error}</p>}
+        </div>
+
+        <div className="p-4 border-t border-[#333] flex items-center justify-between">
+          <span className="text-xs text-[#666]">{s.note}</span>
+          <button onClick={onClose} className="text-sm text-white border border-[#333] rounded px-4 py-1.5 hover:bg-[#1a1a1a]">{s.done}</button>
+        </div>
+      </div>
+    </div>
+  );
+}

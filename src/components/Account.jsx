@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
+import { ShareSlates } from './ShareSlates';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -102,6 +103,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [loadingApps, setLoadingApps] = useState(true);
   const [showConnectedApps, setShowConnectedApps] = useState(false);
   const [revokingApp, setRevokingApp] = useState(null);
+  const [shareApp, setShareApp] = useState(null); // { client_id, name } when sharing slates
 
   useEffect(() => {
     return () => {
@@ -1449,6 +1451,19 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                         <div className="text-xs text-[#666] mt-1">
                           {strings.account.connectedApps.canAccess}: {app.scopes.join(', ')}
                         </div>
+                        {app.can_share && (
+                          <div className="mt-2 flex items-center gap-3">
+                            <button
+                              onClick={() => setShareApp({ client_id: app.client_id, name: app.name })}
+                              className="text-xs text-white border border-[#333] rounded px-3 py-1 hover:bg-[#1a1a1a] transition-colors"
+                            >
+                              {strings.account.connectedApps.shareSlates}
+                            </button>
+                            {app.shared_count > 0 && (
+                              <span className="text-xs text-[#666]">{strings.account.connectedApps.sharedCount(app.shared_count)}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1456,6 +1471,16 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               </div>
             )}
           </div>
+
+          {shareApp && (
+            <ShareSlates
+              clientId={shareApp.client_id}
+              appName={shareApp.name}
+              userId={userId}
+              onClose={() => setShareApp(null)}
+              onChanged={loadConnectedApps}
+            />
+          )}
 
           {/* Danger Zone */}
           <div className="border border-red-900/50 rounded">

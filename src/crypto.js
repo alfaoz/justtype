@@ -185,6 +185,58 @@ export async function decryptTags(base64Blob, slateKeyBytes) {
   }
 }
 
+// --- Key delegation (re-wrapping a slate for a third-party app) ---
+// A third-party app holds an RSA-OAEP keypair and registers its public key.
+// To grant the app read access to a private slate, the browser re-encrypts the
+// slate under a fresh random content key and wraps that key to the app's public
+// key. justtype only ever stores the opaque results; it cannot read them.
+
+// Generate an RSA-OAEP 2048 keypair for an app. Returns base64 SPKI public key
+// (for registration / browser import) and a PKCS8 PEM private key (for the app).
+export async function generateAppKeyPair() {
+  const kp = await crypto.subtle.generateKey(
+    { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', kp.publicKey));
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', kp.privateKey));
+  return {
+    publicKeySpkiBase64: bufToBase64(spki),
+    publicKeyPem: pemEncode(spki, 'PUBLIC KEY'),
+    privateKeyPem: pemEncode(pkcs8, 'PRIVATE KEY')
+  };
+}
+
+// Import an app's public key (base64 SPKI DER) for wrapping.
+export async function importAppPublicKey(spkiBase64) {
+  const der = base64ToBuf(spkiBase64);
+  return crypto.subtle.importKey('spki', der, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt']);
+}
+
+// Wrap raw key bytes to an app's RSA-OAEP public key. Returns base64.
+export async function wrapKeyToAppKey(keyBytes, appPublicKey) {
+  const out = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, appPublicKey, keyBytes);
+  return bufToBase64(new Uint8Array(out));
+}
+
+// Re-encrypt a slate's plaintext for an app. Generates a fresh content key,
+// encrypts content + title under it (justtype's own blob format), and wraps the
+// content key to the app's public key. Returns base64 blobs ready to upload.
+export async function reencryptForApp(plainContent, plainTitle, appPublicKey) {
+  const contentKey = crypto.getRandomValues(new Uint8Array(32));
+  const enc_content = await encryptContent(plainContent || '', contentKey);
+  const enc_title = (plainTitle != null && plainTitle !== '') ? await encryptTitle(plainTitle, contentKey) : null;
+  const wrapped_key = await wrapKeyToAppKey(contentKey, appPublicKey);
+  return { wrapped_key, enc_content, enc_title };
+}
+
+function pemEncode(bytes, label) {
+  const b64 = bufToBase64(bytes);
+  const lines = (b64.match(/.{1,64}/g) || []).join('\n');
+  return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----`;
+}
+
 // Generate a 12-word BIP39 recovery phrase
 export function generateRecoveryPhrase(wordlist) {
   const indices = crypto.getRandomValues(new Uint16Array(12));

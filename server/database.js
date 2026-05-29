@@ -465,7 +465,34 @@ try {
     CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token_hash);
     CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client_user ON oauth_tokens(client_id, user_id);
+
+    -- Per-slate delegated read access for third-party apps (key re-wrapping).
+    -- The user's browser re-encrypts a private slate under a fresh content key
+    -- and wraps that key to the app's public key. The server only ever stores
+    -- these opaque blobs; it cannot read them. Revoking = deleting the row.
+    CREATE TABLE IF NOT EXISTS oauth_slate_grants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      slate_number INTEGER NOT NULL,
+      wrapped_key TEXT NOT NULL,   -- content key, RSA-OAEP wrapped to the app's public key (base64)
+      enc_content TEXT NOT NULL,   -- slate content, AES-256-GCM under the content key (base64)
+      enc_title TEXT,              -- slate title, AES-256-GCM under the content key (base64)
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (client_id, user_id, slate_number),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_grants_client_user ON oauth_slate_grants(client_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_grants_user_slate ON oauth_slate_grants(user_id, slate_number);
   `);
+
+  // Add public_key to oauth_clients for key delegation (apps that want private-slate access).
+  const oauthClientColumns = db.pragma('table_info(oauth_clients)');
+  if (!oauthClientColumns.some(col => col.name === 'public_key')) {
+    db.exec(`ALTER TABLE oauth_clients ADD COLUMN public_key TEXT;`);
+    console.log('✓ Database migrated: Added public_key column to oauth_clients');
+  }
   console.log('✓ OAuth provider tables initialized');
 
   // Drop old empty announcement tables if they exist

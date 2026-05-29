@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
+import { generateAppKeyPair } from '../crypto';
 
 const SCOPE_OPTIONS = [
   ['identity', strings.dev.scopes.identity],
@@ -199,7 +200,65 @@ curl ${origin}/api/oauth/userinfo -H "Authorization: Bearer <access_token>"`;
 
 const GENERATORS = { node: genNode, browser: genBrowser, python: genPython, curl: genCurl };
 
-const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400' };
+// Node snippet showing how an app decrypts a private slate the user delegated to it.
+const DECRYPT_SNIPPET = `const { privateDecrypt, createDecipheriv, constants } = require('crypto');
+const PRIVATE_KEY = process.env.JT_PRIVATE_KEY;   // the PEM justtype showed you once
+const JT = '${origin}';
+
+const b64 = (s) => Buffer.from(s, 'base64');
+function aesGcmDecrypt(blob, key) {
+  const data = b64(blob);
+  const iv = data.subarray(0, 16), tag = data.subarray(16, 32), ct = data.subarray(32);
+  const d = createDecipheriv('aes-256-gcm', key, iv);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]).toString('utf8');
+}
+
+// 1. fetch a slate the user shared with you (needs scope slates:read:private)
+const slate = await (await fetch(JT + '/api/oauth/slates/' + slateNumber, {
+  headers: { Authorization: 'Bearer ' + accessToken }
+})).json();
+if (!slate.delegated) throw new Error('this slate has not been shared with your app');
+
+// 2. unwrap the per-slate content key with YOUR private key
+const contentKey = privateDecrypt(
+  { key: PRIVATE_KEY, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+  b64(slate.wrapped_key)
+);
+
+// 3. decrypt content + title with that key
+const content = JSON.parse(aesGcmDecrypt(slate.enc_content, contentKey)).content;
+const title = slate.enc_title ? aesGcmDecrypt(slate.enc_title, contentKey) : null;
+
+// tip: GET /api/oauth/shared lists every slate the user has delegated to you`;
+
+const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400', PUT: 'text-orange-400' };
+
+// Lightweight syntax highlighter. It NEVER alters the code text — it only wraps
+// matched tokens in colored spans, so the displayed code is always exact and the
+// worst case is a slightly-off color. Comments use a negative lookbehind so URLs
+// (https://) and regex (/\//) are not mistaken for line comments.
+const HL = /(?<![:\\/])\/\/[^\n]*|#[^\n]*|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\b(?:const|let|var|async|await|function|return|new|if|else|for|while|try|catch|throw|import|from|export|class|def|lambda|with|as|require)\b|\b(?:true|false|null|None|True|False)\b|\b(?:0x[0-9a-fA-F]+|\d+)\b/g;
+
+function highlightCode(code) {
+  const out = [];
+  let last = 0, m, i = 0;
+  HL.lastIndex = 0;
+  while ((m = HL.exec(code)) !== null) {
+    if (m.index > last) out.push(code.slice(last, m.index));
+    const t = m[0];
+    let cls;
+    if (t.startsWith('//') || t.startsWith('#')) cls = 'text-[#666] italic';
+    else if (t[0] === "'" || t[0] === '"' || t[0] === '`') cls = 'text-green-400';
+    else if (/^(true|false|null|None|True|False)$/.test(t)) cls = 'text-orange-400';
+    else if (/^(0x|\d)/.test(t)) cls = 'text-orange-400';
+    else cls = 'text-blue-400';
+    out.push(<span key={i++} className={cls}>{t}</span>);
+    last = m.index + t.length;
+  }
+  if (last < code.length) out.push(code.slice(last));
+  return out;
+}
 
 // ---- small shared pieces (module-level so they never remount) -------------
 
@@ -244,7 +303,7 @@ function CodeBlock({ code }) {
           {copied ? strings.dev.copied : strings.dev.copy}
         </button>
       </div>
-      <pre className="p-4 overflow-x-auto text-xs leading-relaxed text-[#d4d4d4] whitespace-pre">{code}</pre>
+      <pre className="p-4 overflow-x-auto text-xs leading-relaxed text-[#d4d4d4] whitespace-pre">{highlightCode(code)}</pre>
     </div>
   );
 }
@@ -288,6 +347,7 @@ export function DevPortal({ token, username, onLogin }) {
   const [deleting, setDeleting] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [newSecret, setNewSecret] = useState(null);
+  const [newKey, setNewKey] = useState(null);
 
   // wizard
   const [wizStep, setWizStep] = useState(1);
@@ -320,17 +380,26 @@ export function DevPortal({ token, username, onLogin }) {
     if (scopes.length === 0) return setCreateError(strings.dev.errors.scopeRequired);
     setCreating(true);
     try {
+      // Private-slate access uses key delegation: generate an RSA keypair in the
+      // browser, register the public key, and hand the private key to the dev once.
+      let public_key, privateKeyPem;
+      if (scopes.includes('slates:read:private')) {
+        const kp = await generateAppKeyPair();
+        public_key = kp.publicKeySpkiBase64;
+        privateKeyPem = kp.privateKeyPem;
+      }
       const res = await fetch(`${API_URL}/oauth/clients`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined, redirect_uris, scopes })
+        body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined, redirect_uris, scopes, public_key })
       });
       const data = await res.json();
       if (res.ok) {
         setShowCreate(false);
         setName(''); setWebsite(''); setRedirects(''); setScopes(['identity']);
         if (data.client_secret) setNewSecret({ id: data.client_id, secret: data.client_secret });
+        if (privateKeyPem) setNewKey({ id: data.client_id, pem: privateKeyPem });
         loadApps();
       } else {
         setCreateError(data.error || strings.dev.errors.createFailed);
@@ -408,6 +477,7 @@ export function DevPortal({ token, username, onLogin }) {
           creating={creating} createError={createError} createApp={createApp}
           deleting={deleting} deleteApp={deleteApp} copyId={copyId} copiedId={copiedId}
           newSecret={newSecret} dismissSecret={() => setNewSecret(null)}
+          newKey={newKey} dismissKey={() => setNewKey(null)}
           goWizard={() => setTab('wizard')}
         />
         </div>
@@ -425,7 +495,7 @@ export function DevPortal({ token, username, onLogin }) {
   );
 }
 
-const DOC_SECTIONS = ['intro', 'quickstart', 'scopes', 'endpoints', 'tokens', 'encryption'];
+const DOC_SECTIONS = ['intro', 'quickstart', 'scopes', 'endpoints', 'delegation', 'tokens', 'encryption'];
 
 function DocsTab({ onWizard }) {
   const d = strings.dev.docs;
@@ -437,6 +507,7 @@ function DocsTab({ onWizard }) {
     ['quickstart', d.quickstart.title],
     ['scopes', d.scopes.title],
     ['endpoints', d.endpoints.title],
+    ['delegation', d.delegation.title],
     ['tokens', d.tokens.title],
     ['encryption', d.encryption.title]
   ];
@@ -528,6 +599,21 @@ function DocsTab({ onWizard }) {
           </div>
         </section>
 
+        <section id="delegation" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-3">{d.delegation.title}</h2>
+          <p className="text-[#a0a0a0] mb-4">{d.delegation.body}</p>
+          <ol className="space-y-3 mb-6">
+            {d.delegation.steps.map((s, i) => (
+              <li key={i} className="flex gap-3.5">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+                <span className="text-[#a0a0a0]">{s}</span>
+              </li>
+            ))}
+          </ol>
+          <CodeBlock code={DECRYPT_SNIPPET} />
+          <p className="text-[#666] text-xs mt-3">{d.delegation.note}</p>
+        </section>
+
         <section id="tokens" className="scroll-mt-20">
           <h2 className="text-xl text-white tracking-tight mb-3">{d.tokens.title}</h2>
           <ul className="space-y-2">
@@ -588,6 +674,26 @@ function AppsTab(p) {
           <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.secretBody}</div>
           <code className="block bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
           <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{strings.dev.apps.secretDismiss}</button>
+        </div>
+      )}
+
+      {p.newKey && (
+        <div className="bg-[#1a1a1a] border border-orange-400/40 rounded-xl p-4">
+          <div className="text-sm text-white mb-1">{strings.dev.apps.keyTitle}</div>
+          <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.keyBody}</div>
+          <pre className="bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-[10px] leading-relaxed text-orange-400 overflow-x-auto whitespace-pre">{p.newKey.pem}</pre>
+          <div className="flex gap-3 mt-3">
+            <button
+              onClick={() => navigator.clipboard?.writeText(p.newKey.pem).catch(() => {})}
+              className="text-xs text-[#808080] hover:text-white"
+            >{strings.dev.copy}</button>
+            <a
+              href={`data:application/x-pem-file;charset=utf-8,${encodeURIComponent(p.newKey.pem)}`}
+              download={`${p.newKey.id}-private-key.pem`}
+              className="text-xs text-[#808080] hover:text-white"
+            >{strings.dev.apps.keyDownload}</a>
+            <button onClick={p.dismissKey} className="text-xs text-[#808080] hover:text-white ml-auto">{strings.dev.apps.secretDismiss}</button>
+          </div>
         </div>
       )}
 

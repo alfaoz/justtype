@@ -375,10 +375,27 @@ const strings = {
       title: 'connected apps',
       loading: 'loading...',
       empty: 'no third-party apps have access to your account.',
-      description: 'apps you authorized to sign in with justtype. they can never read your private slates — those stay encrypted.',
+      description: 'apps you authorized to sign in with justtype. private slates stay encrypted unless you explicitly share specific ones below — and you can stop sharing anytime.',
       canAccess: 'can access',
       revoke: 'revoke',
-      revoking: 'revoking...'
+      revoking: 'revoking...',
+      shareSlates: 'share private slates',
+      sharedCount: (n) => `${n} slate${n === 1 ? '' : 's'} shared`
+    },
+    shareSlates: {
+      title: 'share private slates',
+      subtitle: (app) => `pick which private slates ${app} can read. each is re-encrypted in your browser and locked to this app's key — your password and master key never leave your device.`,
+      loading: 'loading your slates...',
+      locked: 'unlock your account (enter your password/pin) before sharing, so your slates can be decrypted in this browser.',
+      loadError: 'could not load sharing info.',
+      none: 'you have no private slates to share. published slates are already readable via the public scope.',
+      untitled: 'untitled',
+      share: 'share',
+      shared: 'shared',
+      working: '...',
+      toggleError: 'could not update sharing. try again.',
+      note: 'revocable anytime',
+      done: 'done'
     },
     sessions: {
       title: 'sessions',
@@ -900,7 +917,19 @@ take care!
       },
       encryption: {
         title: 'encryption',
-        body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata — but it can never read private writing. private slates are returned as ciphertext only; justtype never hands out a user\'s password or key. treat this as an identity + published-content api.'
+        body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata. private writing stays encrypted — the server never sees plaintext or keys — unless the user explicitly delegates specific slates to your app (see private slates). even then, justtype never hands out a password or master key; it only stores blobs it cannot read.'
+      },
+      delegation: {
+        title: 'private slates',
+        body: 'with the slates:read:private scope plus a registered public key, a user can choose to share specific private slates with your app. it works by key delegation: in the user\'s browser, each chosen slate is re-encrypted under a fresh content key, and that key is wrapped to your public key. justtype only stores the wrapped blobs — it still cannot read them. you decrypt with your private key.',
+        steps: [
+          'register your app with the slates:read:private scope — /dev generates an rsa keypair and shows you the private key once.',
+          'request the scope in your oauth flow as usual; the user approves.',
+          'the user opens their justtype account → connected apps → share, and picks which private slates to share with you.',
+          'GET /api/oauth/slates/:n returns { wrapped_key, enc_content, enc_title } for shared slates (delegated: true).',
+          'unwrap the content key with your private key, then aes-256-gcm decrypt the content and title.'
+        ],
+        note: 'sharing is per-slate and revocable: the user (or revoking your app) deletes the blobs and future reads stop. edits re-sync automatically while a slate stays shared.'
       },
       scopes: { title: 'scopes' },
       flow: {
@@ -959,7 +988,10 @@ take care!
       copyHint: 'click to copy client id',
       secretTitle: 'save your client secret',
       secretBody: 'this is shown once and cannot be retrieved later. store it somewhere safe.',
-      secretDismiss: 'done, i saved it'
+      secretDismiss: 'done, i saved it',
+      keyTitle: 'save your private key',
+      keyBody: 'this app can read private slates users share with it. we generated a keypair in your browser and registered the public half. this private key is shown once — store it in your app (e.g. an env var) and never commit it. it is what decrypts shared slates.',
+      keyDownload: 'download .pem'
     },
     errors: {
       nameRequired: 'app name is required.',

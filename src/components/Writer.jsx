@@ -3,9 +3,33 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
+
+// Live re-sync: if this slate has been delegated to any third-party apps, re-wrap
+// the just-saved plaintext to each app's public key so they always see the latest.
+// Best-effort and non-blocking; the server only ever stores opaque blobs.
+async function resyncSharedGrants(slateNumber, content, title) {
+  try {
+    const res = await fetch(`${API_URL}/account/slate-grants/by-slate/${encodeURIComponent(slateNumber)}`, { credentials: 'include' });
+    if (!res.ok) return;
+    const apps = await res.json();
+    if (!Array.isArray(apps) || apps.length === 0) return;
+    for (const app of apps) {
+      try {
+        const pub = await importAppPublicKey(app.public_key);
+        const grant = await reencryptForApp(content, title, pub);
+        await fetch(`${API_URL}/account/slate-grants`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ client_id: app.client_id, slate_number: slateNumber, ...grant })
+        });
+      } catch (e) { console.warn('grant re-sync failed for', app.client_id, e); }
+    }
+  } catch { /* best-effort */ }
+}
 
 export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
   const [content, setContent] = useState('');
@@ -807,6 +831,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       lastSavedContentRef.current = JSON.stringify({ content });
       setHasUnsavedChanges(false);
+
+      // Keep any third-party shares of this slate in sync with the new content.
+      if (slateKey) {
+        const slateNumber = currentSlate ? currentSlate.slate_number : data.slate_number;
+        if (slateNumber != null) resyncSharedGrants(slateNumber, content, titleToSave);
+      }
 
       // Clear local draft since content is now saved to server
       localStorage.removeItem('justtype-draft');
