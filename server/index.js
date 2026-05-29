@@ -431,6 +431,21 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false // Allow embedding for public slates
 }));
 
+// Override CSP for OAuth consent screens AFTER helmet so it takes precedence.
+// These are server-rendered pages outside the React SPA that need:
+// 1. 'unsafe-inline' scripts — the login form uses an inline fetch() handler.
+// 2. form-action * — Chrome enforces form-action across 302 redirects. The
+//    /decide endpoint redirects to the app's redirect_uri (any https host),
+//    so 'self' blocks every successful authorization. Security comes from the
+//    server-side redirect_uri allowlist, not from CSP here.
+app.use('/oauth', (req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; form-action *; frame-ancestors 'none'; base-uri 'self';"
+  );
+  next();
+});
+
 // Stripe webhook handler - MUST be before express.json() to preserve raw body for signature verification
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe) {
