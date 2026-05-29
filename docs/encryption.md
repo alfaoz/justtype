@@ -4,13 +4,7 @@ a technical walkthrough of justtype's encryption system.
 
 ## overview
 
-justtype has two encryption modes: a legacy server-side mode and a newer end-to-end (e2e) mode where the server never sees plaintext. new accounts are created in e2e mode by default. legacy users are migrated to e2e on their next login.
-
-in e2e mode, all encryption and decryption happens in the browser using the web crypto api. the server only ever stores and shuttles opaque ciphertext. it never sees your password-derived key or your plaintext content.
-
-in legacy mode, the server derives the encryption key and handles encrypt/decrypt operations. this is encrypted-at-rest, not zero-knowledge. it protects against database or storage breaches, but not against a compromised server or a nosy operator. legacy mode exists only as a transitional state for users who haven't logged in since the e2e migration was shipped.
-
-the user base is 5 people, so the "migration" is less of a migration and more of a group chat message saying "hey log in again."
+all encryption and decryption happens in the browser using the web crypto api. the server only ever stores and shuttles opaque ciphertext. it never sees your password-derived key or your plaintext content.
 
 ## zero-knowledge end-to-end encryption
 
@@ -32,7 +26,7 @@ random slate key -> AES-256-GCM encrypt with wrapping key -> wrapped_key (stored
 1. client encrypts content with the slate key using aes-256-gcm (web crypto api)
 2. client sends the encrypted blob (base64) to the server
 3. server uploads the opaque blob to b2 via `uploadRawSlate()`, never touching the plaintext
-4. server rejects plaintext content from e2e users (`E2E_PLAINTEXT_REJECTED`)
+4. server rejects plaintext content (`E2E_PLAINTEXT_REJECTED`)
 
 ### loading a slate
 
@@ -46,21 +40,9 @@ the raw slate key is stored in the browser's indexeddb (`src/keyStore.js`), scop
 
 `src/crypto.js` handles all cryptographic operations client-side: key derivation (`deriveKey`), key wrapping/unwrapping (`wrapKey`/`unwrapKey`), content encryption/decryption (`encryptContent`/`decryptContent`), and recovery phrase generation. all using the web crypto api.
 
-## legacy encryption (deprecated)
-
-in legacy mode, the server derives the encryption key from the user's password during login:
-
-```
-password + encryption_salt -> PBKDF2-SHA256 (100k iterations) -> 256-bit encryption key
-```
-
-the derived key is cached server-side in memory for 24 hours (`encryptionKeyCache` in `server/index.js`). encryption and decryption happen in `server/b2Storage.js` using node's `crypto` module. the server sees plaintext content during every save and load.
-
-this is **not zero-knowledge**. it's encrypted-at-rest. legacy encryption will be removed once the 5 users that still haven't migrated, migrates.
-
 ## encryption format
 
-both modes use the same binary format for encrypted blobs on b2:
+encrypted blobs stored on b2 use the following binary format:
 
 ```
 | IV (16 bytes) | Auth Tag (16 bytes) | Ciphertext (variable) |
@@ -69,8 +51,6 @@ both modes use the same binary format for encrypted blobs on b2:
 - **iv**: random 16-byte initialization vector, unique per encryption operation
 - **auth tag**: 16-byte gcm authentication tag, ensures integrity and authenticity
 - **ciphertext**: aes-256-gcm encrypted content (utf-8 encoded)
-
-the format is identical between client and server implementations so that migrated slates don't need to be re-encrypted.
 
 ## three-state publishing
 
@@ -82,10 +62,7 @@ slates have three publish states tracked by `is_published` in the database:
 | published | `1` | encrypted blob (private) + separate unencrypted blob (public) with a `share_id` |
 | republish pending | `2` | public copy deleted, needs re-upload on next publish |
 
-publishing inherently means making content readable, so a plaintext copy is created:
-
-- **e2e users**: the client decrypts locally, then sends the plaintext `publicContent` to the server for the public copy
-- **legacy users**: the server decrypts using the cached key
+publishing inherently means making content readable, so a plaintext copy is created. the client decrypts locally, then sends the plaintext `publicContent` to the server for the public copy.
 
 unpublishing deletes the public b2 file and sets `is_published = 0`. the encrypted private copy is untouched.
 
@@ -152,9 +129,9 @@ the github actions workflow is auditable: it runs `npm ci && npm run build` on t
 
 | file | what it does |
 |------|-------------|
-| `server/index.js` | api routes, e2e/legacy routing, encryption key cache (legacy) |
-| `server/b2Storage.js` | b2 upload/download, server-side aes-256-gcm (legacy), raw blob passthrough (e2e) |
-| `server/database.js` | schema with encryption_salt, wrapped_key, e2e_migrated columns |
+| `server/index.js` | api routes, e2e routing |
+| `server/b2Storage.js` | b2 upload/download, raw blob passthrough |
+| `server/database.js` | schema with encryption_salt, wrapped_key columns |
 | `src/crypto.js` | client-side web crypto api: deriveKey, wrapKey, unwrapKey, encryptContent, decryptContent |
 | `src/keyStore.js` | indexeddb key storage for slate keys |
 | `src/bip39-wordlist.js` | bip39 wordlist for recovery phrase generation |
