@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 
@@ -206,13 +206,17 @@ const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'te
 function Shell({ children }) {
   return (
     <div className="min-h-screen bg-[#111111] text-[#d4d4d4] overflow-y-auto">
-      <header className="border-b border-[#222] sticky top-0 bg-[#111111] z-20">
-        <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
-          <a href="/" className="text-sm text-[#808080] hover:text-white transition-colors">← justtype</a>
-          <span className="text-[11px] tracking-[0.2em] uppercase text-[#666]">developers</span>
+      <header className="border-b border-[#222] sticky top-0 bg-[#111111] z-30">
+        <div className="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between">
+          <div className="flex items-baseline gap-3">
+            <a href="/" className="text-sm text-[#808080] hover:text-white transition-colors">← justtype</a>
+            <span className="text-[#333]">/</span>
+            <span className="text-sm text-white">developers</span>
+          </div>
+          <span className="text-[11px] tracking-[0.2em] uppercase text-[#666]">api v1</span>
         </div>
       </header>
-      <main className="max-w-3xl mx-auto px-5 py-10">{children}</main>
+      <main className="max-w-5xl mx-auto px-5 py-10">{children}</main>
     </div>
   );
 }
@@ -396,6 +400,7 @@ export function DevPortal({ token, username, onLogin }) {
 
       {tab === 'docs' && <DocsTab onWizard={() => setTab('wizard')} />}
       {tab === 'apps' && (
+        <div className="max-w-2xl">
         <AppsTab
           apps={apps} loadingApps={loadingApps} showCreate={showCreate} setShowCreate={setShowCreate}
           name={name} setName={setName} website={website} setWebsite={setWebsite}
@@ -405,90 +410,140 @@ export function DevPortal({ token, username, onLogin }) {
           newSecret={newSecret} dismissSecret={() => setNewSecret(null)}
           goWizard={() => setTab('wizard')}
         />
+        </div>
       )}
       {tab === 'wizard' && (
+        <div className="max-w-2xl">
         <WizardTab
           apps={apps} wizStep={wizStep} setWizStep={setWizStep}
           wizAppId={wizAppId} setWizAppId={setWizAppId} wizLang={wizLang} setWizLang={setWizLang}
           goApps={() => setTab('apps')}
         />
+        </div>
       )}
     </Shell>
   );
 }
 
+const DOC_SECTIONS = ['intro', 'quickstart', 'scopes', 'endpoints', 'tokens', 'encryption'];
+
 function DocsTab({ onWizard }) {
   const d = strings.dev.docs;
+  const [active, setActive] = useState('intro');
+  const observerRef = useRef(null);
+
+  const navItems = [
+    ['intro', d.what.title],
+    ['quickstart', d.quickstart.title],
+    ['scopes', d.scopes.title],
+    ['endpoints', d.endpoints.title],
+    ['tokens', d.tokens.title],
+    ['encryption', d.encryption.title]
+  ];
+
+  useEffect(() => {
+    const els = DOC_SECTIONS.map((id) => document.getElementById(id)).filter(Boolean);
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((e) => { if (e.isIntersecting) setActive(e.target.id); });
+    }, { rootMargin: '-72px 0px -65% 0px', threshold: 0 });
+    els.forEach((el) => obs.observe(el));
+    observerRef.current = obs;
+    return () => obs.disconnect();
+  }, []);
+
+  const quickstartCode = genNode('YOUR_CLIENT_ID', 'https://yourapp.com/callback', 'identity email');
+
   return (
-    <div className="space-y-10 text-sm leading-relaxed">
-      <section>
-        <h2 className="text-lg text-white mb-2">{d.what.title}</h2>
-        <p className="text-[#a0a0a0]">{d.what.body}</p>
-      </section>
-
-      <section className="bg-[#1a1a1a] border border-[#333] border-l-2 border-l-blue-400 rounded-xl p-5">
-        <h2 className="text-white mb-2 flex items-center gap-2">
-          <span className="text-blue-400">◆</span>{d.encryption.title}
-        </h2>
-        <p className="text-[#a0a0a0]">{d.encryption.body}</p>
-      </section>
-
-      <section>
-        <h2 className="text-lg text-white mb-4">{d.scopes.title}</h2>
-        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl px-5 divide-y divide-[#222]">
-          {SCOPE_OPTIONS.map(([id, label]) => (
-            <div key={id} className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4 py-3">
-              <code className="text-blue-400 text-xs shrink-0 sm:w-44">{id}</code>
-              <span className="text-[#a0a0a0]">{label}</span>
-            </div>
-          ))}
+    <div className="grid md:grid-cols-[180px_minmax(0,1fr)] gap-10 lg:gap-14">
+      <nav className="hidden md:block">
+        <div className="sticky top-20">
+          <div className="text-[11px] uppercase tracking-wider text-[#666] mb-3 px-3">{d.onThisPage}</div>
+          <div className="space-y-0.5 border-l border-[#222]">
+            {navItems.map(([id, label]) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                onClick={() => setActive(id)}
+                className={`block pl-3 -ml-px py-1.5 border-l text-sm transition-colors ${
+                  active === id
+                    ? 'border-white text-white'
+                    : 'border-transparent text-[#808080] hover:text-[#d4d4d4]'
+                }`}
+              >
+                {label}
+              </a>
+            ))}
+          </div>
         </div>
-      </section>
+      </nav>
 
-      <section>
-        <h2 className="text-lg text-white mb-4">{d.flow.title}</h2>
-        <ol className="space-y-3">
-          {d.flow.steps.map((s, i) => (
-            <li key={i} className="flex gap-3.5">
-              <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
-              <span className="text-[#a0a0a0]">{s}</span>
-            </li>
-          ))}
-        </ol>
-      </section>
+      <div className="min-w-0 text-sm leading-relaxed space-y-14 pb-20">
+        <section id="intro" className="scroll-mt-20">
+          <h2 className="text-2xl text-white tracking-tight mb-3">{d.what.title}</h2>
+          <p className="text-[#a0a0a0]">{d.what.body}</p>
+        </section>
 
-      <section>
-        <h2 className="text-lg text-white mb-4">{d.endpoints.title}</h2>
-        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
-          {d.endpoints.list.map(([method, path, desc], i) => (
-            <div key={i} className="px-5 py-3 font-mono text-xs">
-              <div className="flex items-baseline gap-3">
-                <span className={`font-semibold w-12 shrink-0 ${METHOD_COLOR[method] || 'text-[#a0a0a0]'}`}>{method}</span>
-                <code className="text-[#d4d4d4] break-all">{path}</code>
+        <section id="quickstart" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-3">{d.quickstart.title}</h2>
+          <p className="text-[#a0a0a0] mb-5">{d.quickstart.body}</p>
+          <ol className="space-y-3 mb-6">
+            {d.flow.steps.map((s, i) => (
+              <li key={i} className="flex gap-3.5">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+                <span className="text-[#a0a0a0]">{s}</span>
+              </li>
+            ))}
+          </ol>
+          <CodeBlock code={quickstartCode} />
+          <button onClick={onWizard} className="mt-4 w-full text-left bg-[#1a1a1a] border border-[#333] rounded-xl px-4 py-3 hover:bg-[#222] transition-colors group flex items-center justify-between">
+            <span className="text-[#d4d4d4] text-sm">{strings.dev.docs.wizardHint}</span>
+            <span className="text-[#666] group-hover:text-white transition-colors">→</span>
+          </button>
+        </section>
+
+        <section id="scopes" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-4">{d.scopes.title}</h2>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl px-5 divide-y divide-[#222]">
+            {SCOPE_OPTIONS.map(([id, label]) => (
+              <div key={id} className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4 py-3">
+                <code className="text-blue-400 text-xs shrink-0 sm:w-44">{id}</code>
+                <span className="text-[#a0a0a0]">{label}</span>
               </div>
-              <div className="text-[#666] pl-[3.75rem] mt-1">{desc}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
 
-      <section>
-        <h2 className="text-lg text-white mb-3">{d.tokens.title}</h2>
-        <ul className="space-y-2">
-          {d.tokens.points.map((p, i) => (
-            <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
-              <span className="text-[#666] shrink-0">—</span><span>{p}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+        <section id="endpoints" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-4">{d.endpoints.title}</h2>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
+            {d.endpoints.list.map(([method, path, desc], i) => (
+              <div key={i} className="px-5 py-3 font-mono text-xs">
+                <div className="flex items-baseline gap-3">
+                  <span className={`font-semibold w-12 shrink-0 ${METHOD_COLOR[method] || 'text-[#a0a0a0]'}`}>{method}</span>
+                  <code className="text-[#d4d4d4] break-all">{path}</code>
+                </div>
+                <div className="text-[#666] pl-[3.75rem] mt-1">{desc}</div>
+              </div>
+            ))}
+          </div>
+        </section>
 
-      <button onClick={onWizard} className="w-full text-left bg-[#1a1a1a] border border-[#333] rounded-xl p-4 hover:bg-[#222] transition-colors group">
-        <div className="flex items-center justify-between">
-          <span className="text-[#d4d4d4] text-sm">{strings.dev.docs.wizardHint}</span>
-          <span className="text-[#666] group-hover:text-white transition-colors">→</span>
-        </div>
-      </button>
+        <section id="tokens" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-3">{d.tokens.title}</h2>
+          <ul className="space-y-2">
+            {d.tokens.points.map((p, i) => (
+              <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
+                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section id="encryption" className="scroll-mt-20">
+          <h2 className="text-xl text-white tracking-tight mb-3">{d.encryption.title}</h2>
+          <p className="text-[#a0a0a0]">{d.encryption.body}</p>
+        </section>
+      </div>
     </div>
   );
 }

@@ -889,12 +889,17 @@ take care!
       private: 'download private slates — delivered encrypted only'
     },
     docs: {
+      onThisPage: 'on this page',
       what: {
-        title: 'what this is',
-        body: 'a standard oauth 2.0 authorization-code flow with PKCE — the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their public content.'
+        title: 'introduction',
+        body: 'justtype provides a standard oauth 2.0 authorization-code flow with PKCE — the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their content. this page is the full reference; the wizard generates ready-to-paste code.'
+      },
+      quickstart: {
+        title: 'quickstart',
+        body: 'a working "sign in with justtype" takes five steps. below is the server-side (node) shape — the wizard fills in your real client_id, redirect, and scopes for node, browser, python, or curl.'
       },
       encryption: {
-        title: 'the one rule',
+        title: 'encryption',
         body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata — but it can never read private writing. private slates are returned as ciphertext only; justtype never hands out a user\'s password or key. treat this as an identity + published-content api.'
       },
       scopes: { title: 'scopes' },
