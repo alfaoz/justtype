@@ -10,6 +10,7 @@ const { customAlphabet } = require('nanoid');
 const db = require('./database');
 const b2Storage = require('./b2Storage');
 const b2Monitor = require('./b2Monitor');
+const { mountOAuth } = require('./oauth');
 const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
 const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogger');
@@ -382,24 +383,31 @@ const migrateUserEncryption = async (userId, password, encryptionSalt) => {
 };
 
 // CORS configuration - allow our domain and CLI requests
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (CLI, mobile apps, curl, etc.)
-    if (!origin) {
-      return callback(null, true);
-    }
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
 
-    const allowedOrigins = process.env.NODE_ENV === 'production'
-      ? ['https://justtype.io', 'https://www.justtype.io']
-      : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'];
+  // Public OAuth endpoints are meant to be called cross-origin by third-party
+  // apps (SPAs, etc.). They use the Authorization header, not cookies, so we
+  // reflect any origin without credentials. Everything else uses the allowlist.
+  const path = req.path || req.originalUrl || '';
+  if (path === '/oauth/token' || path === '/oauth/revoke' || path.startsWith('/api/oauth/')) {
+    return callback(null, { origin: true, credentials: false });
+  }
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+  // Allow requests with no origin (CLI, mobile apps, curl, etc.)
+  if (!origin) {
+    return callback(null, { origin: true, credentials: true });
+  }
 
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true // Required for HttpOnly cookies
+  const allowedOrigins = process.env.NODE_ENV === 'production'
+    ? ['https://justtype.io', 'https://www.justtype.io']
+    : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'];
+
+  if (allowedOrigins.includes(origin)) {
+    return callback(null, { origin: true, credentials: true });
+  }
+
+  callback(new Error('Not allowed by CORS'));
 }));
 
 // Cookie parser for HttpOnly auth cookies
@@ -965,6 +973,12 @@ const authenticateToken = (req, res, next) => {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
 
+    // OAuth access tokens are scoped third-party tokens and must never act as a
+    // full session. They are not in the sessions table, but reject explicitly too.
+    if (user && user.oauth) {
+      return res.status(401).json({ error: 'OAuth tokens cannot be used here', code: 'OAUTH_TOKEN_REJECTED' });
+    }
+
     // Check if session exists in database and update last activity
     try {
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -1027,6 +1041,13 @@ const requireEncryptionKey = (req, res, next) => {
   req.encryptionKey = encryptionKey;
   next();
 };
+
+// ============ OAUTH PROVIDER (third-party "sign in with justtype") ============
+mountOAuth(app, {
+  db, jwt, JWT_SECRET, crypto, b2Storage,
+  authenticateToken,
+  isProduction: process.env.NODE_ENV === 'production'
+});
 
 // ============ AUTH ROUTES ============
 

@@ -414,6 +414,60 @@ try {
   `);
   console.log('✓ CLI device codes table initialized');
 
+  // OAuth 2.0 provider tables (third-party "sign in with justtype")
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT UNIQUE NOT NULL,
+      client_secret_hash TEXT,
+      name TEXT NOT NULL,
+      website TEXT,
+      redirect_uris TEXT NOT NULL,
+      allowed_scopes TEXT NOT NULL,
+      is_confidential INTEGER DEFAULT 0,
+      owner_user_id INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      code_challenge TEXT NOT NULL,
+      code_challenge_method TEXT NOT NULL DEFAULT 'S256',
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      access_token_hash TEXT UNIQUE NOT NULL,
+      refresh_token_hash TEXT UNIQUE,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      scope TEXT NOT NULL,
+      access_expires_at INTEGER NOT NULL,
+      refresh_expires_at INTEGER,
+      revoked INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      last_used_at INTEGER,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_oauth_codes_code ON oauth_codes(code);
+    CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires_at ON oauth_codes(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_access ON oauth_tokens(access_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client_user ON oauth_tokens(client_id, user_id);
+  `);
+  console.log('✓ OAuth provider tables initialized');
+
   // Drop old empty announcement tables if they exist
   db.exec(`DROP TABLE IF EXISTS announcement_reads;`);
   db.exec(`DROP TABLE IF EXISTS announcements;`);

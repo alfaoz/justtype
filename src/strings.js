@@ -371,6 +371,46 @@ const strings = {
       success: 'password changed successfully',
       recoveryKeyRegenerated: 'your recovery key has been regenerated. your previous recovery key no longer works.'
     },
+    connectedApps: {
+      title: 'connected apps',
+      loading: 'loading...',
+      empty: 'no third-party apps have access to your account.',
+      description: 'apps you authorized to sign in with justtype. they can never read your private slates — those stay encrypted.',
+      canAccess: 'can access',
+      revoke: 'revoke',
+      revoking: 'revoking...'
+    },
+    developerApps: {
+      title: 'developer apps',
+      loading: 'loading...',
+      description: 'build "sign in with justtype" into your own app. register one here to get a client id, then follow the docs.',
+      createButton: '+ register an app',
+      namePlaceholder: 'app name',
+      websitePlaceholder: 'website (optional)',
+      redirectsPlaceholder: 'redirect uris (one per line)\nhttps://yourapp.com/callback',
+      scopesLabel: 'scopes',
+      scopeLabels: {
+        identity: 'identity — confirm username',
+        email: 'email — verified email address',
+        public: 'published slates — read public posts',
+        meta: 'slate metadata — list, counts, dates',
+        private: 'private slates — delivered encrypted only'
+      },
+      redirectsLabel: 'redirects',
+      create: 'create app',
+      creating: 'creating...',
+      cancel: 'cancel',
+      delete: 'delete',
+      deleting: 'deleting...',
+      copyHint: 'click to copy client id',
+      copied: 'copied!',
+      errors: {
+        nameRequired: 'app name is required.',
+        redirectRequired: 'at least one redirect uri is required.',
+        scopeRequired: 'select at least one scope.',
+        createFailed: 'could not create app. check your redirect uris (https only).'
+      }
+    },
     sessions: {
       title: 'sessions',
       loading: 'loading sessions...',

@@ -97,6 +97,26 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
 
+  // Connected (authorized third-party) apps
+  const [connectedApps, setConnectedApps] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(true);
+  const [showConnectedApps, setShowConnectedApps] = useState(false);
+  const [revokingApp, setRevokingApp] = useState(null);
+
+  // Developer apps (oauth clients you own)
+  const [developerApps, setDeveloperApps] = useState([]);
+  const [loadingDevApps, setLoadingDevApps] = useState(true);
+  const [showDeveloperApps, setShowDeveloperApps] = useState(false);
+  const [showCreateApp, setShowCreateApp] = useState(false);
+  const [appName, setAppName] = useState('');
+  const [appWebsite, setAppWebsite] = useState('');
+  const [appRedirects, setAppRedirects] = useState('');
+  const [appScopes, setAppScopes] = useState(['identity']);
+  const [creatingApp, setCreatingApp] = useState(false);
+  const [createAppError, setCreateAppError] = useState('');
+  const [deletingApp, setDeletingApp] = useState(null);
+  const [copiedClientId, setCopiedClientId] = useState(null);
+
   useEffect(() => {
     return () => {
       if (exportConfirmTimeoutRef.current) {
@@ -110,6 +130,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
     if (token) {
       loadSessions();
       loadStorage();
+      loadConnectedApps();
+      loadDeveloperApps();
     }
 
     // Check for Google link/unlink callback
@@ -149,6 +171,142 @@ export function Account({ token, username, userId, email, emailVerified, authPro
     } finally {
       setLoadingSessions(false);
     }
+  };
+
+  const loadConnectedApps = async () => {
+    setLoadingApps(true);
+    try {
+      const response = await fetch(`${API_URL}/account/connected-apps`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setConnectedApps(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error('Failed to load connected apps:', err);
+    } finally {
+      setLoadingApps(false);
+    }
+  };
+
+  const revokeConnectedApp = async (clientId) => {
+    setRevokingApp(clientId);
+    try {
+      const response = await fetch(`${API_URL}/account/connected-apps/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ client_id: clientId })
+      });
+      if (response.ok) {
+        setConnectedApps((apps) => apps.filter((a) => a.client_id !== clientId));
+      }
+    } catch (err) {
+      console.error('Failed to revoke app:', err);
+    } finally {
+      setRevokingApp(null);
+    }
+  };
+
+  const loadDeveloperApps = async () => {
+    setLoadingDevApps(true);
+    try {
+      const response = await fetch(`${API_URL}/oauth/clients`, {
+        credentials: 'include'
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setDeveloperApps(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error('Failed to load developer apps:', err);
+    } finally {
+      setLoadingDevApps(false);
+    }
+  };
+
+  const toggleAppScope = (scope) => {
+    setAppScopes((prev) =>
+      prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]
+    );
+  };
+
+  const createDeveloperApp = async (e) => {
+    e.preventDefault();
+    setCreateAppError('');
+
+    const redirect_uris = appRedirects
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!appName.trim()) {
+      setCreateAppError(strings.account.developerApps.errors.nameRequired);
+      return;
+    }
+    if (redirect_uris.length === 0) {
+      setCreateAppError(strings.account.developerApps.errors.redirectRequired);
+      return;
+    }
+    if (appScopes.length === 0) {
+      setCreateAppError(strings.account.developerApps.errors.scopeRequired);
+      return;
+    }
+
+    setCreatingApp(true);
+    try {
+      const response = await fetch(`${API_URL}/oauth/clients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: appName.trim(),
+          website: appWebsite.trim() || undefined,
+          redirect_uris,
+          scopes: appScopes
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setShowCreateApp(false);
+        setAppName('');
+        setAppWebsite('');
+        setAppRedirects('');
+        setAppScopes(['identity']);
+        loadDeveloperApps();
+      } else {
+        setCreateAppError(data.error || strings.account.developerApps.errors.createFailed);
+      }
+    } catch (err) {
+      setCreateAppError(strings.account.developerApps.errors.createFailed);
+    } finally {
+      setCreatingApp(false);
+    }
+  };
+
+  const deleteDeveloperApp = async (clientId) => {
+    setDeletingApp(clientId);
+    try {
+      const response = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(clientId)}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      if (response.ok) {
+        setDeveloperApps((apps) => apps.filter((a) => a.client_id !== clientId));
+      }
+    } catch (err) {
+      console.error('Failed to delete app:', err);
+    } finally {
+      setDeletingApp(null);
+    }
+  };
+
+  const copyClientId = (clientId) => {
+    navigator.clipboard?.writeText(clientId).then(() => {
+      setCopiedClientId(clientId);
+      setTimeout(() => setCopiedClientId(null), 1500);
+    }).catch(() => {});
   };
 
   const toggleIpTracking = async () => {
@@ -1365,6 +1523,173 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       {loggingOutAll ? 'logging out...' : 'sign out everywhere'}
                     </button>
                   </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Connected Apps Section */}
+          <div className="border border-[#333] rounded">
+            <button
+              onClick={() => setShowConnectedApps(!showConnectedApps)}
+              className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
+            >
+              <span>{strings.account.connectedApps.title} {!loadingApps && connectedApps.length > 0 && `(${connectedApps.length})`}</span>
+              <span className="text-[#666]">{showConnectedApps ? '−' : '+'}</span>
+            </button>
+            {showConnectedApps && (
+              <div className="p-4 border-t border-[#333]">
+                {loadingApps ? (
+                  <p className="text-[#666] text-sm">{strings.account.connectedApps.loading}</p>
+                ) : connectedApps.length === 0 ? (
+                  <p className="text-[#666] text-sm">{strings.account.connectedApps.empty}</p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-[#666]">{strings.account.connectedApps.description}</p>
+                    {connectedApps.map((app) => (
+                      <div key={app.client_id} className="p-3 rounded text-sm bg-[#111]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-white">{app.name}</span>
+                          <button
+                            onClick={() => revokeConnectedApp(app.client_id)}
+                            disabled={revokingApp === app.client_id}
+                            className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50"
+                          >
+                            {revokingApp === app.client_id ? strings.account.connectedApps.revoking : strings.account.connectedApps.revoke}
+                          </button>
+                        </div>
+                        {app.website && (
+                          <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-[#888] break-all">{app.website}</a>
+                        )}
+                        <div className="text-xs text-[#666] mt-1">
+                          {strings.account.connectedApps.canAccess}: {app.scopes.join(', ')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Developer Apps Section */}
+          <div className="border border-[#333] rounded">
+            <button
+              onClick={() => setShowDeveloperApps(!showDeveloperApps)}
+              className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
+            >
+              <span>{strings.account.developerApps.title} {!loadingDevApps && developerApps.length > 0 && `(${developerApps.length})`}</span>
+              <span className="text-[#666]">{showDeveloperApps ? '−' : '+'}</span>
+            </button>
+            {showDeveloperApps && (
+              <div className="p-4 border-t border-[#333] space-y-3">
+                <p className="text-xs text-[#666]">{strings.account.developerApps.description}</p>
+
+                {loadingDevApps ? (
+                  <p className="text-[#666] text-sm">{strings.account.developerApps.loading}</p>
+                ) : (
+                  <>
+                    {developerApps.map((app) => (
+                      <div key={app.client_id} className="p-3 rounded text-sm bg-[#111]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-white">{app.name}</span>
+                          <button
+                            onClick={() => deleteDeveloperApp(app.client_id)}
+                            disabled={deletingApp === app.client_id}
+                            className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50"
+                          >
+                            {deletingApp === app.client_id ? strings.account.developerApps.deleting : strings.account.developerApps.delete}
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => copyClientId(app.client_id)}
+                          className="mt-1 font-mono text-xs text-[#888] hover:text-white break-all text-left"
+                          title={strings.account.developerApps.copyHint}
+                        >
+                          {app.client_id} {copiedClientId === app.client_id ? `· ${strings.account.developerApps.copied}` : ''}
+                        </button>
+                        <div className="text-xs text-[#666] mt-1">
+                          {strings.account.developerApps.scopesLabel}: {app.scopes.join(', ')}
+                        </div>
+                        <div className="text-xs text-[#666] mt-0.5 break-all">
+                          {strings.account.developerApps.redirectsLabel}: {app.redirect_uris.join(', ')}
+                        </div>
+                      </div>
+                    ))}
+
+                    {!showCreateApp ? (
+                      <button
+                        onClick={() => { setShowCreateApp(true); setCreateAppError(''); }}
+                        className="text-sm text-white border border-[#333] rounded px-4 py-2 hover:bg-[#1a1a1a] transition-colors"
+                      >
+                        {strings.account.developerApps.createButton}
+                      </button>
+                    ) : (
+                      <form onSubmit={createDeveloperApp} className="space-y-3 border-t border-[#333] pt-3">
+                        <input
+                          type="text"
+                          value={appName}
+                          onChange={(e) => setAppName(e.target.value)}
+                          placeholder={strings.account.developerApps.namePlaceholder}
+                          maxLength={80}
+                          className="w-full bg-[#111] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={appWebsite}
+                          onChange={(e) => setAppWebsite(e.target.value)}
+                          placeholder={strings.account.developerApps.websitePlaceholder}
+                          className="w-full bg-[#111] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                        />
+                        <textarea
+                          value={appRedirects}
+                          onChange={(e) => setAppRedirects(e.target.value)}
+                          placeholder={strings.account.developerApps.redirectsPlaceholder}
+                          rows={2}
+                          className="w-full bg-[#111] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm font-mono"
+                        />
+                        <div>
+                          <p className="text-xs text-[#666] mb-2">{strings.account.developerApps.scopesLabel}</p>
+                          <div className="space-y-1.5">
+                            {[
+                              ['identity', strings.account.developerApps.scopeLabels.identity],
+                              ['email', strings.account.developerApps.scopeLabels.email],
+                              ['slates:read:public', strings.account.developerApps.scopeLabels.public],
+                              ['slates:read:meta', strings.account.developerApps.scopeLabels.meta],
+                              ['slates:read:private', strings.account.developerApps.scopeLabels.private]
+                            ].map(([scope, label]) => (
+                              <label key={scope} className="flex items-start gap-2 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={appScopes.includes(scope)}
+                                  onChange={() => toggleAppScope(scope)}
+                                  className="w-4 h-4 mt-0.5 rounded border-[#666] bg-[#111] text-blue-500 focus:ring-0"
+                                />
+                                <span className="text-[#a0a0a0]">{label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        {createAppError && <p className="text-red-400 text-xs">{createAppError}</p>}
+                        <div className="flex gap-3">
+                          <button
+                            type="submit"
+                            disabled={creatingApp}
+                            className="bg-white text-black px-4 py-2 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                          >
+                            {creatingApp ? strings.account.developerApps.creating : strings.account.developerApps.create}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setShowCreateApp(false); setCreateAppError(''); }}
+                            className="border border-[#333] text-white px-4 py-2 rounded hover:bg-[#333] transition-colors text-sm"
+                          >
+                            {strings.account.developerApps.cancel}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </>
                 )}
               </div>
             )}
