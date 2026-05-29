@@ -20,7 +20,10 @@ const SCOPES = {
   'email': 'see your verified email address',
   'slates:read:public': 'read your published slates (title and full text)',
   'slates:read:meta': 'see your slate list, counts, and dates (private titles stay encrypted)',
-  'slates:read:private': 'read private slates you choose to share with it (you pick which ones; revocable anytime)'
+  'slates:read:private': 'read private slates you choose to share with it (you pick which ones; revocable anytime)',
+  'slates:write': 'create and edit published slates on your behalf',
+  'slates:delete': 'delete slates on your behalf',
+  'slates:publish': 'publish and unpublish slates on your behalf'
 };
 
 const ACCESS_TTL = 3600;            // 1 hour
@@ -29,7 +32,8 @@ const CODE_TTL = 60;                // 1 minute
 const CONSENT_TTL = 600;            // 10 minutes
 
 function mountOAuth(app, deps) {
-  const { db, jwt, JWT_SECRET, crypto, b2Storage, isProduction } = deps;
+  const { db, jwt, JWT_SECRET, crypto, b2Storage, isProduction,
+          generateUniqueShareId, checkStorageLimit, updateUserStorage } = deps;
 
   const now = () => Math.floor(Date.now() / 1000);
   const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -557,6 +561,252 @@ function mountOAuth(app, deps) {
       }
       res.json(out);
     } catch (e) {
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // ---- write operations --------------------------------------------------
+  //
+  // Apps can create/edit/delete/publish published (plaintext) slates.
+  // Private (E2E encrypted) content cannot be authored via the API because the
+  // server never holds the user's master key — plaintext never arrives at the
+  // server side. If slates:read:private + key delegation is in use, the app can
+  // edit a delegated private slate's content via PATCH /api/oauth/slates/:n/delegated.
+  //
+  // These endpoints mirror the logic in the corresponding authenticateToken routes
+  // and reuse the same helpers (generateUniqueShareId, checkStorageLimit,
+  // updateUserStorage) passed into mountOAuth.
+
+  const MAX_CONTENT = 5 * 1024 * 1024; // 5 MB
+
+  // A very light size guard used consistently across write paths.
+  const guardSize = (contentStr, res) => {
+    const bytes = Buffer.byteLength(contentStr, 'utf8');
+    if (bytes > MAX_CONTENT) {
+      res.status(413).json({ error: `Content too large (max 5 MB, got ${(bytes / 1024 / 1024).toFixed(2)} MB)` });
+      return null;
+    }
+    return bytes;
+  };
+
+  // POST /api/oauth/slates — create a new published slate.
+  // The slate is created in the published state (is_published = 1) with a fresh
+  // share_id so third-party tools can build on top of justtype's publishing model.
+  // Pass publish: false to create an unpublished (private, plaintext) slate; in
+  // that case it shows in the user's slate list but its content is readable by
+  // anyone with the right scope who can GET it.
+  app.post('/api/oauth/slates', publicCors, authenticateOAuth('slates:write'), async (req, res) => {
+    const { title = '', content = '', publish = true } = req.body || {};
+    if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' });
+    const sizeBytes = guardSize(content, res);
+    if (sizeBytes === null) return;
+
+    const storageCheck = checkStorageLimit(req.oauth.userId, sizeBytes);
+    if (!storageCheck.allowed) return res.status(413).json({ error: storageCheck.error });
+
+    try {
+      const slateId = `${req.oauth.userId}-oauth-${Date.now()}`;
+      const b2FileId = await b2Storage.uploadSlate(slateId, content, null); // unencrypted
+
+      let shareId = null, b2PublicFileId = null;
+      if (publish) {
+        shareId = generateUniqueShareId();
+        b2PublicFileId = b2FileId; // same file serves as public copy
+      }
+
+      const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+      const charCount = content.length;
+      const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.oauth.userId).next;
+
+      db.prepare(`INSERT INTO slates
+        (user_id, slate_number, title, b2_file_id, b2_public_file_id, word_count, char_count, size_bytes,
+         encryption_version, is_published, share_id, published_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(
+        req.oauth.userId, nextNumber, title || '', b2FileId, b2PublicFileId,
+        wordCount, charCount, sizeBytes,
+        publish ? 1 : 0, shareId, publish ? new Date().toISOString() : null
+      );
+
+      updateUserStorage(req.oauth.userId);
+
+      res.status(201).json({
+        slate_number: nextNumber,
+        title, word_count: wordCount, char_count: charCount,
+        is_published: !!publish, share_id: shareId,
+        share_url: shareId ? `${isProduction ? 'https://justtype.io' : 'http://localhost:3003'}/s/${shareId}` : null
+      });
+    } catch (e) {
+      console.error('oauth create slate:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // PUT /api/oauth/slates/:n — update the content/title of a published slate.
+  // Only works on plaintext (non-E2E) slates the user owns. Editing a published
+  // slate republishes it with the new content; editing an unpublished slate
+  // keeps it unpublished.
+  app.put('/api/oauth/slates/:n', publicCors, authenticateOAuth('slates:write'), async (req, res) => {
+    const { title, content } = req.body || {};
+    if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' });
+    const sizeBytes = guardSize(content, res);
+    if (sizeBytes === null) return;
+
+    try {
+      const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
+        .get(req.params.n, req.oauth.userId);
+      if (!slate) return res.status(404).json({ error: 'not_found' });
+      if (slate.encryption_version === 1 && !slate.is_system_slate) {
+        return res.status(403).json({ error: 'this slate is end-to-end encrypted — it cannot be edited via the api without key delegation. use PATCH /api/oauth/slates/:n/delegated for shared private slates.' });
+      }
+      if (slate.is_system_slate) return res.status(403).json({ error: 'system slates cannot be modified' });
+
+      const sizeDiff = sizeBytes - (slate.size_bytes || 0);
+      if (sizeDiff > 0) {
+        const check = checkStorageLimit(req.oauth.userId, sizeDiff);
+        if (!check.allowed) return res.status(413).json({ error: check.error });
+      }
+
+      const slateId = `${req.oauth.userId}-oauth-${Date.now()}`;
+      const b2FileId = await b2Storage.uploadSlate(slateId, content, null);
+
+      // If it was published, update the public copy in place.
+      let b2PublicFileId = slate.b2_public_file_id;
+      if (slate.is_published) {
+        b2PublicFileId = b2FileId; // same unencrypted file
+      }
+
+      const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+      const charCount = content.length;
+      const newTitle = title !== undefined ? title : (slate.title || '');
+
+      db.prepare(`UPDATE slates SET title = ?, b2_file_id = ?, b2_public_file_id = ?,
+        word_count = ?, char_count = ?, size_bytes = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE slate_number = ? AND user_id = ?`).run(
+        newTitle, b2FileId, b2PublicFileId,
+        wordCount, charCount, sizeBytes, req.params.n, req.oauth.userId
+      );
+
+      // Best-effort delete of old B2 files.
+      const toDelete = new Set([slate.b2_file_id, slate.b2_public_file_id].filter(Boolean));
+      toDelete.delete(b2FileId);
+      for (const id of toDelete) {
+        try { await b2Storage.deleteSlate(id); } catch { /* best-effort */ }
+      }
+
+      updateUserStorage(req.oauth.userId);
+      res.json({ success: true, word_count: wordCount, char_count: charCount, title: newTitle });
+    } catch (e) {
+      console.error('oauth update slate:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // PATCH /api/oauth/slates/:n/delegated — update a private slate the user has
+  // delegated to this app. The app sends new content encrypted under the existing
+  // content key (retrieved from the grant), which the server stores verbatim.
+  // The user's justtype client merges the change on next open.
+  app.patch('/api/oauth/slates/:n/delegated', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
+    const { enc_content, enc_title, word_count, char_count } = req.body || {};
+    if (!enc_content || typeof enc_content !== 'string') {
+      return res.status(400).json({ error: 'enc_content (base64 AES-256-GCM blob) required' });
+    }
+    if (enc_content.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'blob too large' });
+
+    try {
+      // Confirm a grant exists (app was delegated this slate).
+      const grant = db.prepare(
+        'SELECT wrapped_key FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
+      ).get(req.oauth.clientId, req.oauth.userId, req.params.n);
+      if (!grant) return res.status(403).json({ error: 'this slate has not been shared with your app' });
+
+      db.prepare(`UPDATE oauth_slate_grants SET enc_content = ?, enc_title = ?, updated_at = strftime('%s','now')
+        WHERE client_id = ? AND user_id = ? AND slate_number = ?`).run(
+        enc_content, enc_title || null,
+        req.oauth.clientId, req.oauth.userId, req.params.n
+      );
+
+      // Update word/char counts on the slate so the user sees fresh stats.
+      if (word_count != null || char_count != null) {
+        db.prepare('UPDATE slates SET word_count = COALESCE(?, word_count), char_count = COALESCE(?, char_count), updated_at = CURRENT_TIMESTAMP WHERE slate_number = ? AND user_id = ?')
+          .run(word_count ?? null, char_count ?? null, req.params.n, req.oauth.userId);
+      }
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('oauth patch delegated:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // DELETE /api/oauth/slates/:n — delete a slate the user owns.
+  // Works on any slate (published or private). Does not require slates:write
+  // specifically — uses slates:delete so the user can grant delete without write.
+  app.delete('/api/oauth/slates/:n', publicCors, authenticateOAuth('slates:delete'), async (req, res) => {
+    try {
+      const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
+        .get(req.params.n, req.oauth.userId);
+      if (!slate) return res.status(404).json({ error: 'not_found' });
+      if (slate.is_system_slate) return res.status(403).json({ error: 'system slates cannot be deleted' });
+
+      try { await b2Storage.deleteSlate(slate.b2_file_id); } catch { /* best-effort */ }
+      if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) {
+        try { await b2Storage.deleteSlate(slate.b2_public_file_id); } catch { /* best-effort */ }
+      }
+
+      db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?').run(req.oauth.userId, slate.slate_number);
+      db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.n, req.oauth.userId);
+      updateUserStorage(req.oauth.userId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('oauth delete slate:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // PATCH /api/oauth/slates/:n/publish — publish or unpublish a plaintext slate.
+  app.patch('/api/oauth/slates/:n/publish', publicCors, authenticateOAuth('slates:publish'), async (req, res) => {
+    const { publish } = req.body || {};
+    if (typeof publish !== 'boolean') return res.status(400).json({ error: 'publish (boolean) required' });
+
+    try {
+      const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
+        .get(req.params.n, req.oauth.userId);
+      if (!slate) return res.status(404).json({ error: 'not_found' });
+      if (slate.is_system_slate) return res.status(403).json({ error: 'system slates cannot be toggled' });
+      if (slate.encryption_version === 1 && !slate.is_system_slate) {
+        return res.status(403).json({ error: 'cannot publish/unpublish an e2e-encrypted slate via the api — the user must do it from their client so plaintext can be sent for the public copy' });
+      }
+
+      let shareId = slate.share_id;
+      let publicFileId = slate.b2_public_file_id;
+
+      if (publish && !shareId) shareId = generateUniqueShareId();
+
+      if (publish && !publicFileId) {
+        // Read content and upload unencrypted public copy.
+        const content = await b2Storage.getSlate(slate.b2_file_id, null);
+        const pubId = `${req.oauth.userId}-public-${Date.now()}`;
+        publicFileId = await b2Storage.uploadSlate(pubId, content, null);
+      }
+
+      if (!publish && publicFileId) {
+        try { await b2Storage.deleteSlate(publicFileId); } catch { /* best-effort */ }
+        publicFileId = null;
+      }
+
+      const publishedAt = publish && !slate.published_at ? new Date().toISOString() : slate.published_at;
+      db.prepare(`UPDATE slates SET is_published = ?, share_id = ?, b2_public_file_id = ?, published_at = ?
+        WHERE slate_number = ? AND user_id = ?`)
+        .run(publish ? 1 : 0, shareId, publicFileId, publishedAt, req.params.n, req.oauth.userId);
+
+      const base = isProduction ? 'https://justtype.io' : 'http://localhost:3003';
+      res.json({
+        success: true, is_published: publish,
+        share_id: publish ? shareId : null,
+        share_url: publish ? `${base}/s/${shareId}` : null
+      });
+    } catch (e) {
+      console.error('oauth publish slate:', e);
       res.status(500).json({ error: 'server_error' });
     }
   });

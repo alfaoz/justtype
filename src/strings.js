@@ -903,7 +903,10 @@ take care!
       email: 'their verified email address',
       public: 'read their published slates (title + text)',
       meta: 'list slates, counts, dates (private titles stay encrypted)',
-      private: 'download private slates — delivered encrypted only'
+      private: 'read private slates the user explicitly shares with your app (revocable per-slate)',
+      write: 'create and edit published slates on the user\'s behalf',
+      delete: 'delete slates on the user\'s behalf',
+      publish: 'publish and unpublish slates on the user\'s behalf'
     },
     docs: {
       onThisPage: 'on this page',
@@ -945,14 +948,20 @@ take care!
       endpoints: {
         title: 'endpoints',
         list: [
-          ['GET', '/oauth/authorize', 'start the flow (browser redirect)'],
-          ['POST', '/oauth/token', 'exchange code, or refresh (rotates both tokens)'],
-          ['POST', '/oauth/revoke', 'revoke an access or refresh token'],
-          ['GET', '/api/oauth/userinfo', 'scope: identity → { id, username, email? }'],
-          ['GET', '/api/oauth/slates', 'scope: slates:read:meta → slate list + counts'],
-          ['GET', '/api/oauth/slates/published', 'scope: slates:read:public → full published text'],
-          ['GET', '/api/oauth/slates/:n', 'scope: slates:read:private → ciphertext only'],
-          ['GET', '/api/oauth/scopes', 'the scope catalogue (no auth)']
+          ['GET',   '/oauth/authorize',               'start the flow (browser redirect)'],
+          ['POST',  '/oauth/token',                   'exchange code, or refresh (rotates both tokens)'],
+          ['POST',  '/oauth/revoke',                  'revoke an access or refresh token'],
+          ['GET',   '/api/oauth/userinfo',            'scope: identity → { id, username, email? }'],
+          ['GET',   '/api/oauth/slates',              'scope: slates:read:meta → slate list + counts'],
+          ['GET',   '/api/oauth/slates/published',    'scope: slates:read:public → full published text'],
+          ['GET',   '/api/oauth/slates/:n',           'scope: slates:read:private → ciphertext (or decryptable if delegated)'],
+          ['GET',   '/api/oauth/shared',              'scope: slates:read:private → slates delegated to your app'],
+          ['POST',  '/api/oauth/slates',              'scope: slates:write → create a slate (published by default)'],
+          ['PUT',   '/api/oauth/slates/:n',           'scope: slates:write → update title/content of a plaintext slate'],
+          ['PATCH', '/api/oauth/slates/:n/delegated', 'scope: slates:read:private → update a delegated private slate (re-encrypted)'],
+          ['PATCH', '/api/oauth/slates/:n/publish',   'scope: slates:publish → publish or unpublish a slate'],
+          ['DELETE','/api/oauth/slates/:n',           'scope: slates:delete → delete any slate'],
+          ['GET',   '/api/oauth/scopes',              'the scope catalogue (no auth)']
         ]
       },
       tokens: {

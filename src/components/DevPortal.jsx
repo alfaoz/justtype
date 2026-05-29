@@ -8,7 +8,10 @@ const SCOPE_OPTIONS = [
   ['email', strings.dev.scopes.email],
   ['slates:read:public', strings.dev.scopes.public],
   ['slates:read:meta', strings.dev.scopes.meta],
-  ['slates:read:private', strings.dev.scopes.private]
+  ['slates:read:private', strings.dev.scopes.private],
+  ['slates:write', strings.dev.scopes.write],
+  ['slates:delete', strings.dev.scopes.delete],
+  ['slates:publish', strings.dev.scopes.publish]
 ];
 
 const LANGUAGES = [

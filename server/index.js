@@ -1061,7 +1061,10 @@ const requireEncryptionKey = (req, res, next) => {
 mountOAuth(app, {
   db, jwt, JWT_SECRET, crypto, b2Storage,
   authenticateToken,
-  isProduction: process.env.NODE_ENV === 'production'
+  isProduction: process.env.NODE_ENV === 'production',
+  generateUniqueShareId,
+  checkStorageLimit,
+  updateUserStorage
 });
 
 // ============ AUTH ROUTES ============
