@@ -936,9 +936,14 @@ take care!
       empty: 'no apps yet. register one to get a client_id.',
       createButton: '+ register an app',
       openWizard: 'open the wizard',
-      namePlaceholder: 'app name',
-      websitePlaceholder: 'website (optional)',
-      redirectsPlaceholder: 'redirect uris (one per line)\nhttps://yourapp.com/callback',
+      nameLabel: 'app name',
+      namePlaceholder: 'my cool app',
+      websiteLabel: 'website',
+      websitePlaceholder: 'https://yourapp.com',
+      optional: 'optional',
+      redirectsFieldLabel: 'redirect uris',
+      redirectsHint: 'one per line',
+      redirectsPlaceholder: 'https://yourapp.com/callback',
       scopesLabel: 'scopes',
       redirectsLabel: 'redirects',
       create: 'create app',
@@ -946,7 +951,10 @@ take care!
       cancel: 'cancel',
       delete: 'delete',
       deleting: 'deleting...',
-      copyHint: 'click to copy client id'
+      copyHint: 'click to copy client id',
+      secretTitle: 'save your client secret',
+      secretBody: 'this is shown once and cannot be retrieved later. store it somewhere safe.',
+      secretDismiss: 'done, i saved it'
     },
     errors: {
       nameRequired: 'app name is required.',
@@ -956,13 +964,18 @@ take care!
     },
     wizard: {
       back: '← back',
+      intro: 'answer two quick questions and get copy-paste code wired to your real app.',
+      stepLabels: ['app', 'stack', 'code'],
       step1: {
         title: 'step 1 — pick an app',
         body: 'choose which of your apps this integration is for.',
         noApps: 'you have no apps yet.',
         goCreate: 'register one first →'
       },
-      step2: { title: 'step 2 — pick your stack' },
+      step2: {
+        title: 'step 2 — pick your stack',
+        body: 'we tailor the snippet to your language and runtime.'
+      },
       step3: {
         title: 'step 3 — your code',
         appLabel: 'app',

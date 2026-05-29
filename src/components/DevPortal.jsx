@@ -11,10 +11,10 @@ const SCOPE_OPTIONS = [
 ];
 
 const LANGUAGES = [
-  ['node', 'node / express'],
-  ['browser', 'browser (spa)'],
-  ['python', 'python / flask'],
-  ['curl', 'curl']
+  ['node', 'node / express', 'server-side javascript'],
+  ['browser', 'browser (spa)', 'react, vue, vanilla'],
+  ['python', 'python / flask', 'server-side python'],
+  ['curl', 'curl', 'shell / testing']
 ];
 
 // ---- code generators (filled with the user's real client) ----------------
@@ -199,6 +199,24 @@ curl ${origin}/api/oauth/userinfo -H "Authorization: Bearer <access_token>"`;
 
 const GENERATORS = { node: genNode, browser: genBrowser, python: genPython, curl: genCurl };
 
+const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400' };
+
+// ---- small shared pieces (module-level so they never remount) -------------
+
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen bg-[#111111] text-[#d4d4d4] overflow-y-auto">
+      <header className="border-b border-[#222] sticky top-0 bg-[#111111] z-20">
+        <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
+          <a href="/" className="text-sm text-[#808080] hover:text-white transition-colors">← justtype</a>
+          <span className="text-[11px] tracking-[0.2em] uppercase text-[#666]">developers</span>
+        </div>
+      </header>
+      <main className="max-w-3xl mx-auto px-5 py-10">{children}</main>
+    </div>
+  );
+}
+
 function CodeBlock({ code }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
@@ -208,17 +226,47 @@ function CodeBlock({ code }) {
     }).catch(() => {});
   };
   return (
-    <div className="relative group">
-      <button
-        onClick={copy}
-        className="absolute top-2 right-2 text-xs px-2 py-1 rounded bg-[#222] text-[#aaa] hover:text-white border border-[#333] z-10"
-      >
-        {copied ? strings.dev.copied : strings.dev.copy}
-      </button>
-      <pre className="bg-[#0d0d0d] border border-[#222] rounded-lg p-4 overflow-x-auto text-xs leading-relaxed text-[#d0d0d0] font-mono whitespace-pre">{code}</pre>
+    <div className="relative group rounded-xl border border-[#333] bg-[#0a0a0a] overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[#222]">
+        <div className="flex gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
+        </div>
+        <button
+          onClick={copy}
+          className="text-xs px-2.5 py-1 rounded-md bg-[#1a1a1a] text-[#a0a0a0] hover:text-white border border-[#333] transition-colors"
+        >
+          {copied ? strings.dev.copied : strings.dev.copy}
+        </button>
+      </div>
+      <pre className="p-4 overflow-x-auto text-xs leading-relaxed text-[#d4d4d4] whitespace-pre">{code}</pre>
     </div>
   );
 }
+
+function Chip({ children }) {
+  return (
+    <span className="text-[11px] px-2 py-0.5 rounded-md bg-[#222] text-[#a0a0a0] font-mono">{children}</span>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <label className="block">
+      <span className="text-xs text-[#808080] mb-1.5 flex items-baseline gap-2">
+        {label}{hint && <span className="text-[#666]">{hint}</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+const inputClass =
+  'w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-3.5 py-2.5 text-sm text-white ' +
+  'placeholder:text-[#666] focus:outline-none focus:border-[#666] transition-colors';
+
+// ---------------------------------------------------------------------------
 
 export function DevPortal({ token, username, onLogin }) {
   const [tab, setTab] = useState('docs');
@@ -235,6 +283,7 @@ export function DevPortal({ token, username, onLogin }) {
   const [createError, setCreateError] = useState('');
   const [deleting, setDeleting] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [newSecret, setNewSecret] = useState(null);
 
   // wizard
   const [wizStep, setWizStep] = useState(1);
@@ -277,6 +326,7 @@ export function DevPortal({ token, username, onLogin }) {
       if (res.ok) {
         setShowCreate(false);
         setName(''); setWebsite(''); setRedirects(''); setScopes(['identity']);
+        if (data.client_secret) setNewSecret({ id: data.client_id, secret: data.client_secret });
         loadApps();
       } else {
         setCreateError(data.error || strings.dev.errors.createFailed);
@@ -306,25 +356,14 @@ export function DevPortal({ token, username, onLogin }) {
     }).catch(() => {});
   };
 
-  const Shell = ({ children }) => (
-    <div className="min-h-screen bg-[#0a0a0a] text-[#e0e0e0] overflow-y-auto">
-      <div className="border-b border-[#1c1c1c]">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-          <a href="/" className="text-sm text-[#888] hover:text-white">← justtype</a>
-          <span className="text-sm text-[#666]">{strings.dev.title}</span>
-        </div>
-      </div>
-      <div className="max-w-3xl mx-auto px-4 py-8">{children}</div>
-    </div>
-  );
-
   if (!token) {
     return (
       <Shell>
-        <div className="text-center py-20">
-          <h1 className="text-2xl mb-3 text-white">{strings.dev.title}</h1>
-          <p className="text-[#888] mb-8 max-w-md mx-auto">{strings.dev.gate.message}</p>
-          <button onClick={onLogin} className="bg-white text-black px-6 py-3 rounded-lg hover:bg-[#e5e5e5] text-sm">
+        <div className="text-center py-24">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[#1a1a1a] border border-[#333] mb-6 text-xl">{'</>'}</div>
+          <h1 className="text-2xl text-white mb-3">{strings.dev.title}</h1>
+          <p className="text-[#a0a0a0] mb-8 max-w-md mx-auto leading-relaxed">{strings.dev.gate.message}</p>
+          <button onClick={onLogin} className="bg-white text-black px-6 py-3 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
             {strings.dev.gate.login}
           </button>
         </div>
@@ -332,24 +371,30 @@ export function DevPortal({ token, username, onLogin }) {
     );
   }
 
+  const tabs = [['docs', strings.dev.tabs.docs], ['apps', strings.dev.tabs.apps], ['wizard', strings.dev.tabs.wizard]];
+
   return (
     <Shell>
-      <h1 className="text-2xl text-white mb-1">{strings.dev.title}</h1>
-      <p className="text-[#888] text-sm mb-6">{strings.dev.subtitle}</p>
+      <div className="mb-8">
+        <h1 className="text-3xl text-white tracking-tight mb-2">{strings.dev.title}</h1>
+        <p className="text-[#a0a0a0]">{strings.dev.subtitle}</p>
+      </div>
 
-      <div className="flex gap-1 border-b border-[#1c1c1c] mb-8">
-        {[['docs', strings.dev.tabs.docs], ['apps', strings.dev.tabs.apps], ['wizard', strings.dev.tabs.wizard]].map(([id, label]) => (
+      <div className="inline-flex gap-1 p-1 bg-[#1a1a1a] border border-[#333] rounded-lg mb-8">
+        {tabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`px-4 py-2 text-sm border-b-2 -mb-px transition-colors ${tab === id ? 'border-white text-white' : 'border-transparent text-[#777] hover:text-[#aaa]'}`}
+            className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+              tab === id ? 'bg-[#222] text-white' : 'text-[#808080] hover:text-[#d4d4d4]'
+            }`}
           >
             {label}
           </button>
         ))}
       </div>
 
-      {tab === 'docs' && <DocsTab />}
+      {tab === 'docs' && <DocsTab onWizard={() => setTab('wizard')} />}
       {tab === 'apps' && (
         <AppsTab
           apps={apps} loadingApps={loadingApps} showCreate={showCreate} setShowCreate={setShowCreate}
@@ -357,6 +402,7 @@ export function DevPortal({ token, username, onLogin }) {
           redirects={redirects} setRedirects={setRedirects} scopes={scopes} toggleScope={toggleScope}
           creating={creating} createError={createError} createApp={createApp}
           deleting={deleting} deleteApp={deleteApp} copyId={copyId} copiedId={copiedId}
+          newSecret={newSecret} dismissSecret={() => setNewSecret(null)}
           goWizard={() => setTab('wizard')}
         />
       )}
@@ -371,152 +417,237 @@ export function DevPortal({ token, username, onLogin }) {
   );
 }
 
-function DocsTab() {
+function DocsTab({ onWizard }) {
   const d = strings.dev.docs;
   return (
-    <div className="space-y-8 text-sm leading-relaxed">
+    <div className="space-y-10 text-sm leading-relaxed">
       <section>
         <h2 className="text-lg text-white mb-2">{d.what.title}</h2>
-        <p className="text-[#aaa]">{d.what.body}</p>
+        <p className="text-[#a0a0a0]">{d.what.body}</p>
       </section>
 
-      <section className="bg-[#141414] border border-[#262626] rounded-lg p-4">
-        <h2 className="text-white mb-2">{d.encryption.title}</h2>
-        <p className="text-[#999]">{d.encryption.body}</p>
+      <section className="bg-[#1a1a1a] border border-[#333] border-l-2 border-l-blue-400 rounded-xl p-5">
+        <h2 className="text-white mb-2 flex items-center gap-2">
+          <span className="text-blue-400">◆</span>{d.encryption.title}
+        </h2>
+        <p className="text-[#a0a0a0]">{d.encryption.body}</p>
       </section>
 
       <section>
-        <h2 className="text-lg text-white mb-3">{d.scopes.title}</h2>
-        <div className="space-y-2">
+        <h2 className="text-lg text-white mb-4">{d.scopes.title}</h2>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl px-5 divide-y divide-[#222]">
           {SCOPE_OPTIONS.map(([id, label]) => (
-            <div key={id} className="flex gap-3">
-              <code className="text-[#7dd3fc] shrink-0">{id}</code>
-              <span className="text-[#999]">{label}</span>
+            <div key={id} className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4 py-3">
+              <code className="text-blue-400 text-xs shrink-0 sm:w-44">{id}</code>
+              <span className="text-[#a0a0a0]">{label}</span>
             </div>
           ))}
         </div>
       </section>
 
       <section>
-        <h2 className="text-lg text-white mb-3">{d.flow.title}</h2>
-        <ol className="list-decimal list-inside space-y-1 text-[#aaa]">
-          {d.flow.steps.map((s, i) => <li key={i}>{s}</li>)}
+        <h2 className="text-lg text-white mb-4">{d.flow.title}</h2>
+        <ol className="space-y-3">
+          {d.flow.steps.map((s, i) => (
+            <li key={i} className="flex gap-3.5">
+              <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+              <span className="text-[#a0a0a0]">{s}</span>
+            </li>
+          ))}
         </ol>
       </section>
 
       <section>
-        <h2 className="text-lg text-white mb-3">{d.endpoints.title}</h2>
-        <div className="space-y-2 font-mono text-xs">
+        <h2 className="text-lg text-white mb-4">{d.endpoints.title}</h2>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
           {d.endpoints.list.map(([method, path, desc], i) => (
-            <div key={i} className="flex flex-wrap gap-x-3 gap-y-0.5">
-              <span className="text-[#4ade80] w-12 shrink-0">{method}</span>
-              <span className="text-[#d0d0d0]">{path}</span>
-              <span className="text-[#777] w-full pl-12">{desc}</span>
+            <div key={i} className="px-5 py-3 font-mono text-xs">
+              <div className="flex items-baseline gap-3">
+                <span className={`font-semibold w-12 shrink-0 ${METHOD_COLOR[method] || 'text-[#a0a0a0]'}`}>{method}</span>
+                <code className="text-[#d4d4d4] break-all">{path}</code>
+              </div>
+              <div className="text-[#666] pl-[3.75rem] mt-1">{desc}</div>
             </div>
           ))}
         </div>
       </section>
 
       <section>
-        <h2 className="text-lg text-white mb-2">{d.tokens.title}</h2>
-        <ul className="list-disc list-inside space-y-1 text-[#aaa]">
-          {d.tokens.points.map((p, i) => <li key={i}>{p}</li>)}
+        <h2 className="text-lg text-white mb-3">{d.tokens.title}</h2>
+        <ul className="space-y-2">
+          {d.tokens.points.map((p, i) => (
+            <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
+              <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+            </li>
+          ))}
         </ul>
       </section>
 
-      <p className="text-[#666] text-xs">{strings.dev.docs.wizardHint}</p>
+      <button onClick={onWizard} className="w-full text-left bg-[#1a1a1a] border border-[#333] rounded-xl p-4 hover:bg-[#222] transition-colors group">
+        <div className="flex items-center justify-between">
+          <span className="text-[#d4d4d4] text-sm">{strings.dev.docs.wizardHint}</span>
+          <span className="text-[#666] group-hover:text-white transition-colors">→</span>
+        </div>
+      </button>
     </div>
   );
 }
 
 function ScopeChecklist({ scopes, toggleScope }) {
   return (
-    <div className="space-y-1.5">
-      {SCOPE_OPTIONS.map(([id, label]) => (
-        <label key={id} className="flex items-start gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={scopes.includes(id)}
-            onChange={() => toggleScope(id)}
-            className="w-4 h-4 mt-0.5 rounded border-[#666] bg-[#111] text-blue-500 focus:ring-0"
-          />
-          <span className="text-[#a0a0a0]"><code className="text-[#7dd3fc]">{id}</code> — {label}</span>
-        </label>
-      ))}
+    <div className="space-y-1">
+      {SCOPE_OPTIONS.map(([id, label]) => {
+        const on = scopes.includes(id);
+        return (
+          <button
+            type="button"
+            key={id}
+            onClick={() => toggleScope(id)}
+            className={`w-full text-left flex items-start gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
+              on ? 'border-[#333] bg-[#0a0a0a]' : 'border-transparent hover:bg-[#0a0a0a]'
+            }`}
+          >
+            <span className={`shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
+              on ? 'bg-white text-black border-white' : 'border-[#666] text-transparent'
+            }`}>✓</span>
+            <span className="text-sm text-[#a0a0a0]">
+              <code className="text-blue-400">{id}</code>
+              <span className="block text-xs text-[#666] mt-0.5">{label}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
 function AppsTab(p) {
+  if (p.loadingApps) {
+    return <p className="text-[#666] text-sm">{strings.dev.loading}</p>;
+  }
   return (
     <div className="space-y-4">
-      {p.loadingApps ? (
-        <p className="text-[#666] text-sm">{strings.dev.loading}</p>
-      ) : (
-        <>
-          {p.apps.length === 0 && !p.showCreate && (
-            <p className="text-[#888] text-sm">{strings.dev.apps.empty}</p>
-          )}
-          {p.apps.map((app) => (
-            <div key={app.client_id} className="bg-[#111] border border-[#222] rounded-lg p-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-white">{app.name}</span>
-                <button
-                  onClick={() => p.deleteApp(app.client_id)}
-                  disabled={p.deleting === app.client_id}
-                  className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50"
-                >
-                  {p.deleting === app.client_id ? strings.dev.apps.deleting : strings.dev.apps.delete}
-                </button>
-              </div>
-              <button
-                onClick={() => p.copyId(app.client_id)}
-                className="mt-1 font-mono text-xs text-[#888] hover:text-white break-all text-left"
-                title={strings.dev.apps.copyHint}
-              >
-                {app.client_id}{p.copiedId === app.client_id ? `  ${strings.dev.copied}` : ''}
-              </button>
-              <div className="text-xs text-[#666] mt-2">{strings.dev.apps.scopesLabel}: {app.scopes.join(', ')}</div>
-              <div className="text-xs text-[#666] mt-0.5 break-all">{strings.dev.apps.redirectsLabel}: {app.redirect_uris.join(', ')}</div>
-            </div>
-          ))}
+      {p.newSecret && (
+        <div className="bg-[#1a1a1a] border border-orange-400/40 rounded-xl p-4">
+          <div className="text-sm text-white mb-1">{strings.dev.apps.secretTitle}</div>
+          <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.secretBody}</div>
+          <code className="block bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
+          <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{strings.dev.apps.secretDismiss}</button>
+        </div>
+      )}
 
-          {!p.showCreate ? (
-            <div className="flex gap-3">
-              <button onClick={() => { p.setShowCreate(true); }} className="text-sm text-white border border-[#333] rounded-lg px-4 py-2 hover:bg-[#1a1a1a]">
-                {strings.dev.apps.createButton}
-              </button>
-              {p.apps.length > 0 && (
-                <button onClick={p.goWizard} className="text-sm text-[#aaa] border border-[#333] rounded-lg px-4 py-2 hover:bg-[#1a1a1a]">
-                  {strings.dev.apps.openWizard}
-                </button>
+      {p.apps.length === 0 && !p.showCreate && (
+        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-8 text-center">
+          <p className="text-[#a0a0a0] text-sm mb-4">{strings.dev.apps.empty}</p>
+          <button onClick={() => p.setShowCreate(true)} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
+            {strings.dev.apps.createButton}
+          </button>
+        </div>
+      )}
+
+      {p.apps.map((app) => (
+        <div key={app.client_id} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-white">{app.name}</div>
+              {app.website && (
+                <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-blue-400 break-all">{app.website}</a>
               )}
             </div>
-          ) : (
-            <form onSubmit={p.createApp} className="bg-[#111] border border-[#222] rounded-lg p-4 space-y-3">
-              <input type="text" value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder={strings.dev.apps.namePlaceholder} maxLength={80}
-                className="w-full bg-[#0d0d0d] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm" />
-              <input type="text" value={p.website} onChange={(e) => p.setWebsite(e.target.value)} placeholder={strings.dev.apps.websitePlaceholder}
-                className="w-full bg-[#0d0d0d] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm" />
-              <textarea value={p.redirects} onChange={(e) => p.setRedirects(e.target.value)} placeholder={strings.dev.apps.redirectsPlaceholder} rows={2}
-                className="w-full bg-[#0d0d0d] border border-[#333] rounded px-3 py-2 focus:outline-none focus:border-[#666] text-white text-sm font-mono" />
-              <div>
-                <p className="text-xs text-[#666] mb-2">{strings.dev.apps.scopesLabel}</p>
-                <ScopeChecklist scopes={p.scopes} toggleScope={p.toggleScope} />
-              </div>
-              {p.createError && <p className="text-red-400 text-xs">{p.createError}</p>}
-              <div className="flex gap-3">
-                <button type="submit" disabled={p.creating} className="bg-white text-black px-4 py-2 rounded hover:bg-[#e5e5e5] disabled:opacity-50 text-sm">
-                  {p.creating ? strings.dev.apps.creating : strings.dev.apps.create}
-                </button>
-                <button type="button" onClick={() => { p.setShowCreate(false); }} className="border border-[#333] text-white px-4 py-2 rounded hover:bg-[#333] text-sm">
-                  {strings.dev.apps.cancel}
-                </button>
-              </div>
-            </form>
-          )}
-        </>
+            <button
+              onClick={() => p.deleteApp(app.client_id)}
+              disabled={p.deleting === app.client_id}
+              className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50 shrink-0"
+            >
+              {p.deleting === app.client_id ? strings.dev.apps.deleting : strings.dev.apps.delete}
+            </button>
+          </div>
+
+          <button
+            onClick={() => p.copyId(app.client_id)}
+            className="mt-3 w-full text-left flex items-center justify-between gap-2 bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 hover:border-[#666] transition-colors group"
+            title={strings.dev.apps.copyHint}
+          >
+            <code className="font-mono text-xs text-[#a0a0a0] break-all">{app.client_id}</code>
+            <span className="text-[10px] text-[#666] group-hover:text-white shrink-0">
+              {p.copiedId === app.client_id ? strings.dev.copied : strings.dev.copy}
+            </span>
+          </button>
+
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {app.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
+          </div>
+          <div className="text-xs text-[#666] mt-3 break-all">
+            {strings.dev.apps.redirectsLabel}: {app.redirect_uris.join(', ')}
+          </div>
+        </div>
+      ))}
+
+      {!p.showCreate ? (
+        (p.apps.length > 0) && (
+          <div className="flex flex-wrap gap-3">
+            <button onClick={() => p.setShowCreate(true)} className="text-sm text-white border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
+              {strings.dev.apps.createButton}
+            </button>
+            <button onClick={p.goWizard} className="text-sm text-[#a0a0a0] border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
+              {strings.dev.apps.openWizard}
+            </button>
+          </div>
+        )
+      ) : (
+        <form onSubmit={p.createApp} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 space-y-4">
+          <Field label={strings.dev.apps.nameLabel}>
+            <input type="text" value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder={strings.dev.apps.namePlaceholder} maxLength={80} className={inputClass} autoFocus />
+          </Field>
+          <Field label={strings.dev.apps.websiteLabel} hint={strings.dev.apps.optional}>
+            <input type="text" value={p.website} onChange={(e) => p.setWebsite(e.target.value)} placeholder={strings.dev.apps.websitePlaceholder} className={inputClass} />
+          </Field>
+          <Field label={strings.dev.apps.redirectsFieldLabel} hint={strings.dev.apps.redirectsHint}>
+            <textarea value={p.redirects} onChange={(e) => p.setRedirects(e.target.value)} placeholder={strings.dev.apps.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
+          </Field>
+          <div>
+            <p className="text-xs text-[#808080] mb-2">{strings.dev.apps.scopesLabel}</p>
+            <ScopeChecklist scopes={p.scopes} toggleScope={p.toggleScope} />
+          </div>
+          {p.createError && <p className="text-red-400 text-xs">{p.createError}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="submit" disabled={p.creating} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
+              {p.creating ? strings.dev.apps.creating : strings.dev.apps.create}
+            </button>
+            <button type="button" onClick={() => p.setShowCreate(false)} className="border border-[#333] text-[#d4d4d4] px-4 py-2 rounded-lg hover:bg-[#222] text-sm transition-colors">
+              {strings.dev.apps.cancel}
+            </button>
+          </div>
+        </form>
       )}
+    </div>
+  );
+}
+
+function Stepper({ step, labels, onJump }) {
+  return (
+    <div className="flex items-center gap-2 mb-8">
+      {labels.map((label, i) => {
+        const n = i + 1;
+        const state = n < step ? 'done' : n === step ? 'current' : 'future';
+        return (
+          <React.Fragment key={n}>
+            <button
+              onClick={() => n < step && onJump(n)}
+              disabled={n >= step}
+              className={`flex items-center gap-2 ${n < step ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors ${
+                state === 'done' ? 'bg-white text-black border-white'
+                  : state === 'current' ? 'border-white text-white'
+                  : 'border-[#333] text-[#666]'
+              }`}>{n}</span>
+              <span className={`text-xs ${state === 'future' ? 'text-[#666]' : 'text-[#d4d4d4]'}`}>{label}</span>
+            </button>
+            {n < labels.length && <span className="flex-1 h-px bg-[#333]" />}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -525,67 +656,84 @@ function WizardTab(p) {
   const w = strings.dev.wizard;
   const selectedApp = p.apps.find((a) => a.client_id === p.wizAppId);
 
-  // Step 1: pick an app
-  if (p.wizStep === 1) {
-    return (
-      <div className="space-y-4">
-        <h2 className="text-lg text-white">{w.step1.title}</h2>
-        <p className="text-[#888] text-sm">{w.step1.body}</p>
-        {p.apps.length === 0 ? (
-          <div className="bg-[#111] border border-[#222] rounded-lg p-4 text-sm text-[#888]">
-            {w.step1.noApps} <button onClick={p.goApps} className="text-white underline">{w.step1.goCreate}</button>
+  return (
+    <div>
+      <Stepper step={p.wizStep} labels={w.stepLabels} onJump={p.setWizStep} />
+
+      {p.wizStep === 1 && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg text-white">{w.step1.title}</h2>
+            <p className="text-[#a0a0a0] text-sm mt-1">{w.step1.body}</p>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {p.apps.map((a) => (
-              <button key={a.client_id} onClick={() => { p.setWizAppId(a.client_id); p.setWizStep(2); }}
-                className={`w-full text-left bg-[#111] border rounded-lg p-3 hover:border-[#555] ${p.wizAppId === a.client_id ? 'border-white' : 'border-[#222]'}`}>
-                <div className="text-white text-sm">{a.name}</div>
-                <div className="font-mono text-xs text-[#666] mt-0.5">{a.client_id}</div>
-                <div className="text-xs text-[#666] mt-1">{a.scopes.join(', ')}</div>
+          {p.apps.length === 0 ? (
+            <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 text-sm text-[#a0a0a0]">
+              {w.step1.noApps} <button onClick={p.goApps} className="text-white underline hover:text-blue-400">{w.step1.goCreate}</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {p.apps.map((a) => (
+                <button key={a.client_id} onClick={() => { p.setWizAppId(a.client_id); p.setWizStep(2); }}
+                  className={`w-full text-left bg-[#1a1a1a] border rounded-xl p-4 hover:border-[#666] transition-colors ${p.wizAppId === a.client_id ? 'border-white' : 'border-[#333]'}`}>
+                  <div className="text-white text-sm">{a.name}</div>
+                  <div className="font-mono text-xs text-[#666] mt-1 break-all">{a.client_id}</div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {a.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {p.wizStep === 2 && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg text-white">{w.step2.title}</h2>
+            <p className="text-[#a0a0a0] text-sm mt-1">{w.step2.body}</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {LANGUAGES.map(([id, label, desc]) => (
+              <button key={id} onClick={() => { p.setWizLang(id); p.setWizStep(3); }}
+                className={`text-left bg-[#1a1a1a] border rounded-xl p-4 hover:border-[#666] transition-colors ${p.wizLang === id ? 'border-white' : 'border-[#333]'}`}>
+                <div className="text-white text-sm">{label}</div>
+                <div className="text-xs text-[#666] mt-1">{desc}</div>
               </button>
             ))}
           </div>
-        )}
-      </div>
-    );
-  }
-
-  // Step 2: pick language
-  if (p.wizStep === 2) {
-    return (
-      <div className="space-y-4">
-        <button onClick={() => p.setWizStep(1)} className="text-xs text-[#888] hover:text-white">{w.back}</button>
-        <h2 className="text-lg text-white">{w.step2.title}</h2>
-        <div className="grid grid-cols-2 gap-3">
-          {LANGUAGES.map(([id, label]) => (
-            <button key={id} onClick={() => { p.setWizLang(id); p.setWizStep(3); }}
-              className={`bg-[#111] border rounded-lg p-4 text-sm hover:border-[#555] ${p.wizLang === id ? 'border-white text-white' : 'border-[#222] text-[#aaa]'}`}>
-              {label}
-            </button>
-          ))}
         </div>
-      </div>
-    );
-  }
+      )}
 
-  // Step 3: generated code
-  const redirectUri = selectedApp?.redirect_uris?.[0] || 'https://yourapp.com/callback';
-  const scopeStr = (selectedApp?.scopes || ['identity']).join(' ');
-  const code = (GENERATORS[p.wizLang] || genNode)(selectedApp?.client_id || 'jt_xxx', redirectUri, scopeStr);
-
-  return (
-    <div className="space-y-4">
-      <button onClick={() => p.setWizStep(2)} className="text-xs text-[#888] hover:text-white">{w.back}</button>
-      <h2 className="text-lg text-white">{w.step3.title}</h2>
-      <div className="text-sm text-[#888] space-y-1">
-        <div>{w.step3.appLabel}: <span className="text-white">{selectedApp?.name}</span></div>
-        <div className="break-all">{strings.dev.apps.redirectsLabel}: <span className="text-[#aaa]">{redirectUri}</span></div>
-        <div>{strings.dev.apps.scopesLabel}: <span className="text-[#aaa]">{scopeStr}</span></div>
-      </div>
-      <p className="text-[#999] text-sm">{w.step3.body}</p>
-      <CodeBlock code={code} />
-      <p className="text-[#666] text-xs">{w.step3.note}</p>
+      {p.wizStep === 3 && (() => {
+        const redirectUri = selectedApp?.redirect_uris?.[0] || 'https://yourapp.com/callback';
+        const scopeStr = (selectedApp?.scopes || ['identity']).join(' ');
+        const code = (GENERATORS[p.wizLang] || genNode)(selectedApp?.client_id || 'jt_xxx', redirectUri, scopeStr);
+        return (
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg text-white">{w.step3.title}</h2>
+              <p className="text-[#a0a0a0] text-sm mt-1">{w.step3.body}</p>
+            </div>
+            <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-4 text-sm space-y-2">
+              <div className="flex justify-between gap-3">
+                <span className="text-[#666]">{w.step3.appLabel}</span>
+                <span className="text-white">{selectedApp?.name}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[#666]">{strings.dev.apps.redirectsLabel}</span>
+                <span className="text-[#a0a0a0] break-all text-right">{redirectUri}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[#666]">{strings.dev.apps.scopesLabel}</span>
+                <span className="text-[#a0a0a0] break-all text-right">{scopeStr}</span>
+              </div>
+            </div>
+            <CodeBlock code={code} />
+            <p className="text-[#666] text-xs">{w.step3.note}</p>
+          </div>
+        );
+      })()}
     </div>
   );
 }
