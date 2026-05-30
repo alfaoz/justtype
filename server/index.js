@@ -743,6 +743,28 @@ app.get('/project.txt', (req, res) => {
   res.sendFile(projectPath);
 });
 
+// Developer API reference + crypto contract, served as static markdown so tools,
+// AI agents, and curl can read it without running the client-side SPA.
+app.get(['/dev/spec.md', '/dev/spec', '/llms-full.txt'], (req, res) => {
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.sendFile(path.join(__dirname, '..', 'dev-spec.md'));
+});
+
+// llms.txt convention: a short index that points machine readers at the full spec.
+app.get('/llms.txt', (req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send([
+    '# justtype',
+    '',
+    'Zero-knowledge writing app with an OAuth 2.0 API for third-party apps.',
+    '',
+    '## Docs',
+    '- [Developer API reference & crypto contract](https://justtype.io/dev/spec.md): full OAuth flow, endpoints, response shapes, errors, and the end-to-end-encryption contract for reading/writing private slates (Node, Python, Swift, curl).',
+    '- [Developer portal (interactive)](https://justtype.io/dev)',
+    ''
+  ].join('\n'));
+});
+
 // System slate routes with custom meta descriptions
 const systemSlatesMeta = {
   '/terms': {

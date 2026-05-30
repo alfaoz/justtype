@@ -94,10 +94,14 @@ function mountOAuth(app, deps) {
   const validRedirectUri = (uri) => {
     try {
       const u = new URL(uri);
+      // Never allow schemes that could execute or read local resources.
+      if (['javascript:', 'data:', 'file:', 'blob:', 'vbscript:'].includes(u.protocol)) return false;
       if (u.protocol === 'https:') return true;
       // Allow http only for loopback (native/dev clients).
-      if (u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) return true;
-      return false;
+      if (u.protocol === 'http:') return u.hostname === '127.0.0.1' || u.hostname === 'localhost';
+      // Private-use URI scheme for native apps (RFC 8252), e.g. com.example.app://callback.
+      // Security comes from exact-matching the client's registered URIs, not the scheme.
+      return /^[a-z][a-z0-9+.-]*:$/.test(u.protocol);
     } catch {
       return false;
     }
@@ -214,7 +218,7 @@ function mountOAuth(app, deps) {
     }
     for (const uri of redirect_uris) {
       if (typeof uri !== 'string' || !validRedirectUri(uri)) {
-        return res.status(400).json({ error: `Invalid redirect URI: ${uri}. Must be https (or http://localhost).` });
+        return res.status(400).json({ error: `Invalid redirect URI: ${uri}. Use https, http://localhost, or a native app scheme like com.example.app://callback.` });
       }
     }
     const requested = Array.isArray(scopes) && scopes.length ? scopes : ['identity'];

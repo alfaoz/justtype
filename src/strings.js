@@ -919,6 +919,8 @@ take care!
     },
     docs: {
       onThisPage: 'on this page',
+      specCallout: 'prefer plain text, or pointing an ai/tool at the docs? the full reference + crypto contract is served as markdown at',
+      specUrl: '/dev/spec.md',
       what: {
         title: 'introduction',
         body: 'justtype provides a standard oauth 2.0 authorization-code flow with PKCE — the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their content. this page is the full reference; the wizard generates ready-to-paste code.'
@@ -1055,7 +1057,7 @@ take care!
       nameRequired: 'app name is required.',
       redirectRequired: 'at least one redirect uri is required.',
       scopeRequired: 'select at least one scope.',
-      createFailed: 'could not create app. check your redirect uris (https only).'
+      createFailed: 'could not create app. redirect uris must be https, http://localhost, or a native scheme (com.example.app://callback).'
     },
     wizard: {
       back: '← back',

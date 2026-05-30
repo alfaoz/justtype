@@ -590,6 +590,10 @@ function DocsTab({ onWizard }) {
         <section id="intro" className="scroll-mt-20">
           <h2 className="text-2xl text-white tracking-tight mb-3">{d.what.title}</h2>
           <p className="text-[#a0a0a0]">{d.what.body}</p>
+          <div className="mt-4 rounded-xl border border-[#333] bg-[#1a1a1a] px-4 py-3 text-sm text-[#a0a0a0]">
+            {d.specCallout}{' '}
+            <a href={d.specUrl} target="_blank" rel="noopener" className="text-blue-400 hover:underline break-all">{d.specUrl}</a>
+          </div>
         </section>
 
         <section id="quickstart" className="scroll-mt-20">
