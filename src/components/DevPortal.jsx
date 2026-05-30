@@ -235,6 +235,41 @@ const title = slate.enc_title ? aesGcmDecrypt(slate.enc_title, contentKey) : nul
 
 // tip: GET /api/oauth/shared lists every slate the user has delegated to you`;
 
+// Node snippet showing how an app writes back to a delegated private slate.
+const WRITE_SNIPPET = `const { privateDecrypt, createCipheriv, randomBytes, constants } = require('crypto');
+
+const b64 = (s) => Buffer.from(s, 'base64');
+function aesGcmEncrypt(plaintext, key) {
+  const iv = randomBytes(16);
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
+  // justtype blob format: IV(16) + AuthTag(16) + Ciphertext, base64
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');
+}
+
+// 1. GET the slate first so you have the CURRENT content key (the user's own
+//    edits rotate it). Reuse this exact key — do NOT generate a new one.
+const slate = await (await fetch(JT + '/api/oauth/slates/' + slateNumber, {
+  headers: { Authorization: 'Bearer ' + accessToken }
+})).json();
+const contentKey = privateDecrypt(
+  { key: PRIVATE_KEY, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+  b64(slate.wrapped_key)
+);
+
+// 2. content is wrapped as JSON { content, uploadedAt }; title is a raw string
+const enc_content = aesGcmEncrypt(
+  JSON.stringify({ content: newText, uploadedAt: new Date().toISOString() }), contentKey);
+const enc_title = newTitle ? aesGcmEncrypt(newTitle, contentKey) : null;
+
+// 3. PATCH it back — the user's client merges this on next open
+await fetch(JT + '/api/oauth/slates/' + slateNumber + '/delegated', {
+  method: 'PATCH',
+  headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ enc_content, enc_title,
+    word_count: newText.trim().split(/\\s+/).length, char_count: newText.length })
+});`;
+
 const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400', PUT: 'text-orange-400' };
 
 // Lightweight syntax highlighter. It NEVER alters the code text — it only wraps
@@ -614,6 +649,9 @@ function DocsTab({ onWizard }) {
             ))}
           </ol>
           <CodeBlock code={DECRYPT_SNIPPET} />
+          <h3 className="text-base text-white tracking-tight mt-8 mb-3">{d.delegation.writeTitle}</h3>
+          <p className="text-[#a0a0a0] mb-4">{d.delegation.write}</p>
+          <CodeBlock code={WRITE_SNIPPET} />
           <p className="text-[#666] text-xs mt-3">{d.delegation.note}</p>
         </section>
 

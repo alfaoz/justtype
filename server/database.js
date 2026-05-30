@@ -485,6 +485,21 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_oauth_grants_client_user ON oauth_slate_grants(client_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_oauth_grants_user_slate ON oauth_slate_grants(user_id, slate_number);
+
+    -- "Share all" relationships: an app the user has chosen to give access to ALL
+    -- of their private slates (current + future). This is only a flag/intent — the
+    -- actual readable data still lives as per-slate blobs in oauth_slate_grants,
+    -- wrapped client-side. Its presence makes the client auto-wrap newly written
+    -- slates for the app on save. Deleting the row stops future auto-sharing.
+    CREATE TABLE IF NOT EXISTS oauth_share_all (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (client_id, user_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_share_all_user ON oauth_share_all(user_id);
   `);
 
   // Add public_key to oauth_clients for key delegation (apps that want private-slate access).
@@ -492,6 +507,21 @@ try {
   if (!oauthClientColumns.some(col => col.name === 'public_key')) {
     db.exec(`ALTER TABLE oauth_clients ADD COLUMN public_key TEXT;`);
     console.log('✓ Database migrated: Added public_key column to oauth_clients');
+  }
+
+  // Two-way delegation: the per-slate content key is also wrapped to the user's
+  // own master key (owner_wrapped_key) so the justtype client can decrypt and
+  // ingest edits an app makes. last_writer tracks who touched the grant last
+  // ('owner' or 'app') — the client pulls app edits into the canonical slate
+  // when last_writer = 'app'.
+  const oauthGrantColumns = db.pragma('table_info(oauth_slate_grants)');
+  if (!oauthGrantColumns.some(col => col.name === 'owner_wrapped_key')) {
+    db.exec(`ALTER TABLE oauth_slate_grants ADD COLUMN owner_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added owner_wrapped_key column to oauth_slate_grants');
+  }
+  if (!oauthGrantColumns.some(col => col.name === 'last_writer')) {
+    db.exec(`ALTER TABLE oauth_slate_grants ADD COLUMN last_writer TEXT DEFAULT 'owner';`);
+    console.log('✓ Database migrated: Added last_writer column to oauth_slate_grants');
   }
   console.log('✓ OAuth provider tables initialized');
 

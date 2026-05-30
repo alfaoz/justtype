@@ -3,14 +3,16 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, importAppPublicKey, reencryptForApp, decryptOwnerGrant } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
 
-// Live re-sync: if this slate has been delegated to any third-party apps, re-wrap
-// the just-saved plaintext to each app's public key so they always see the latest.
-// Best-effort and non-blocking; the server only ever stores opaque blobs.
-async function resyncSharedGrants(slateNumber, content, title) {
+// Live re-sync (push): re-wrap the just-saved plaintext to every app that should
+// hold a copy of this slate — apps with an explicit grant AND apps the user gave
+// "share all" access (so brand-new slates auto-share). The content key is wrapped
+// to both the app's public key and the user's master key, marking last_writer =
+// 'owner'. Best-effort and non-blocking; the server only stores opaque blobs.
+async function resyncSharedGrants(slateNumber, content, title, masterKey) {
   try {
     const res = await fetch(`${API_URL}/account/slate-grants/by-slate/${encodeURIComponent(slateNumber)}`, { credentials: 'include' });
     if (!res.ok) return;
@@ -19,7 +21,7 @@ async function resyncSharedGrants(slateNumber, content, title) {
     for (const app of apps) {
       try {
         const pub = await importAppPublicKey(app.public_key);
-        const grant = await reencryptForApp(content, title, pub);
+        const grant = await reencryptForApp(content, title, pub, masterKey);
         await fetch(`${API_URL}/account/slate-grants`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -29,6 +31,44 @@ async function resyncSharedGrants(slateNumber, content, title) {
       } catch (e) { console.warn('grant re-sync failed for', app.client_id, e); }
     }
   } catch { /* best-effort */ }
+}
+
+// Persist adopted content as the canonical (master-key encrypted) slate.
+async function persistCanonical(slateNumber, content, title, masterKey) {
+  const titleToSave = (title && title.trim()) || (content.split('\n')[0].trim() || 'untitled slate');
+  const encryptedContent = await encryptContent(content, masterKey);
+  const encryptedTitle = await encryptTitle(titleToSave, masterKey);
+  const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+  const charCount = content.length;
+  const sizeBytes = new TextEncoder().encode(content).length;
+  await fetch(`${API_URL}/slates/${encodeURIComponent(slateNumber)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ encryptedTitle, encryptedContent, wordCount, charCount, sizeBytes })
+  });
+}
+
+// Pull (two-way sync): if a third-party app has edited this slate since the user
+// last touched it (last_writer = 'app'), decrypt that edit with the master key,
+// adopt it as the canonical slate, and re-sync (which marks everything 'owner'
+// again, clearing the pull flag). Returns the adopted { content, title } or null.
+async function pullAppEdits(slateNumber, masterKey) {
+  try {
+    const res = await fetch(`${API_URL}/account/slate-grants/by-slate/${encodeURIComponent(slateNumber)}`, { credentials: 'include' });
+    if (!res.ok) return null;
+    const apps = await res.json();
+    if (!Array.isArray(apps)) return null;
+    const pending = apps.find((a) => a.grant && a.grant.last_writer === 'app' && a.grant.owner_wrapped_key);
+    if (!pending) return null;
+    const { content, title } = await decryptOwnerGrant(pending.grant, masterKey);
+    await persistCanonical(slateNumber, content, title, masterKey);
+    await resyncSharedGrants(slateNumber, content, title, masterKey);
+    return { content, title };
+  } catch (e) {
+    console.warn('pull app edits failed for', slateNumber, e);
+    return null;
+  }
 }
 
 export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
@@ -610,9 +650,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const data = await response.json();
       let slateContent;
       let slateTitle = data.title;
+      let slateKey = null;
       if (data.encrypted && data.encryptedContent) {
         // E2E: decrypt client-side
-        const slateKey = await getSlateKey(userId);
+        slateKey = await getSlateKey(userId);
         if (!slateKey) {
           setIsLoading(false);
           onLogin();
@@ -631,6 +672,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       } else {
         slateContent = data.content;
       }
+
+      // Two-way sync: adopt any newer edit a connected app made to this slate.
+      if (data.encrypted && slateKey && !data.is_published) {
+        const merged = await pullAppEdits(id, slateKey);
+        if (merged) {
+          slateContent = merged.content;
+          if (merged.title != null && merged.title.trim()) slateTitle = merged.title;
+        }
+      }
+
       setTitle(slateTitle);
       setContent(slateContent);
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
@@ -835,7 +886,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       // Keep any third-party shares of this slate in sync with the new content.
       if (slateKey) {
         const slateNumber = currentSlate ? currentSlate.slate_number : data.slate_number;
-        if (slateNumber != null) resyncSharedGrants(slateNumber, content, titleToSave);
+        if (slateNumber != null) resyncSharedGrants(slateNumber, content, titleToSave, slateKey);
       }
 
       // Clear local draft since content is now saved to server

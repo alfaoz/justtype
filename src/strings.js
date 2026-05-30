@@ -379,12 +379,13 @@ const strings = {
       canAccess: 'can access',
       revoke: 'revoke',
       revoking: 'revoking...',
-      shareSlates: 'share private slates',
-      sharedCount: (n) => `${n} slate${n === 1 ? '' : 's'} shared`
+      shareSlates: 'manage slate access',
+      sharedCount: (n) => `${n} slate${n === 1 ? '' : 's'} shared`,
+      sharesAll: 'full access — all private slates'
     },
     shareSlates: {
-      title: 'share private slates',
-      subtitle: (app) => `pick which private slates ${app} can read. each is re-encrypted in your browser and locked to this app's key — your password and master key never leave your device.`,
+      title: 'private slate access',
+      subtitle: (app) => `control which private slates ${app} can read and write. everything is re-encrypted in your browser and locked to this app's key — your password and master key never leave your device.`,
       loading: 'loading your slates...',
       locked: 'unlock your account (enter your password/pin) before sharing, so your slates can be decrypted in this browser.',
       loadError: 'could not load sharing info.',
@@ -395,7 +396,15 @@ const strings = {
       working: '...',
       toggleError: 'could not update sharing. try again.',
       note: 'revocable anytime',
-      done: 'done'
+      done: 'done',
+      allTitle: 'allow all private slates',
+      allDesc: 'this app can read and write every private slate, including ones you create later. edits it makes sync back to you. you can turn this off anytime.',
+      allOn: 'on',
+      allOff: 'off',
+      sharingAll: (done, total) => `sharing… ${done}/${total}`,
+      unsharingAll: 'turning off…',
+      advanced: 'or share specific slates only',
+      advancedHint: 'pick individual slates instead of granting full access.'
     },
     sessions: {
       title: 'sessions',
@@ -924,15 +933,17 @@ take care!
       },
       delegation: {
         title: 'private slates',
-        body: 'with the slates:read:private scope plus a registered public key, a user can choose to share specific private slates with your app. it works by key delegation: in the user\'s browser, each chosen slate is re-encrypted under a fresh content key, and that key is wrapped to your public key. justtype only stores the wrapped blobs — it still cannot read them. you decrypt with your private key.',
+        body: 'with the slates:read:private scope plus a registered public key, a user can grant your app access to their private slates — all of them (current + future) with one switch, or specific ones. it works by key delegation: in the user\'s browser, each shared slate is re-encrypted under a fresh content key, and that key is wrapped to your public key. justtype only stores the wrapped blobs — it still cannot read them. you decrypt with your private key.',
         steps: [
           'register your app with the slates:read:private scope — /dev generates an rsa keypair and shows you the private key once.',
           'request the scope in your oauth flow as usual; the user approves.',
-          'the user opens their justtype account → connected apps → share, and picks which private slates to share with you.',
+          'the user opens their justtype account → connected apps → manage slate access, and flips on "allow all private slates" (or picks specific ones).',
           'GET /api/oauth/slates/:n returns { wrapped_key, enc_content, enc_title } for shared slates (delegated: true).',
           'unwrap the content key with your private key, then aes-256-gcm decrypt the content and title.'
         ],
-        note: 'sharing is per-slate and revocable: the user (or revoking your app) deletes the blobs and future reads stop. edits re-sync automatically while a slate stays shared.'
+        note: 'access is revocable anytime: the user (or revoking your app) deletes the blobs and future reads stop. while a slate stays shared, the user\'s own edits re-sync to you automatically.',
+        writeTitle: 'writing back (two-way)',
+        write: 'with a shared slate you can also write. re-encrypt under the SAME content key you unwrapped (do not generate a new one), then PATCH /api/oauth/slates/:n/delegated with the new enc_content (and optional enc_title). the next time the user opens that slate in justtype, your edit is decrypted with their master key and merged into their canonical copy. tip: GET the slate again right before writing so you have the current key — the user\'s own edits rotate it.'
       },
       scopes: { title: 'scopes' },
       flow: {

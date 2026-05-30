@@ -4,10 +4,13 @@ import { strings } from '../strings';
 import { getSlateKey } from '../keyStore';
 import { decryptContent, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
 
-// Modal for choosing which private slates to share with a connected app.
-// All crypto runs here in the browser: each shared slate is decrypted with the
-// user's master key, re-encrypted under a fresh content key, and that key is
-// wrapped to the app's public key. justtype only ever stores opaque blobs.
+// Modal for controlling which private slates a connected app can read and write.
+// The streamlined default is "allow all" — one switch shares every private slate
+// (current + future). A collapsible "specific slates" section keeps granular
+// control. All crypto runs here in the browser: each shared slate is decrypted
+// with the user's master key, re-encrypted under a fresh content key, and that
+// key is wrapped to BOTH the app's public key (so the app can read) and the
+// user's master key (so app edits can sync back). justtype only stores blobs.
 export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
   const s = strings.account.shareSlates;
   const [loading, setLoading] = useState(true);
@@ -17,6 +20,9 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
   const [busy, setBusy] = useState(new Set());        // slate_numbers mid-toggle
   const [appKey, setAppKey] = useState(null);         // imported public key
   const [slateKey, setSlateKey] = useState(null);     // user's master key
+  const [shareAll, setShareAll] = useState(false);    // blanket access on/off
+  const [bulk, setBulk] = useState(null);             // { done, total } | 'off' while working
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +62,8 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
           setAppKey(pubKey);
           setShared(sharedSet);
           setSlates(privateSlates);
+          setShareAll(!!grantData.share_all);
+          setShowAdvanced(!grantData.share_all && sharedSet.size > 0);
           setLoading(false);
         }
       } catch (e) {
@@ -71,41 +79,50 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
     return next;
   });
 
+  // Decrypt slate n with the master key, re-encrypt for the app (+ owner), upload.
+  const shareOne = async (n) => {
+    const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}`, { credentials: 'include' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || s.toggleError);
+    const content = data.encryptedContent
+      ? await decryptContent(data.encryptedContent, slateKey)
+      : (typeof data.content === 'string' ? data.content : '');
+    let title = (data.title || '').trim();
+    const encTitle = data.encrypted_title;
+    if ((!title || title === 'untitled') && encTitle) {
+      try { title = (await decryptTitle(encTitle, slateKey)).trim(); } catch { title = ''; }
+    }
+    const grant = await reencryptForApp(content, title, appKey, slateKey);
+    const up = await fetch(`${API_URL}/account/slate-grants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ client_id: clientId, slate_number: n, ...grant })
+    });
+    if (!up.ok) throw new Error(s.toggleError);
+  };
+
+  const unshareOne = async (n) => {
+    const res = await fetch(`${API_URL}/account/slate-grants`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ client_id: clientId, slate_number: n })
+    });
+    if (!res.ok) throw new Error(s.toggleError);
+  };
+
+  // Per-slate toggle (advanced section).
   const toggle = async (n) => {
     if (busy.has(n)) return;
     setError('');
     setBusyFor(n, true);
     try {
       if (shared.has(n)) {
-        const res = await fetch(`${API_URL}/account/slate-grants`, {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ client_id: clientId, slate_number: n })
-        });
-        if (!res.ok) throw new Error(s.toggleError);
+        await unshareOne(n);
         setShared((prev) => { const x = new Set(prev); x.delete(n); return x; });
       } else {
-        // Fetch + decrypt the slate, re-encrypt for the app, upload the blobs.
-        const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}`, { credentials: 'include' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || s.toggleError);
-        const content = data.encryptedContent
-          ? await decryptContent(data.encryptedContent, slateKey)
-          : (typeof data.content === 'string' ? data.content : '');
-        let title = (data.title || '').trim();
-        const encTitle = data.encrypted_title;
-        if ((!title || title === 'untitled') && encTitle) {
-          try { title = (await decryptTitle(encTitle, slateKey)).trim(); } catch { title = ''; }
-        }
-        const grant = await reencryptForApp(content, title, appKey);
-        const up = await fetch(`${API_URL}/account/slate-grants`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ client_id: clientId, slate_number: n, ...grant })
-        });
-        if (!up.ok) throw new Error(s.toggleError);
+        await shareOne(n);
         setShared((prev) => { const x = new Set(prev); x.add(n); return x; });
       }
       onChanged?.();
@@ -115,6 +132,63 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
       setBusyFor(n, false);
     }
   };
+
+  // Blanket access: record intent server-side, then wrap every private slate.
+  const enableAll = async () => {
+    setError('');
+    setBulk({ done: 0, total: slates.length });
+    try {
+      const flag = await fetch(`${API_URL}/account/slate-grants/share-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ client_id: clientId })
+      });
+      if (!flag.ok) throw new Error(s.toggleError);
+
+      const next = new Set(shared);
+      let done = 0;
+      for (const sl of slates) {
+        if (!next.has(sl.slate_number)) {
+          try { await shareOne(sl.slate_number); next.add(sl.slate_number); }
+          catch (e) { console.warn('share failed for', sl.slate_number, e); }
+        }
+        setBulk({ done: ++done, total: slates.length });
+      }
+      setShared(next);
+      setShareAll(true);
+      setShowAdvanced(false);
+      onChanged?.();
+    } catch (e) {
+      setError(e.message || s.toggleError);
+    } finally {
+      setBulk(null);
+    }
+  };
+
+  // Turn off blanket access: server drops the flag and all grants in one call.
+  const disableAll = async () => {
+    setError('');
+    setBulk('off');
+    try {
+      const res = await fetch(`${API_URL}/account/slate-grants/share-all`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ client_id: clientId })
+      });
+      if (!res.ok) throw new Error(s.toggleError);
+      setShared(new Set());
+      setShareAll(false);
+      onChanged?.();
+    } catch (e) {
+      setError(e.message || s.toggleError);
+    } finally {
+      setBulk(null);
+    }
+  };
+
+  const working = bulk !== null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={onClose}>
@@ -135,32 +209,77 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
           ) : slates.length === 0 ? (
             <p className="text-[#666] text-sm">{s.none}</p>
           ) : (
-            <div className="space-y-1.5">
-              {slates.map((sl) => {
-                const on = shared.has(sl.slate_number);
-                const working = busy.has(sl.slate_number);
-                return (
+            <div className="space-y-4">
+              {/* master switch: all private slates */}
+              <div className="flex items-start gap-3 rounded-lg border border-[#333] bg-[#1a1a1a] px-3.5 py-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-[#d4d4d4]">{s.allTitle}</div>
+                  <div className="text-xs text-[#666] mt-1 leading-relaxed">{s.allDesc}</div>
+                  {bulk && bulk !== 'off' && (
+                    <div className="text-xs text-[#888] mt-2">{s.sharingAll(bulk.done, bulk.total)}</div>
+                  )}
+                  {bulk === 'off' && <div className="text-xs text-[#888] mt-2">{s.unsharingAll}</div>}
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={shareAll}
+                  disabled={working}
+                  onClick={() => (shareAll ? disableAll() : enableAll())}
+                  className={`shrink-0 mt-0.5 w-11 h-6 rounded-full border transition-colors disabled:opacity-50 relative ${
+                    shareAll ? 'bg-white border-white' : 'bg-[#0a0a0a] border-[#444]'
+                  }`}
+                >
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${
+                    shareAll ? 'left-[1.4rem] bg-black' : 'left-0.5 bg-[#666]'
+                  }`} />
+                </button>
+              </div>
+
+              {/* advanced: specific slates (hidden while full access is on) */}
+              {!shareAll && (
+                <div>
                   <button
-                    key={sl.slate_number}
-                    onClick={() => toggle(sl.slate_number)}
-                    disabled={working}
-                    className={`w-full text-left flex items-center gap-3 rounded px-3 py-2 border transition-colors disabled:opacity-60 ${
-                      on ? 'border-[#333] bg-[#1a1a1a]' : 'border-transparent hover:bg-[#1a1a1a]'
-                    }`}
+                    type="button"
+                    onClick={() => setShowAdvanced((v) => !v)}
+                    className="flex items-center gap-2 text-xs text-[#808080] hover:text-[#d4d4d4] transition-colors"
                   >
-                    <span className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
-                      on ? 'bg-white text-black border-white' : 'border-[#666] text-transparent'
-                    }`}>✓</span>
-                    <span className="flex-1 min-w-0 truncate text-sm text-[#d4d4d4]">{sl.title}</span>
-                    <span className="text-[10px] text-[#666] shrink-0">
-                      {working ? s.working : (on ? s.shared : s.share)}
-                    </span>
+                    <span>{showAdvanced ? '−' : '+'}</span>
+                    <span>{s.advanced}</span>
                   </button>
-                );
-              })}
+                  {showAdvanced && (
+                    <div className="mt-3 space-y-1.5">
+                      <p className="text-xs text-[#666] mb-2">{s.advancedHint}</p>
+                      {slates.map((sl) => {
+                        const on = shared.has(sl.slate_number);
+                        const wk = busy.has(sl.slate_number);
+                        return (
+                          <button
+                            key={sl.slate_number}
+                            onClick={() => toggle(sl.slate_number)}
+                            disabled={wk || working}
+                            className={`w-full text-left flex items-center gap-3 rounded px-3 py-2 border transition-colors disabled:opacity-60 ${
+                              on ? 'border-[#333] bg-[#1a1a1a]' : 'border-transparent hover:bg-[#1a1a1a]'
+                            }`}
+                          >
+                            <span className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
+                              on ? 'bg-white text-black border-white' : 'border-[#666] text-transparent'
+                            }`}>✓</span>
+                            <span className="flex-1 min-w-0 truncate text-sm text-[#d4d4d4]">{sl.title}</span>
+                            <span className="text-[10px] text-[#666] shrink-0">
+                              {wk ? s.working : (on ? s.shared : s.share)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {error && <p className="text-red-400 text-xs">{error}</p>}
             </div>
           )}
-          {error && slates.length > 0 && <p className="text-red-400 text-xs mt-3">{error}</p>}
         </div>
 
         <div className="p-4 border-t border-[#333] flex items-center justify-between">

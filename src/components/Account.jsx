@@ -1459,7 +1459,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                             >
                               {strings.account.connectedApps.shareSlates}
                             </button>
-                            {app.shared_count > 0 && (
+                            {app.share_all ? (
+                              <span className="text-xs text-[#888]">{strings.account.connectedApps.sharesAll}</span>
+                            ) : app.shared_count > 0 && (
                               <span className="text-xs text-[#666]">{strings.account.connectedApps.sharedCount(app.shared_count)}</span>
                             )}
                           </div>

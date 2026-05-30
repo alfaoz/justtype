@@ -223,12 +223,27 @@ export async function wrapKeyToAppKey(keyBytes, appPublicKey) {
 // Re-encrypt a slate's plaintext for an app. Generates a fresh content key,
 // encrypts content + title under it (justtype's own blob format), and wraps the
 // content key to the app's public key. Returns base64 blobs ready to upload.
-export async function reencryptForApp(plainContent, plainTitle, appPublicKey) {
+//
+// For two-way sharing, pass the user's masterKey: the content key is ALSO wrapped
+// to it (owner_wrapped_key) so the justtype client can later decrypt edits the app
+// makes to this grant. Without masterKey the grant stays app-readable only.
+export async function reencryptForApp(plainContent, plainTitle, appPublicKey, masterKey = null) {
   const contentKey = crypto.getRandomValues(new Uint8Array(32));
   const enc_content = await encryptContent(plainContent || '', contentKey);
   const enc_title = (plainTitle != null && plainTitle !== '') ? await encryptTitle(plainTitle, contentKey) : null;
   const wrapped_key = await wrapKeyToAppKey(contentKey, appPublicKey);
-  return { wrapped_key, enc_content, enc_title };
+  const owner_wrapped_key = masterKey ? await wrapKey(contentKey, masterKey) : null;
+  return { wrapped_key, owner_wrapped_key, enc_content, enc_title };
+}
+
+// Owner-side read of a grant an app may have written to. Unwraps the content key
+// from owner_wrapped_key with the user's master key, then decrypts the app's
+// content + title blobs. Returns { content, title } (title null if absent).
+export async function decryptOwnerGrant(grant, masterKey) {
+  const contentKey = await unwrapKey(grant.owner_wrapped_key, masterKey);
+  const content = grant.enc_content ? await decryptContent(grant.enc_content, contentKey) : '';
+  const title = grant.enc_title ? await decryptTitle(grant.enc_title, contentKey) : null;
+  return { content, title };
 }
 
 function pemEncode(bytes, label) {
