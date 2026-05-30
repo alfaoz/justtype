@@ -131,6 +131,7 @@ Request `email` only if you actually need the address — fewer scopes, more tru
 | GET | `/api/oauth/userinfo` | identity | `{ id, username, email?, email_verified?, public_key? }` (public_key present with `slates:create`) |
 | GET | `/api/oauth/users/me/public-key` | slates:create | the user's RSA-OAEP public key to wrap a drop to (`null` if not generated yet) |
 | POST | `/api/oauth/slates/drop` | slates:create | create a new private (E2E) slate for the user (§7) |
+| GET | `/api/oauth/dropbox` | slates:create | drop-box sync status: keypair readiness + pending/delivered counts (§7) |
 | GET | `/api/oauth/slates` | slates:read:meta | slate list + counts |
 | GET | `/api/oauth/slates/published` | slates:read:public | all published slates with full text |
 | GET | `/api/oauth/slates/:n` | slates:read:private | published→plaintext, delegated→decryptable, else ciphertext |
@@ -488,17 +489,44 @@ zero-knowledge guarantee, so the server can never adopt it for them. What the se
 
 | user's state | when the note appears |
 |---|---|
-| justtype open in a tab | ~1 second (server pushes a live event; the client adopts immediately) |
-| installed/PWA, no tab, push allowed | seconds — a service worker is woken to import (except where the OS throttles background workers, e.g. iOS Safari) |
-| all their devices closed | the moment they next open/unlock justtype; the server still notifies them right away |
+| justtype open in a tab | ~1 second — the server signals the open client over SSE and it adopts immediately |
+| no tab open | the next time the user opens justtype (unlocked); the drop waits, encrypted, until then |
 
-So: **don't promise users an instant appearance** unless justtype is already open.
-The honest phrasing is "shows up next time you open justtype." The note is never lost
-in the meantime — it waits, encrypted to the user, until a device can open it.
+justtype does **not** send notifications for drops — they surface silently in the
+user's slate list, never as a system notification. So **don't promise users an
+instant appearance** unless justtype is already open. The honest phrasing is "shows
+up next time you open justtype." The note is never lost in the meantime — it waits,
+encrypted to the user, until a device can open it.
+
+To track delivery yourself, poll **`GET /api/oauth/dropbox`** (below): it tells you
+how many of your drops are still `pending` vs `delivered`, so you can show your own
+"synced / waiting" state instead of guessing.
+
+### Checking sync status — `GET /api/oauth/dropbox`
+Scoped to your app + the user. Reveals no slate content.
+
+```
+GET /api/oauth/dropbox            (scope slates:create)
+  {
+    keypair_ready: true,                 // user has a key; drops will be accepted
+    public_key: "<base64 SPKI>" | null,  // same value as /users/me/public-key
+    key_scheme: "rsa-oaep-sha256",
+    pending: 2,                          // your drops not yet adopted by the user
+    delivered: 5,                        // your drops the user has adopted (kept)
+    last_drop_at: 1717000000,            // unix secs of your latest pending drop, or null
+    last_delivered_at: "2026-05-30T...", // ISO time the user last adopted one, or null
+    synced: false                        // true when pending == 0
+  }
+```
+
+Typical uses: gate creation on `keypair_ready` (avoid a `409`); show "2 notes waiting
+for you to open justtype" from `pending`; flip your UI to "all synced" when `synced`.
 
 ### What the user sees, and what happens to the note long-term
 - Adopted slates are **tagged with your app's name** ("from <app>") in the user's slate
-  list, and the user is notified. It is not a silent insertion.
+  list, and appear silently (no notification). It is not a hidden insertion — the tag
+  and the **filter-by-app** control in their slate list make every app-created note
+  visible and reviewable.
 - Once adopted, the note is **re-encrypted to the user's own master key** and is
   indistinguishable from one they wrote. **It is theirs permanently** — it stays even
   if the user later removes your app, and your app has no further claim on it.
@@ -541,7 +569,8 @@ A full justtype client, in order. Each step links to the section that specifies 
    re-encrypt under that same content key, `PATCH .../delegated`.
 6. **Create new private slates** (§7): fetch the user's public key, wrap a fresh
    content key to it, `POST /api/oauth/slates/drop`. Handle `409 keypair_unavailable`
-   by retrying later.
+   by retrying later. Poll `GET /api/oauth/dropbox` for sync status (keypair
+   readiness, pending vs delivered) to drive your own "synced / waiting" UI.
 7. **Manage lifecycle:** `DELETE /api/oauth/slates/:n` (§4) and
    `PATCH /api/oauth/slates/:n/publish` (§4).
 8. **Respect the model:** never expect the server to reveal plaintext of a private

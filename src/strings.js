@@ -969,8 +969,9 @@ take care!
         dropPoints: [
           'request slates:create; fetch the user\'s public key (GET /api/oauth/users/me/public-key). if it is null they have no keypair yet — retry after they next open justtype.',
           'encrypt content + title under a fresh 32-byte content key (same blob format as everything else), wrap that key to the user\'s public key, and POST /api/oauth/slates/drop.',
-          'timing: appears in ~1s if justtype is open, on push-wake for installed clients, otherwise next time the user opens justtype. only their device can decrypt it, so it is never instant when all their devices are closed — tell users "shows up next time you open justtype".',
-          'the note is tagged "from <your app>" in the user\'s list. once adopted it is re-encrypted to their master key and is theirs permanently — it stays even if they remove your app, and an un-adopted drop survives revocation too.'
+          'timing: appears in ~1s if justtype is open (live sse), otherwise the next time the user opens justtype. there are no notifications — drops surface silently in their slate list. only their device can decrypt it, so it is never instant when no tab is open — tell users "shows up next time you open justtype".',
+          'track delivery with GET /api/oauth/dropbox: it returns keypair_ready plus pending/delivered counts for your app, so you can show "2 notes waiting" or "all synced" instead of guessing.',
+          'the note is tagged "from <your app>" in the user\'s list (with a filter-by-app control). once adopted it is re-encrypted to their master key and is theirs permanently — it stays even if they remove your app, and an un-adopted drop survives revocation too.'
         ]
       },
       scopes: {
@@ -999,6 +1000,7 @@ take care!
           ['GET',   '/api/oauth/userinfo',            'scope: identity → { id, username, email?, public_key? }'],
           ['GET',   '/api/oauth/users/me/public-key', 'scope: slates:create → the user\'s public key to wrap a drop to'],
           ['POST',  '/api/oauth/slates/drop',         'scope: slates:create → drop a new private (encrypted) slate for the user'],
+          ['GET',   '/api/oauth/dropbox',             'scope: slates:create → drop-box sync status (keypair readiness, pending/delivered counts)'],
           ['GET',   '/api/oauth/slates',              'scope: slates:read:meta → slate list + counts'],
           ['GET',   '/api/oauth/slates/published',    'scope: slates:read:public → full published text'],
           ['GET',   '/api/oauth/slates/:n',           'scope: slates:read:private → published→plaintext, delegated→decryptable, else ciphertext'],
@@ -1018,6 +1020,7 @@ take care!
           ['POST /oauth/token', '{ access_token, token_type: "Bearer", expires_in, refresh_token, scope }'],
           ['GET /api/oauth/userinfo', '{ id, username, email?, email_verified?,\n  public_key? }   // public_key only with slates:create'],
           ['POST /api/oauth/slates/drop', 'req:  { wrapped_key, enc_content, enc_title? }\nok:   { success: true, drop_id, status: "pending_adoption" }\n409:  { error: "keypair_unavailable" }   // retry later'],
+          ['GET /api/oauth/dropbox', '{ keypair_ready, public_key?, key_scheme,\n  pending, delivered, last_drop_at, last_delivered_at,\n  synced }   // sync status for your app + this user'],
           ['GET /api/oauth/slates', '[ { slate_number, is_published, share_id, title|null,\n    title_encrypted, word_count, char_count,\n    created_at, updated_at, published_at } ]'],
           ['GET /api/oauth/slates/:n  (published)', '{ slate_number, delegated: false, published: true,\n  title, content }   // plaintext — published slates are public'],
           ['GET /api/oauth/slates/:n  (delegated)', '{ slate_number, delegated: true,\n  key_scheme: "rsa-oaep-sha256", content_scheme: "aes-256-gcm",\n  wrapped_key, enc_content, enc_title, shared_at }'],

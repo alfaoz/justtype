@@ -774,7 +774,8 @@ function mountOAuth(app, deps) {
       const info = db.prepare(`INSERT INTO oauth_slate_drops (client_id, user_id, wrapped_key, enc_content, enc_title)
         VALUES (?, ?, ?, ?, ?)`).run(req.oauth.clientId, req.oauth.userId, wrapped_key, enc_content, enc_title || null);
 
-      // Wake the user's clients (SSE now, web push to closed ones). Best-effort.
+      // Nudge any open client to adopt now (SSE). Closed clients adopt on next
+      // unlock — no notifications. Best-effort.
       if (dropHub) { try { await dropHub.notifyDrop(db, req.oauth.userId); } catch {} }
 
       res.status(201).json({ success: true, drop_id: info.lastInsertRowid, status: 'pending_adoption' });
@@ -782,6 +783,39 @@ function mountOAuth(app, deps) {
       console.error('oauth slate drop:', e);
       res.status(500).json({ error: 'server_error' });
     }
+  });
+
+  // GET /api/oauth/dropbox — sync status for the calling app. Lets an app answer
+  // "can I drop yet?" and "has the user picked up what I dropped?" without
+  // guessing. All scoped to THIS app + user; reveals no slate content.
+  //
+  //   keypair_ready  the user has published a key, so drops will be accepted
+  //   public_key     that key (or null) — same value as /users/me/public-key
+  //   pending        your drops still waiting for the user to open justtype
+  //   delivered      slates you created that the user has adopted (kept) so far
+  //   last_drop_at   unix secs of your most recent still-pending drop (or null)
+  //   last_delivered_at  ISO time the user last adopted one of your drops (or null)
+  //   synced         true when you have no pending drops (everything delivered)
+  app.get('/api/oauth/dropbox', publicCors, authenticateOAuth('slates:create'), (req, res) => {
+    const { userId, clientId } = req.oauth;
+    const user = db.prepare('SELECT public_key FROM users WHERE id = ?').get(userId);
+    const pendingRow = db.prepare(
+      'SELECT COUNT(*) AS n, MAX(created_at) AS last FROM oauth_slate_drops WHERE client_id = ? AND user_id = ?'
+    ).get(clientId, userId);
+    const deliveredRow = db.prepare(
+      'SELECT COUNT(*) AS n, MAX(updated_at) AS last FROM slates WHERE user_id = ? AND source_app = ?'
+    ).get(userId, clientId);
+    const pending = pendingRow?.n || 0;
+    res.json({
+      keypair_ready: !!(user && user.public_key),
+      public_key: user?.public_key || null,
+      key_scheme: 'rsa-oaep-sha256',
+      pending,
+      delivered: deliveredRow?.n || 0,
+      last_drop_at: pendingRow?.last || null,
+      last_delivered_at: deliveredRow?.last || null,
+      synced: pending === 0
+    });
   });
 
   // PUT /api/oauth/slates/:n — update the content/title of a published slate.

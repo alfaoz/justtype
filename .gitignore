@@ -38,3 +38,6 @@ session2.txt
 
 # Plans & internal docs
 GOOGLE_DRIVE_IMPLEMENTATION_PLAN.md
+
+# env backups
+.env.bak.*
