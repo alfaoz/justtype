@@ -1018,6 +1018,50 @@ function mountOAuth(app, deps) {
     res.json({ success: true, removed: r.changes });
   });
 
+  // Bulk upsert many re-wrapped grants in a single transaction — used when sharing
+  // all slates, so the client makes one request per batch instead of one per slate.
+  // Each entry is the same shape as the single POST below; all marked last_writer
+  // = 'owner'. Slates the user doesn't own are skipped.
+  app.post('/api/account/slate-grants/batch', deps.authenticateToken, (req, res) => {
+    const { client_id, grants } = req.body || {};
+    if (!client_id || !Array.isArray(grants) || grants.length === 0) {
+      return res.status(400).json({ error: 'client_id and a non-empty grants[] are required' });
+    }
+    if (grants.length > 500) return res.status(413).json({ error: 'too many grants in one batch (max 500)' });
+    if (!grantableClient(req.user.id, client_id)) {
+      return res.status(403).json({ error: 'client not authorized for private slates' });
+    }
+    for (const g of grants) {
+      if (!g || g.slate_number == null || !g.wrapped_key || !g.enc_content) {
+        return res.status(400).json({ error: 'each grant needs slate_number, wrapped_key, enc_content' });
+      }
+      if ([g.wrapped_key, g.owner_wrapped_key, g.enc_content, g.enc_title].some(v => v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB))) {
+        return res.status(413).json({ error: 'blob too large' });
+      }
+    }
+    const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ?').all(req.user.id).map(r => r.slate_number));
+    const upsert = db.prepare(`INSERT INTO oauth_slate_grants
+        (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'owner', strftime('%s','now'), strftime('%s','now'))
+      ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
+        wrapped_key = excluded.wrapped_key,
+        owner_wrapped_key = excluded.owner_wrapped_key,
+        enc_content = excluded.enc_content,
+        enc_title = excluded.enc_title,
+        last_writer = 'owner',
+        updated_at = strftime('%s','now')`);
+    const run = db.transaction((rows) => {
+      let saved = 0;
+      for (const g of rows) {
+        if (!owned.has(Number(g.slate_number))) continue;
+        upsert.run(client_id, req.user.id, g.slate_number, g.wrapped_key, g.owner_wrapped_key || null, g.enc_content, g.enc_title || null);
+        saved++;
+      }
+      return saved;
+    });
+    res.json({ success: true, saved: run(grants) });
+  });
+
   // Upsert a re-wrapped slate blob (share, or refresh an existing share).
   // owner_wrapped_key (the content key wrapped to the user's own master key) is
   // optional but required for two-way sync — without it the client can't later

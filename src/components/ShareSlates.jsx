@@ -79,8 +79,9 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
     return next;
   });
 
-  // Decrypt slate n with the master key, re-encrypt for the app (+ owner), upload.
-  const shareOne = async (n) => {
+  // Fetch slate n, decrypt with the master key, re-encrypt for the app (+ owner).
+  // Returns the grant payload without uploading, so callers can batch.
+  const wrapOne = async (n) => {
     const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}`, { credentials: 'include' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || s.toggleError);
@@ -93,11 +94,17 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
       try { title = (await decryptTitle(encTitle, slateKey)).trim(); } catch { title = ''; }
     }
     const grant = await reencryptForApp(content, title, appKey, slateKey);
+    return { slate_number: n, ...grant };
+  };
+
+  // Single-slate share (advanced per-slate toggle).
+  const shareOne = async (n) => {
+    const grant = await wrapOne(n);
     const up = await fetch(`${API_URL}/account/slate-grants`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ client_id: clientId, slate_number: n, ...grant })
+      body: JSON.stringify({ client_id: clientId, ...grant })
     });
     if (!up.ok) throw new Error(s.toggleError);
   };
@@ -133,10 +140,13 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
     }
   };
 
-  // Blanket access: record intent server-side, then wrap every private slate.
+  // Blanket access: record intent, then wrap every private slate. Wrapping runs
+  // in small concurrent batches (network-bound) and each batch uploads in a single
+  // request, so sharing a large library takes seconds rather than one slate at a time.
   const enableAll = async () => {
     setError('');
-    setBulk({ done: 0, total: slates.length });
+    const todo = slates.map((sl) => sl.slate_number).filter((n) => !shared.has(n));
+    setBulk({ done: 0, total: todo.length });
     try {
       const flag = await fetch(`${API_URL}/account/slate-grants/share-all`, {
         method: 'POST',
@@ -147,13 +157,25 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
       if (!flag.ok) throw new Error(s.toggleError);
 
       const next = new Set(shared);
+      const CONCURRENCY = 8;
       let done = 0;
-      for (const sl of slates) {
-        if (!next.has(sl.slate_number)) {
-          try { await shareOne(sl.slate_number); next.add(sl.slate_number); }
-          catch (e) { console.warn('share failed for', sl.slate_number, e); }
+      for (let i = 0; i < todo.length; i += CONCURRENCY) {
+        const chunk = todo.slice(i, i + CONCURRENCY);
+        const wrapped = await Promise.all(chunk.map(async (n) => {
+          try { return await wrapOne(n); } catch (e) { console.warn('wrap failed for', n, e); return null; }
+        }));
+        const ok = wrapped.filter(Boolean);
+        if (ok.length) {
+          const up = await fetch(`${API_URL}/account/slate-grants/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ client_id: clientId, grants: ok })
+          });
+          if (up.ok) ok.forEach((g) => next.add(g.slate_number));
         }
-        setBulk({ done: ++done, total: slates.length });
+        done += chunk.length;
+        setBulk({ done, total: todo.length });
       }
       setShared(next);
       setShareAll(true);
