@@ -525,6 +525,72 @@ try {
   }
   console.log('✓ OAuth provider tables initialized');
 
+  // ---- "drop box": app-initiated encrypted slate creation -----------------
+  //
+  // Third-party apps can create a NEW private slate for a user without ever
+  // touching the user's master key. They encrypt the note under a fresh content
+  // key and wrap that key to the USER'S published RSA public key (the one
+  // inversion from the app-grant flow, where the user wraps to the app's key).
+  // The user's client later decrypts the drop with its RSA private key and
+  // "adopts" it as a normal master-key-encrypted slate. The server only ever
+  // stores opaque blobs — it cannot read a drop, exactly like every other slate.
+
+  // Each user publishes an RSA-OAEP public key (SPKI, base64) so apps have a
+  // wrap target, and stores their RSA private key wrapped under their master key
+  // (enc_private_key) so it is recoverable across devices without the server
+  // ever seeing it. Both are null until the client generates a keypair on unlock.
+  const userKeypairCols = db.pragma('table_info(users)');
+  if (!userKeypairCols.some(col => col.name === 'public_key')) {
+    db.exec(`ALTER TABLE users ADD COLUMN public_key TEXT;`);
+    console.log('✓ Database migrated: Added public_key column to users');
+  }
+  if (!userKeypairCols.some(col => col.name === 'enc_private_key')) {
+    db.exec(`ALTER TABLE users ADD COLUMN enc_private_key TEXT;`);
+    console.log('✓ Database migrated: Added enc_private_key column to users');
+  }
+
+  // Provenance: a slate adopted from an app drop records which app created it,
+  // so the user can see "added by X" and bulk-undo. Null for self-authored slates.
+  const slateCols2 = db.pragma('table_info(slates)');
+  if (!slateCols2.some(col => col.name === 'source_app')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN source_app TEXT;`);
+    console.log('✓ Database migrated: Added source_app column to slates');
+  }
+
+  db.exec(`
+    -- Pending app-created drops, awaiting adoption by the user's client.
+    -- wrapped_key is the content key RSA-OAEP wrapped to the USER's public key.
+    -- enc_content / enc_title are AES-256-GCM under that content key.
+    CREATE TABLE IF NOT EXISTS oauth_slate_drops (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      wrapped_key TEXT NOT NULL,
+      enc_content TEXT NOT NULL,
+      enc_title TEXT,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_drops_user ON oauth_slate_drops(user_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_drops_client ON oauth_slate_drops(client_id, user_id);
+
+    -- Web Push subscriptions, so the server can instantly signal "a drop arrived"
+    -- even when no tab is open. The push payload carries no plaintext — only a
+    -- wake/notify ping; the actual note is decrypted client-side.
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (user_id, endpoint),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+  `);
+  console.log('✓ Slate-drop (app-create) tables initialized');
+
   // Drop old empty announcement tables if they exist
   db.exec(`DROP TABLE IF EXISTS announcement_reads;`);
   db.exec(`DROP TABLE IF EXISTS announcements;`);

@@ -11,6 +11,7 @@ const db = require('./database');
 const b2Storage = require('./b2Storage');
 const b2Monitor = require('./b2Monitor');
 const { mountOAuth } = require('./oauth');
+const dropHub = require('./dropHub');
 const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
 const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogger');
@@ -1080,13 +1081,16 @@ const requireEncryptionKey = (req, res, next) => {
 };
 
 // ============ OAUTH PROVIDER (third-party "sign in with justtype") ============
+dropHub.initPush();
+
 mountOAuth(app, {
   db, jwt, JWT_SECRET, crypto, b2Storage,
   authenticateToken,
   isProduction: process.env.NODE_ENV === 'production',
   generateUniqueShareId,
   checkStorageLimit,
-  updateUserStorage
+  updateUserStorage,
+  dropHub
 });
 
 // ============ AUTH ROUTES ============
@@ -1400,7 +1404,7 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const userFull = db.prepare('SELECT e2e_migrated FROM users WHERE id = ?').get(req.user.id);
+    const userFull = db.prepare('SELECT e2e_migrated, public_key FROM users WHERE id = ?').get(req.user.id);
     const responseData = {
       id: user.id,
       username: user.username,
@@ -1410,7 +1414,10 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
       requiresMigration: !user.key_migrated && user.auth_provider !== 'google',
       recoveryKeyPending: user.key_migrated && !user.recovery_key_shown && user.auth_provider !== 'google',
       e2eMigrated: !!(userFull && userFull.e2e_migrated),
-      needsPinSetup: (user.auth_provider === 'google') && !userFull?.e2e_migrated && !user.key_migrated
+      needsPinSetup: (user.auth_provider === 'google') && !userFull?.e2e_migrated && !user.key_migrated,
+      // Drop-box: whether this user has published an RSA keypair yet. The client
+      // generates one on unlock if missing, so apps have a wrap target for drops.
+      hasKeypair: !!(userFull && userFull.public_key)
     };
 
     if (responseData.recoveryKeyPending) {
@@ -1422,6 +1429,168 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
     console.error('Get user info error:', error);
     res.status(500).json({ error: 'Failed to get user info' });
   }
+});
+
+// ============ DROP BOX: user keypair + app-created slate adoption ============
+//
+// Lets third-party apps create NEW private slates for a user without ever
+// touching the master key. The app encrypts to the user's PUBLISHED public key;
+// the user's client decrypts with its private key and "adopts" the drop as a
+// normal master-key-encrypted slate. The server only moves opaque blobs.
+// See server/dropHub.js for the SSE / web-push delivery tiers.
+
+// Publish (or rotate) the user's RSA-OAEP public key, and store the private key
+// wrapped under the master key so it is recoverable across devices. The server
+// never sees the unwrapped private key — enc_private_key is opaque ciphertext,
+// exactly like a slate. The client generates this on unlock when hasKeypair is
+// false. We never let a published key be cleared back to null here.
+app.post('/api/account/keypair', authenticateToken, (req, res) => {
+  try {
+    const { public_key, enc_private_key } = req.body || {};
+    if (typeof public_key !== 'string' || public_key.length < 100 || public_key.length > 4000 || !/^[A-Za-z0-9+/=]+$/.test(public_key)) {
+      return res.status(400).json({ error: 'Invalid public key (expected base64 SPKI).' });
+    }
+    if (typeof enc_private_key !== 'string' || enc_private_key.length < 20 || enc_private_key.length > 16384 || !/^[A-Za-z0-9+/=]+$/.test(enc_private_key)) {
+      return res.status(400).json({ error: 'Invalid wrapped private key.' });
+    }
+    db.prepare('UPDATE users SET public_key = ?, enc_private_key = ? WHERE id = ?')
+      .run(public_key, enc_private_key, req.user.id);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('keypair publish error:', e);
+    res.status(500).json({ error: 'Failed to publish keypair' });
+  }
+});
+
+// Fetch the user's own wrapped keypair (e.g. on a new device, to recover the
+// private key by unwrapping it with the master key client-side).
+app.get('/api/account/keypair', authenticateToken, (req, res) => {
+  const row = db.prepare('SELECT public_key, enc_private_key FROM users WHERE id = ?').get(req.user.id);
+  res.json({
+    public_key: row?.public_key || null,
+    enc_private_key: row?.enc_private_key || null,
+    has_keypair: !!(row && row.public_key)
+  });
+});
+
+// List pending drops awaiting adoption. Returns opaque blobs only; the client
+// unwraps wrapped_key with its RSA private key, decrypts, then adopts.
+app.get('/api/account/slate-drops', authenticateToken, (req, res) => {
+  const rows = db.prepare(`SELECT d.id, d.client_id, d.wrapped_key, d.enc_content, d.enc_title, d.created_at,
+      c.name AS app_name
+    FROM oauth_slate_drops d LEFT JOIN oauth_clients c ON c.client_id = d.client_id
+    WHERE d.user_id = ? ORDER BY d.created_at ASC`).all(req.user.id);
+  res.json(rows.map(r => ({
+    id: r.id, client_id: r.client_id, app_name: r.app_name || r.client_id,
+    wrapped_key: r.wrapped_key, enc_content: r.enc_content, enc_title: r.enc_title || null,
+    created_at: r.created_at
+  })));
+});
+
+// Adopt a drop: the client has decrypted it and re-encrypted under the master
+// key. We store it as a normal E2E slate (encryption_version = 1) tagged with the
+// source app for provenance, then delete the drop. Atomic: the drop is only
+// removed once the slate row is written.
+app.post('/api/account/slate-drops/:id/adopt', authenticateToken, async (req, res) => {
+  const { encryptedContent, encryptedTitle, wordCount, charCount, sizeBytes } = req.body || {};
+  const maxSize = 5 * 1024 * 1024;
+  if (typeof encryptedContent !== 'string' || !encryptedContent.trim()) {
+    return res.status(400).json({ error: 'encryptedContent required' });
+  }
+  if (typeof encryptedTitle !== 'string' || !encryptedTitle.trim()) {
+    return res.status(400).json({ error: 'encryptedTitle required' });
+  }
+  try {
+    const drop = db.prepare('SELECT * FROM oauth_slate_drops WHERE id = ? AND user_id = ?')
+      .get(req.params.id, req.user.id);
+    if (!drop) return res.status(404).json({ error: 'drop not found' });
+
+    let encryptedBuffer;
+    try {
+      encryptedBuffer = decodeBase64Strict(encryptedContent, { maxBytes: maxSize });
+    } catch (err) {
+      if (err && err.code === 'BASE64_TOO_LARGE') {
+        return res.status(413).json({ error: 'Content too large (max 5 MB).' });
+      }
+      return res.status(400).json({ error: 'Invalid encrypted content' });
+    }
+
+    const storageCheck = checkStorageLimit(req.user.id, encryptedBuffer.length);
+    if (!storageCheck.allowed) return res.status(413).json({ error: storageCheck.error });
+
+    const slateId = `${req.user.id}-${Date.now()}`;
+    const b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
+    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+
+    const adopt = db.transaction(() => {
+      db.prepare(`INSERT INTO slates
+        (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, source_app)
+        VALUES (?, ?, '', ?, ?, ?, ?, ?, 1, ?)`).run(
+        req.user.id, nextNumber, encryptedTitle, b2FileId,
+        wordCount || 0, charCount || 0, sizeBytes || encryptedBuffer.length, drop.client_id
+      );
+      db.prepare('DELETE FROM oauth_slate_drops WHERE id = ?').run(drop.id);
+    });
+    adopt();
+
+    updateUserStorage(req.user.id);
+    res.status(201).json({ success: true, slate_number: nextNumber, source_app: drop.client_id });
+  } catch (error) {
+    console.error('adopt drop error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({ error: error.userMessage, code: error.code });
+    }
+    res.status(500).json({ error: 'Failed to adopt drop' });
+  }
+});
+
+// Discard a drop without adopting it (e.g. user rejects an app's note).
+app.delete('/api/account/slate-drops/:id', authenticateToken, (req, res) => {
+  const r = db.prepare('DELETE FROM oauth_slate_drops WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  res.json({ success: true, removed: r.changes });
+});
+
+// SSE stream: clients with an open tab get an instant "drops" ping when an app
+// deposits a drop, so adoption feels real-time. Auth via the session cookie.
+app.get('/api/account/events', authenticateToken, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write(`data: ${JSON.stringify({ type: 'ready' })}\n\n`);
+  dropHub.addSseClient(req.user.id, res);
+  const keepalive = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
+  req.on('close', () => { clearInterval(keepalive); dropHub.removeSseClient(req.user.id, res); });
+});
+
+// Web Push: expose the VAPID public key and register/unregister a subscription
+// so closed clients can be woken to adopt drops. No-ops cleanly if push is off.
+app.get('/api/account/push/key', authenticateToken, (req, res) => {
+  res.json({ enabled: dropHub.pushEnabled(), public_key: dropHub.getPublicKey() });
+});
+
+app.post('/api/account/push/subscribe', authenticateToken, (req, res) => {
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
+    return res.status(400).json({ error: 'invalid subscription' });
+  }
+  try {
+    db.prepare(`INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth`)
+      .run(req.user.id, endpoint, keys.p256dh, keys.auth);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'failed to subscribe' });
+  }
+});
+
+app.post('/api/account/push/unsubscribe', authenticateToken, (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?').run(req.user.id, endpoint);
+  res.json({ success: true });
 });
 
 // Verify token (for CLI and other clients)
@@ -2272,17 +2441,20 @@ app.get('/auth/google/link/callback',
 app.get('/api/slates', authenticateToken, (req, res) => {
   try {
     const slates = db.prepare(`
-      SELECT id, slate_number, title, encrypted_title, encrypted_tags, pinned_at, is_published, share_id, word_count, char_count, created_at, updated_at, published_at
-      FROM slates
-      WHERE user_id = ?
+      SELECT s.id, s.slate_number, s.title, s.encrypted_title, s.encrypted_tags, s.pinned_at, s.is_published,
+             s.share_id, s.word_count, s.char_count, s.created_at, s.updated_at, s.published_at,
+             s.source_app, c.name AS source_app_name
+      FROM slates s
+      LEFT JOIN oauth_clients c ON c.client_id = s.source_app
+      WHERE s.user_id = ?
     `).all(req.user.id);
 
     // For unpublished slates with encrypted_title, hide plaintext (client decrypts)
     const result = slates.map(slate => {
-      if (!slate.is_published && slate.encrypted_title) {
-        return { ...slate, title: null };
-      }
-      return slate;
+      const base = (!slate.is_published && slate.encrypted_title) ? { ...slate, title: null } : slate;
+      // Friendly provenance label for app-created (adopted) slates.
+      base.source_app_name = slate.source_app ? (slate.source_app_name || slate.source_app) : null;
+      return base;
     });
 
     res.json(result);

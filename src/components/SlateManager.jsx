@@ -648,6 +648,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
                     {status.label}
                   </span>
+                  {slate.source_app_name && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
+                      title={strings.slates.status.fromAppTitle.replace('{app}', slate.source_app_name)}
+                    >
+                      {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
+                    </span>
+                  )}
                   {visibleTags.map(tag => (
                     <button
                       key={tag}
@@ -764,6 +772,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
                     {status.label}
                   </span>
+                  {slate.source_app_name && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
+                      title={strings.slates.status.fromAppTitle.replace('{app}', slate.source_app_name)}
+                    >
+                      {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
+                    </span>
+                  )}
                   {visibleTags.map(tag => (
                     <button
                       key={tag}

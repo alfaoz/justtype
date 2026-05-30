@@ -29,6 +29,13 @@ There is one read endpoint for individual slates (`GET /api/oauth/slates/:n`); i
 returns plaintext for published slates, a decryptable blob for delegated private
 slates, and opaque ciphertext for private slates not shared with you.
 
+Apps can also **create** brand-new private slates for a user without ever holding
+the user's master key — the "drop box" (see §7). Each user publishes an RSA-OAEP
+public key; an app encrypts a new slate to it and drops it in. The user's client
+decrypts it on next unlock and adopts it as a normal private slate. This is the
+**only** way an app authors end-to-end-encrypted content; `slates:write` only
+produces plaintext slates.
+
 ---
 
 ## 2. OAuth 2.0 flow (authorization code + PKCE)
@@ -67,12 +74,18 @@ Registered redirect URIs are matched exactly. Allowed forms:
 | `slates:read:meta` | list slates with counts/dates (private titles stay encrypted) |
 | `slates:read:private` | read private slates the user shares with you (per-slate, revocable). **Also satisfies `slates:read:public`** — it is the full-read scope. Does NOT include `slates:read:meta`. |
 | `slates:write` | create/edit **published** (plaintext) slates |
+| `slates:create` | drop **new private (E2E) slates** into the user's account (§7). Does not grant read of anything. |
 | `slates:delete` | delete slates |
 | `slates:publish` | publish/unpublish slates |
 
-Note: the **delegated write** of a private slate (§6) is authorized by
-`slates:read:private`, NOT `slates:write`. `slates:write` is only for
-plaintext/published slates.
+Note: the **delegated write** of an *existing* private slate (§6) is authorized by
+`slates:read:private`, NOT `slates:write`. **Creating** a new private slate (§7) is
+authorized by `slates:create`. `slates:write` is only for plaintext/published
+slates — it can never produce or edit E2E content.
+
+The two private-slate capabilities are independent: `slates:read:private` lets you
+read/edit slates the user shares **with you**; `slates:create` lets you add **new**
+encrypted slates **to the user**. An app can hold either, both, or neither.
 
 ---
 
@@ -83,7 +96,9 @@ plaintext/published slates.
 | GET | `/oauth/authorize` | — | start the flow (browser redirect) |
 | POST | `/oauth/token` | — | exchange code, or refresh (rotates both tokens) |
 | POST | `/oauth/revoke` | — | revoke an access or refresh token |
-| GET | `/api/oauth/userinfo` | identity | `{ id, username, email?, email_verified? }` |
+| GET | `/api/oauth/userinfo` | identity | `{ id, username, email?, email_verified?, public_key? }` (public_key present with `slates:create`) |
+| GET | `/api/oauth/users/me/public-key` | slates:create | the user's RSA-OAEP public key to wrap a drop to (`null` if not generated yet) |
+| POST | `/api/oauth/slates/drop` | slates:create | create a new private (E2E) slate for the user (§7) |
 | GET | `/api/oauth/slates` | slates:read:meta | slate list + counts |
 | GET | `/api/oauth/slates/published` | slates:read:public | all published slates with full text |
 | GET | `/api/oauth/slates/:n` | slates:read:private | published→plaintext, delegated→decryptable, else ciphertext |
@@ -102,7 +117,16 @@ POST /oauth/token
   { access_token, token_type: "Bearer", expires_in, refresh_token, scope }
 
 GET /api/oauth/userinfo
-  { id, username, email?, email_verified? }
+  { id, username, email?, email_verified?,
+    public_key?, key_scheme? }            // public_key + key_scheme only with slates:create
+
+GET /api/oauth/users/me/public-key         (scope slates:create)
+  { public_key: "<base64 SPKI>" | null, key_scheme: "rsa-oaep-sha256" }
+
+POST /api/oauth/slates/drop                 (scope slates:create)
+  request:  { wrapped_key, enc_content, enc_title? }
+  success:  { success: true, drop_id, status: "pending_adoption" }
+  409:      { error: "keypair_unavailable" }   // user has no published key yet; retry later
 
 GET /api/oauth/slates                      (scope slates:read:meta)
   [ { slate_number, is_published, share_id, title|null, title_encrypted,
@@ -135,7 +159,9 @@ POST  /oauth/revoke                   ->  { success: true }   // body { token },
 - `401 invalid_client` — wrong client_id/secret. `401 invalid_token` — missing/expired/revoked bearer token.
 - `403 insufficient_scope` — token lacks the required scope (`error_description` names it).
 - `403` on a delegated slate — the user has not shared that slate with you.
-- `413` — content over 5 MB, or a grant blob over 8 MB per field.
+- `409 keypair_unavailable` on `POST /api/oauth/slates/drop` — the user has not
+  generated an encryption keypair yet (they will on next unlock). Retry later.
+- `413` — content over 5 MB, or a grant/drop blob over 8 MB per field.
 - A GCM "unable to authenticate data" error on decrypt is a **client-side** condition,
   not a server error — see §5.4.
 
@@ -183,6 +209,27 @@ slate as app-edited. The next time the user opens that slate in justtype, their 
 decrypts your edit with their master key and merges it into their canonical copy. The
 content key is stored wrapped to both your app key and the user's master key, so the
 round-trip works without the server ever seeing plaintext.
+
+### 5.6 Creating private slates (drop crypto)
+Delegation (§5.1–5.5) wraps a content key to **your app's** public key — that is for
+reading/editing slates the user shares with you. Creating a **new** private slate is
+the mirror image: you wrap to the **user's** public key instead. Same blob format,
+same algorithms (§5.1, §5.2) — only the wrap target changes.
+
+To drop a new slate:
+1. Fetch the user's public key (`GET /api/oauth/users/me/public-key`, or the
+   `public_key` field of `userinfo`). If it is `null`, the user has not generated a
+   keypair yet — retry after they next open justtype.
+2. Generate a fresh 32-byte content key.
+3. `enc_content` = AES-256-GCM of `{ "content": "<text>", "uploadedAt": "<ISO>" }`
+   under the content key; `enc_title` = AES-256-GCM of the raw title string (optional).
+4. `wrapped_key` = the content key, RSA-OAEP-SHA256 encrypted to the **user's** public
+   key (base64 SPKI you fetched in step 1).
+5. `POST /api/oauth/slates/drop` with `{ wrapped_key, enc_content, enc_title? }`.
+
+You never see the user's master key, and justtype never sees your plaintext. After the
+user's client adopts the drop it is re-keyed to their master key; the content key you
+used is discarded. See §7 for the full flow, timing, and what the user experiences.
 
 ---
 
@@ -318,7 +365,111 @@ curl https://justtype.io/api/oauth/slates/3 -H "Authorization: Bearer $ACCESS_TO
 
 ---
 
-## 7. Native apps (iOS/Android/desktop)
+## 7. The drop box — creating private slates for a user
+
+`slates:create` lets your app deposit **new end-to-end-encrypted slates** into a
+user's account. You encrypt to the user's published public key; their client decrypts
+on next unlock and adopts the note as a normal private slate. Neither justtype nor
+your server ever sees the plaintext, and you never touch the user's master key.
+
+### Create (Node)
+```js
+const { publicEncrypt, createCipheriv, randomBytes, constants } = require('crypto');
+const b64 = (s) => Buffer.from(s, 'base64');
+
+function aesGcmEncrypt(plaintext, key) {
+  const iv = randomBytes(16);                         // 16-byte IV (not 12)
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');  // IV||tag||ct
+}
+
+// 1. fetch the USER's public key (base64 SPKI). null => user has no keypair yet.
+const { public_key } = await (await fetch(
+  'https://justtype.io/api/oauth/users/me/public-key',
+  { headers: { Authorization: 'Bearer ' + accessToken } })).json();
+if (!public_key) throw new Error('keypair_unavailable — retry after the user opens justtype');
+
+// 2. fresh content key, 3. encrypt content + title under it
+const contentKey = randomBytes(32);
+const enc_content = aesGcmEncrypt(
+  JSON.stringify({ content: text, uploadedAt: new Date().toISOString() }), contentKey);
+const enc_title = title ? aesGcmEncrypt(title, contentKey) : null;
+
+// 4. wrap the content key to the USER's RSA-OAEP-SHA256 public key
+const userPub = `-----BEGIN PUBLIC KEY-----\n${public_key.match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`;
+const wrapped_key = publicEncrypt(
+  { key: userPub, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+  contentKey).toString('base64');
+
+// 5. drop it
+await fetch('https://justtype.io/api/oauth/slates/drop', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ wrapped_key, enc_content, enc_title })
+});
+```
+
+### Create (Python)
+```python
+import os, json, base64, requests
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+tok = {"Authorization": "Bearer " + access_token}
+pub_b64 = requests.get("https://justtype.io/api/oauth/users/me/public-key", headers=tok).json()["public_key"]
+if not pub_b64:
+    raise SystemExit("keypair_unavailable — retry after the user opens justtype")
+user_pub = serialization.load_der_public_key(base64.b64decode(pub_b64))
+
+content_key = os.urandom(32)
+def gcm(plaintext):
+    iv = os.urandom(16)                                  # 16-byte IV
+    out = AESGCM(content_key).encrypt(iv, plaintext.encode(), None)  # returns ct||tag
+    ct, tag = out[:-16], out[-16:]
+    return base64.b64encode(iv + tag + ct).decode()      # reorder to IV||tag||ct
+
+enc_content = gcm(json.dumps({"content": text, "uploadedAt": "2026-01-01T00:00:00Z"}))
+enc_title = gcm(title) if title else None
+wrapped_key = base64.b64encode(user_pub.encrypt(content_key,
+    padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))).decode()
+
+requests.post("https://justtype.io/api/oauth/slates/drop", headers=tok,
+    json={"wrapped_key": wrapped_key, "enc_content": enc_content, "enc_title": enc_title})
+```
+
+### When does the note appear? (timing — set user expectations)
+A drop can only be **decrypted on a device that holds the user's key** — that is the
+zero-knowledge guarantee, so the server can never adopt it for them. What the server
+*can* do is signal instantly. In practice:
+
+| user's state | when the note appears |
+|---|---|
+| justtype open in a tab | ~1 second (server pushes a live event; the client adopts immediately) |
+| installed/PWA, no tab, push allowed | seconds — a service worker is woken to import (except where the OS throttles background workers, e.g. iOS Safari) |
+| all their devices closed | the moment they next open/unlock justtype; the server still notifies them right away |
+
+So: **don't promise users an instant appearance** unless justtype is already open.
+The honest phrasing is "shows up next time you open justtype." The note is never lost
+in the meantime — it waits, encrypted to the user, until a device can open it.
+
+### What the user sees, and what happens to the note long-term
+- Adopted slates are **tagged with your app's name** ("from <app>") in the user's slate
+  list, and the user is notified. It is not a silent insertion.
+- Once adopted, the note is **re-encrypted to the user's own master key** and is
+  indistinguishable from one they wrote. **It is theirs permanently** — it stays even
+  if the user later removes your app, and your app has no further claim on it.
+- A drop the user has **not yet adopted** survives your app being revoked too (it is
+  encrypted to the user, not to your app), so the user never loses a note by
+  disconnecting you. They can also discard a pending drop without adopting it.
+
+This behavior is disclosed on the consent screen when you request `slates:create`, so
+users approve with the timing and permanence in mind.
+
+---
+
+## 8. Native apps (iOS/Android/desktop)
 
 - Use a private-use redirect scheme (`com.example.app://callback`) or a claimed
   HTTPS universal/app link. Both are accepted; register the exact URI at `/dev`.

@@ -22,6 +22,7 @@ const SCOPES = {
   'slates:read:meta': 'see your slate list, counts, and dates (private titles stay encrypted)',
   'slates:read:private': 'read private slates you choose to share with it (you pick which ones; revocable anytime)',
   'slates:write': 'create and edit published slates on your behalf',
+  'slates:create': 'drop new private (encrypted) slates into your account, which appear next time you open justtype',
   'slates:delete': 'delete slates on your behalf',
   'slates:publish': 'publish and unpublish slates on your behalf'
 };
@@ -44,7 +45,7 @@ const scopeSatisfied = (granted, required) =>
 
 function mountOAuth(app, deps) {
   const { db, jwt, JWT_SECRET, crypto, b2Storage, isProduction,
-          generateUniqueShareId, checkStorageLimit, updateUserStorage } = deps;
+          generateUniqueShareId, checkStorageLimit, updateUserStorage, dropHub } = deps;
 
   const now = () => Math.floor(Date.now() / 1000);
   const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -186,12 +187,17 @@ function mountOAuth(app, deps) {
       ? `<div class="sub" style="margin-top:-1rem"><a href="${escapeHtml(client.website)}" target="_blank" rel="noopener">${escapeHtml(client.website)}</a></div>` : '';
     const privacyNote = scopeList.includes('slates:read:private')
       ? `<div class="note">your private slates stay end-to-end encrypted. approving this does <strong>not</strong> hand them over — afterwards you choose, in your justtype account, exactly which private slates to share with this app, and you can stop sharing anytime. justtype never shares your password or master key.</div>` : '';
+    // Disclose how app-created drops actually arrive — they are not instant and
+    // they outlive the app once you open justtype.
+    const createNote = scopeList.includes('slates:create')
+      ? `<div class="note">new slates this app creates are <strong>end-to-end encrypted to you</strong> — justtype and the app's server never see their text. they appear in your account the next time you open justtype (instantly if it is open, otherwise once you next unlock — only your device can decrypt them). once they appear they are yours and stay even if you later remove this app.</div>` : '';
     return `
       <h1>authorize ${escapeHtml(client.name)}</h1>
       <p class="sub"><span class="app">${escapeHtml(client.name)}</span> wants permission to:</p>
       ${site}
       <ul class="scopes">${items}</ul>
       ${privacyNote}
+      ${createNote}
       <form method="POST" action="/oauth/authorize/decide">
         <input type="hidden" name="ticket" value="${escapeHtml(ticket)}">
         <div class="row">
@@ -530,12 +536,19 @@ function mountOAuth(app, deps) {
 
   // Identity (+ email if scoped).
   app.get('/api/oauth/userinfo', publicCors, authenticateOAuth('identity'), (req, res) => {
-    const user = db.prepare('SELECT id, username, email, email_verified FROM users WHERE id = ?').get(req.oauth.userId);
+    const user = db.prepare('SELECT id, username, email, email_verified, public_key FROM users WHERE id = ?').get(req.oauth.userId);
     if (!user) return res.status(404).json({ error: 'user_not_found' });
     const out = { id: user.id, username: user.username };
     if (req.oauth.scopes.includes('email')) {
       out.email = user.email;
       out.email_verified = !!user.email_verified;
+    }
+    // For apps with slates:create — the user's RSA-OAEP public key (base64 SPKI)
+    // to wrap a drop's content key to. null if the user hasn't generated a
+    // keypair yet (they will on next unlock); apps should poll/handle null.
+    if (req.oauth.scopes.includes('slates:create')) {
+      out.public_key = user.public_key || null;
+      out.key_scheme = 'rsa-oaep-sha256';
     }
     res.json(out);
   });
@@ -652,6 +665,55 @@ function mountOAuth(app, deps) {
       });
     } catch (e) {
       console.error('oauth create slate:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // GET /api/oauth/users/me/public-key — the user's RSA-OAEP public key (base64
+  // SPKI) to wrap a drop's content key to. Convenience alias of the field in
+  // userinfo. null if the user has not generated a keypair yet.
+  app.get('/api/oauth/users/me/public-key', publicCors, authenticateOAuth('slates:create'), (req, res) => {
+    const row = db.prepare('SELECT public_key FROM users WHERE id = ?').get(req.oauth.userId);
+    res.json({ public_key: row?.public_key || null, key_scheme: 'rsa-oaep-sha256' });
+  });
+
+  // POST /api/oauth/slates/drop — "drop box": create a NEW private slate for the
+  // user without the server (or the app needing the user's master key) ever
+  // seeing plaintext. The app generates a fresh content key, encrypts content +
+  // title under it (justtype's blob format), and wraps the content key to the
+  // USER'S public key. We store the opaque blobs; the user's client decrypts on
+  // next unlock and adopts the drop as a normal master-key-encrypted slate.
+  //
+  // This is the ONLY way an app can author private (E2E) content. slates:write
+  // only produces plaintext slates. A drop cannot be created until the user has
+  // published a keypair (409 keypair_unavailable) — the app should retry later.
+  app.post('/api/oauth/slates/drop', publicCors, authenticateOAuth('slates:create'), async (req, res) => {
+    const { wrapped_key, enc_content, enc_title } = req.body || {};
+    if (!wrapped_key || typeof wrapped_key !== 'string') {
+      return res.status(400).json({ error: 'wrapped_key (content key RSA-OAEP wrapped to the user public key, base64) required' });
+    }
+    if (!enc_content || typeof enc_content !== 'string') {
+      return res.status(400).json({ error: 'enc_content (base64 AES-256-GCM blob) required' });
+    }
+    for (const v of [wrapped_key, enc_content, enc_title]) {
+      if (v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB)) {
+        return res.status(413).json({ error: 'blob too large' });
+      }
+    }
+    try {
+      const user = db.prepare('SELECT public_key FROM users WHERE id = ?').get(req.oauth.userId);
+      if (!user || !user.public_key) {
+        return res.status(409).json({ error: 'keypair_unavailable', error_description: 'the user has not published an encryption key yet; retry after they next open justtype' });
+      }
+      const info = db.prepare(`INSERT INTO oauth_slate_drops (client_id, user_id, wrapped_key, enc_content, enc_title)
+        VALUES (?, ?, ?, ?, ?)`).run(req.oauth.clientId, req.oauth.userId, wrapped_key, enc_content, enc_title || null);
+
+      // Wake the user's clients (SSE now, web push to closed ones). Best-effort.
+      if (dropHub) { try { await dropHub.notifyDrop(db, req.oauth.userId); } catch {} }
+
+      res.status(201).json({ success: true, drop_id: info.lastInsertRowid, status: 'pending_adoption' });
+    } catch (e) {
+      console.error('oauth slate drop:', e);
       res.status(500).json({ error: 'server_error' });
     }
   });
@@ -949,6 +1011,10 @@ function mountOAuth(app, deps) {
     // (per-slate grants and any blanket "share all" relationship).
     db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
     db.prepare('DELETE FROM oauth_share_all WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
+    // NOTE: we deliberately do NOT delete pending oauth_slate_drops here. A drop is
+    // encrypted to the USER's key, not the app's, so revoking the app never locks
+    // the user out of it. The user keeps any un-adopted drops and can adopt or
+    // discard them on their own schedule — revocation must never cost a note.
     res.json({ success: true, revoked: result.changes });
   });
 

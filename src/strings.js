@@ -127,6 +127,8 @@ const strings = {
       public: 'public',
       private: 'private',
       wasPublic: 'draft (was public)',
+      fromApp: 'from {app}',
+      fromAppTitle: 'this slate was created by {app} and imported into your account. it is now yours and stays even if you remove the app.',
     },
     empty: {
       message: 'no slates yet',
@@ -914,6 +916,7 @@ take care!
       meta: 'list slates, counts, dates (private titles stay encrypted)',
       private: 'read private slates the user explicitly shares with your app (revocable per-slate)',
       write: 'create and edit published slates on the user\'s behalf',
+      create: 'drop new private (encrypted) slates into the user\'s account — they appear next time the user opens justtype',
       delete: 'delete slates on the user\'s behalf',
       publish: 'publish and unpublish slates on the user\'s behalf'
     },
@@ -945,7 +948,15 @@ take care!
         ],
         note: 'access is revocable anytime: the user (or revoking your app) deletes the blobs and future reads stop. while a slate stays shared, the user\'s own edits re-sync to you automatically.',
         writeTitle: 'writing back (two-way)',
-        write: 'with a shared slate you can also write. re-encrypt under the SAME content key you unwrapped (do not generate a new one), then PATCH /api/oauth/slates/:n/delegated with the new enc_content (and optional enc_title). the next time the user opens that slate in justtype, your edit is decrypted with their master key and merged into their canonical copy. tip: GET the slate again right before writing so you have the current key — the user\'s own edits rotate it.'
+        write: 'with a shared slate you can also write. re-encrypt under the SAME content key you unwrapped (do not generate a new one), then PATCH /api/oauth/slates/:n/delegated with the new enc_content (and optional enc_title). the next time the user opens that slate in justtype, your edit is decrypted with their master key and merged into their canonical copy. tip: GET the slate again right before writing so you have the current key — the user\'s own edits rotate it.',
+        dropTitle: 'creating new private slates (the drop box)',
+        drop: 'with the slates:create scope your app can add brand-new encrypted slates to a user — without ever holding their master key. it is the mirror image of delegation: each user publishes their own public key, and you wrap a fresh content key to THAT (not to your app key). the user\'s client decrypts the drop on next unlock and adopts it as a normal private slate. neither justtype nor your server sees the plaintext.',
+        dropPoints: [
+          'request slates:create; fetch the user\'s public key (GET /api/oauth/users/me/public-key). if it is null they have no keypair yet — retry after they next open justtype.',
+          'encrypt content + title under a fresh 32-byte content key (same blob format as everything else), wrap that key to the user\'s public key, and POST /api/oauth/slates/drop.',
+          'timing: appears in ~1s if justtype is open, on push-wake for installed clients, otherwise next time the user opens justtype. only their device can decrypt it, so it is never instant when all their devices are closed — tell users "shows up next time you open justtype".',
+          'the note is tagged "from <your app>" in the user\'s list. once adopted it is re-encrypted to their master key and is theirs permanently — it stays even if they remove your app, and an un-adopted drop survives revocation too.'
+        ]
       },
       scopes: { title: 'scopes' },
       flow: {
@@ -964,7 +975,9 @@ take care!
           ['GET',   '/oauth/authorize',               'start the flow (browser redirect)'],
           ['POST',  '/oauth/token',                   'exchange code, or refresh (rotates both tokens)'],
           ['POST',  '/oauth/revoke',                  'revoke an access or refresh token'],
-          ['GET',   '/api/oauth/userinfo',            'scope: identity → { id, username, email? }'],
+          ['GET',   '/api/oauth/userinfo',            'scope: identity → { id, username, email?, public_key? }'],
+          ['GET',   '/api/oauth/users/me/public-key', 'scope: slates:create → the user\'s public key to wrap a drop to'],
+          ['POST',  '/api/oauth/slates/drop',         'scope: slates:create → drop a new private (encrypted) slate for the user'],
           ['GET',   '/api/oauth/slates',              'scope: slates:read:meta → slate list + counts'],
           ['GET',   '/api/oauth/slates/published',    'scope: slates:read:public → full published text'],
           ['GET',   '/api/oauth/slates/:n',           'scope: slates:read:private → published→plaintext, delegated→decryptable, else ciphertext'],
@@ -982,7 +995,8 @@ take care!
         body: 'exact JSON each endpoint returns, with real field names.',
         items: [
           ['POST /oauth/token', '{ access_token, token_type: "Bearer", expires_in, refresh_token, scope }'],
-          ['GET /api/oauth/userinfo', '{ id, username, email?, email_verified? }'],
+          ['GET /api/oauth/userinfo', '{ id, username, email?, email_verified?,\n  public_key? }   // public_key only with slates:create'],
+          ['POST /api/oauth/slates/drop', 'req:  { wrapped_key, enc_content, enc_title? }\nok:   { success: true, drop_id, status: "pending_adoption" }\n409:  { error: "keypair_unavailable" }   // retry later'],
           ['GET /api/oauth/slates', '[ { slate_number, is_published, share_id, title|null,\n    title_encrypted, word_count, char_count,\n    created_at, updated_at, published_at } ]'],
           ['GET /api/oauth/slates/:n  (published)', '{ slate_number, delegated: false, published: true,\n  title, content }   // plaintext — published slates are public'],
           ['GET /api/oauth/slates/:n  (delegated)', '{ slate_number, delegated: true,\n  key_scheme: "rsa-oaep-sha256", content_scheme: "aes-256-gcm",\n  wrapped_key, enc_content, enc_title, shared_at }'],
@@ -996,6 +1010,8 @@ take care!
         title: 'gotchas — read these',
         points: [
           'the delegated write (PATCH /api/oauth/slates/:n/delegated) is authorized by slates:read:private, NOT slates:write — slates:write is only for plaintext/published slates. requesting slates:write and PATCHing delegated returns 403.',
+          'slates:write only creates/edits plaintext (server-readable) slates — even with publish:false. to create a NEW end-to-end-encrypted slate use slates:create + POST /api/oauth/slates/drop (the drop box). there is no way to author E2E content through slates:write.',
+          'a drop returns 409 keypair_unavailable until the user has opened justtype at least once after this feature shipped (that is when their keypair is generated). handle it by retrying later, not as a hard failure.',
           'the blob IV is 16 bytes, not the usual 12. layout is IV(16) + authTag(16) + ciphertext, base64. a hardcoded 12-byte IV produces blobs justtype cannot read.',
           'RSA unwrap MUST set oaepHash: "sha256". node defaults OAEP to sha-1, which fails with a garbage key and an opaque error.',
           'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational — set it to an ISO timestamp when you write; it is not authoritative.',

@@ -21,6 +21,8 @@ import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
+import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
+import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
@@ -29,6 +31,8 @@ export default function App() {
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
   const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
+  // Bumped whenever app-created drops are adopted, to refresh the slate list.
+  const [dropRefreshKey, setDropRefreshKey] = useState(0);
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -66,6 +70,27 @@ export default function App() {
     const themeToApply = themeExists(savedTheme) ? savedTheme : 'light';
     applyThemeVariables(themeToApply);
   }, []);
+
+  // Drop box: once the user is unlocked (master key present in IndexedDB), make
+  // sure they have a published keypair so apps can drop encrypted slates to them,
+  // then start real-time delivery (SSE + push) and sweep any pending drops. Drops
+  // adopt into the vault as normal master-key-encrypted slates. Torn down on logout.
+  useEffect(() => {
+    if (!userId || token === 'checking' || !token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const masterKey = await getSlateKey(userId);
+        if (!masterKey || cancelled) return; // locked / no E2E key on this device yet
+        await ensureUserKeypair(userId, masterKey);
+        if (cancelled) return;
+        startDropRealtime(userId, masterKey, () => setDropRefreshKey((k) => k + 1));
+      } catch (e) {
+        console.warn('drop box init failed', e);
+      }
+    })();
+    return () => { cancelled = true; stopDropRealtime(); };
+  }, [userId, token]);
 
   // Setup global login nudge trigger for Writer component
   useEffect(() => {
@@ -554,6 +579,10 @@ export default function App() {
 
   const handleLogout = async () => {
     setShowLogoutConfirm(false);
+
+    // Tear down drop-box real-time delivery and forget the recovered private key.
+    stopDropRealtime();
+    clearUserPrivateKey(userId);
 
     // Clear slate key from IndexedDB
     if (userId) {
@@ -1099,6 +1128,7 @@ export default function App() {
         {view === 'slates' && (
           <div className="h-full animate-slide-down">
             <SlateManager
+              key={dropRefreshKey}
               token={token}
               userId={userId}
               onSelectSlate={handleSelectSlate}

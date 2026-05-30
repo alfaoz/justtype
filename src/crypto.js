@@ -246,6 +246,59 @@ export async function decryptOwnerGrant(grant, masterKey) {
   return { content, title };
 }
 
+// --- User keypair (the "drop box": apps create slates FOR the user) ---
+// The mirror image of app key delegation. Each user publishes an RSA-OAEP public
+// key so a third-party app can encrypt a brand-new slate TO them without the
+// server or the app ever seeing the user's master key. The user's private key is
+// wrapped under their master key (AES-256-GCM) and stored server-side, so it is
+// recoverable on any device the user unlocks — the server only ever holds opaque
+// ciphertext, never the usable private key.
+
+// Generate an RSA-OAEP 2048 keypair for a user. Returns the base64 SPKI public
+// key (published) and the raw PKCS8 private key bytes (to be wrapped immediately).
+export async function generateUserKeypair() {
+  const kp = await crypto.subtle.generateKey(
+    { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  const spki = new Uint8Array(await crypto.subtle.exportKey('spki', kp.publicKey));
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', kp.privateKey));
+  return { publicKeySpkiBase64: bufToBase64(spki), privateKeyPkcs8: pkcs8 };
+}
+
+// Wrap a user's PKCS8 private key bytes under their master key. Returns base64
+// (same IV+Tag+Ciphertext blob format as everything else). Reuses wrapKey since
+// it is just AES-256-GCM over arbitrary bytes.
+export async function wrapPrivateKey(pkcs8Bytes, masterKey) {
+  return wrapKey(pkcs8Bytes, masterKey);
+}
+
+// Unwrap a user's private key (base64) with their master key, returning a
+// CryptoKey usable for RSA-OAEP decrypt. Used on a fresh device to recover the
+// private key from the server-stored wrapped copy.
+export async function unwrapPrivateKey(encPrivateKeyBase64, masterKey) {
+  const pkcs8 = await unwrapKey(encPrivateKeyBase64, masterKey);
+  return crypto.subtle.importKey('pkcs8', pkcs8, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']);
+}
+
+// Import a raw PKCS8 private key (e.g. freshly generated) as a decrypt CryptoKey.
+export async function importUserPrivateKey(pkcs8Bytes) {
+  return crypto.subtle.importKey('pkcs8', pkcs8Bytes, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['decrypt']);
+}
+
+// Decrypt an app-created drop. wrapped_key is the content key RSA-OAEP-wrapped to
+// the user's public key; unwrap it with the user's private CryptoKey, then decrypt
+// the content + title blobs. Returns { content, title } (title null if absent).
+export async function decryptDrop(drop, userPrivateKey) {
+  const wrappedBytes = base64ToBuf(drop.wrapped_key);
+  const contentKeyBuf = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, userPrivateKey, wrappedBytes);
+  const contentKey = new Uint8Array(contentKeyBuf);
+  const content = drop.enc_content ? await decryptContent(drop.enc_content, contentKey) : '';
+  const title = drop.enc_title ? await decryptTitle(drop.enc_title, contentKey) : null;
+  return { content, title };
+}
+
 function pemEncode(bytes, label) {
   const b64 = bufToBase64(bytes);
   const lines = (b64.match(/.{1,64}/g) || []).join('\n');

@@ -10,6 +10,7 @@ const SCOPE_OPTIONS = [
   ['slates:read:meta', strings.dev.scopes.meta],
   ['slates:read:private', strings.dev.scopes.private],
   ['slates:write', strings.dev.scopes.write],
+  ['slates:create', strings.dev.scopes.create],
   ['slates:delete', strings.dev.scopes.delete],
   ['slates:publish', strings.dev.scopes.publish]
 ];
@@ -270,7 +271,44 @@ await fetch(JT + '/api/oauth/slates/' + slateNumber + '/delegated', {
     word_count: newText.trim().split(/\\s+/).length, char_count: newText.length })
 });`;
 
-const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400', PUT: 'text-orange-400' };
+// Node snippet showing how an app drops a NEW private slate to the user (the
+// drop box). Wraps the content key to the USER's public key — the mirror image
+// of delegation, which wraps to the app's key.
+const DROP_SNIPPET = `const { publicEncrypt, createCipheriv, randomBytes, constants } = require('crypto');
+
+function aesGcmEncrypt(plaintext, key) {
+  const iv = randomBytes(16);
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64'); // IV+tag+ct
+}
+
+// 1. fetch the USER's public key. null => they have no keypair yet; retry later.
+const { public_key } = await (await fetch(JT + '/api/oauth/users/me/public-key', {
+  headers: { Authorization: 'Bearer ' + accessToken } })).json();
+if (!public_key) throw new Error('keypair_unavailable');
+
+// 2. fresh content key; 3. encrypt content (JSON) + title (raw string)
+const contentKey = randomBytes(32);
+const enc_content = aesGcmEncrypt(
+  JSON.stringify({ content: text, uploadedAt: new Date().toISOString() }), contentKey);
+const enc_title = title ? aesGcmEncrypt(title, contentKey) : null;
+
+// 4. wrap the content key to the USER's RSA-OAEP-SHA256 public key
+const userPem = '-----BEGIN PUBLIC KEY-----\\n' +
+  public_key.match(/.{1,64}/g).join('\\n') + '\\n-----END PUBLIC KEY-----';
+const wrapped_key = publicEncrypt(
+  { key: userPem, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
+  contentKey).toString('base64');
+
+// 5. drop it — appears in the user's account next time they open justtype
+await fetch(JT + '/api/oauth/slates/drop', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ wrapped_key, enc_content, enc_title })
+});`;
+
+const METHOD_COLOR = { GET: 'text-green-400', POST: 'text-blue-400', DELETE: 'text-red-400', PUT: 'text-orange-400', PATCH: 'text-orange-400' };
 
 // Lightweight syntax highlighter. It NEVER alters the code text — it only wraps
 // matched tokens in colored spans, so the displayed code is always exact and the
@@ -688,6 +726,17 @@ function DocsTab({ onWizard }) {
           <p className="text-[#a0a0a0] mb-4">{d.delegation.write}</p>
           <CodeBlock code={WRITE_SNIPPET} />
           <p className="text-[#666] text-xs mt-3">{d.delegation.note}</p>
+
+          <h3 className="text-base text-white tracking-tight mt-10 mb-3">{d.delegation.dropTitle}</h3>
+          <p className="text-[#a0a0a0] mb-4">{d.delegation.drop}</p>
+          <CodeBlock code={DROP_SNIPPET} />
+          <ul className="space-y-2 mt-4">
+            {d.delegation.dropPoints.map((p, i) => (
+              <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
+                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section id="tokens" className="scroll-mt-20">

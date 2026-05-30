@@ -111,6 +111,35 @@ google oauth users don't have a password to derive a key from. instead:
 
 the pin is never stored. only the wrapped key and pin salt are persisted.
 
+## third-party app keys (delegation & the drop box)
+
+third-party apps (via the oauth api) can read, edit, and even create private slates
+without the server ever seeing plaintext. two mirror-image mechanisms make this work,
+both built on per-slate content keys wrapped with rsa-oaep-sha256:
+
+- **delegation (app reads/edits a slate you share):** your client generates a fresh
+  content key for the slate, encrypts the content + title under it, and wraps that
+  content key to the *app's* registered public key. for two-way sync the same content
+  key is also wrapped to your own master key, so edits the app makes round-trip back
+  into your canonical slate on next open. see `reencryptForApp` / `decryptOwnerGrant`
+  in `src/crypto.js`.
+
+- **the drop box (app creates a new slate for you):** the inverse. each user publishes
+  their own rsa-oaep public key (`users.public_key`); the private half is wrapped under
+  the master key (`users.enc_private_key`) so it is recoverable on any device the user
+  unlocks — the server only ever stores the wrapped private key, never the usable one.
+  an app encrypts a brand-new slate under a fresh content key and wraps that key to the
+  *user's* public key, then drops it via `POST /api/oauth/slates/drop`. on next unlock
+  the user's client decrypts the drop with its private key, re-encrypts the note under
+  the master key, and "adopts" it as a normal private slate (tagged with the source
+  app). after adoption the note is keyed to the master key like any other and survives
+  the app being removed. see `generateUserKeypair` / `decryptDrop` in `src/crypto.js`,
+  `src/userKeys.js`, and `src/dropInbox.js`.
+
+in every case the server stores only opaque ciphertext. an app's public key gives it
+no ability to read existing slates, and a drop is encrypted to the user — revoking an
+app never costs the user a note.
+
 ## build verification
 
 the [/verify](https://justtype.io/verify) page lets users confirm the code running in their browser matches the public repo. it compares sha-256 hashes from three independent sources:
