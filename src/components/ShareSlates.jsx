@@ -3,6 +3,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { getSlateKey } from '../keyStore';
 import { decryptContent, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
+import { enableShareAll } from '../shareAll';
 
 // Modal for controlling which private slates a connected app can read and write.
 // The streamlined default is "allow all" — one switch shares every private slate
@@ -141,48 +142,20 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
   };
 
   // Blanket access: record intent, then wrap every private slate. Wrapping runs
-  // in small concurrent batches (network-bound) and each batch uploads in a single
-  // request, so sharing a large library takes seconds rather than one slate at a time.
+  // in concurrent batches (scaled to library size) and each batch uploads in a
+  // single request, so sharing a large library takes seconds rather than one slate
+  // at a time. Shares the exact logic used by the inline consent handoff.
   const enableAll = async () => {
     setError('');
-    const todo = slates.map((sl) => sl.slate_number).filter((n) => !shared.has(n));
-    setBulk({ done: 0, total: todo.length });
+    setBulk({ done: 0, total: 0 });
     try {
-      const flag = await fetch(`${API_URL}/account/slate-grants/share-all`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ client_id: clientId })
-      });
-      if (!flag.ok) throw new Error(s.toggleError);
-
-      const next = new Set(shared);
-      const CONCURRENCY = 8;
-      let done = 0;
-      for (let i = 0; i < todo.length; i += CONCURRENCY) {
-        const chunk = todo.slice(i, i + CONCURRENCY);
-        const wrapped = await Promise.all(chunk.map(async (n) => {
-          try { return await wrapOne(n); } catch (e) { console.warn('wrap failed for', n, e); return null; }
-        }));
-        const ok = wrapped.filter(Boolean);
-        if (ok.length) {
-          const up = await fetch(`${API_URL}/account/slate-grants/batch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ client_id: clientId, grants: ok })
-          });
-          if (up.ok) ok.forEach((g) => next.add(g.slate_number));
-        }
-        done += chunk.length;
-        setBulk({ done, total: todo.length });
-      }
-      setShared(next);
+      await enableShareAll(clientId, userId, { onProgress: setBulk });
+      setShared(new Set(slates.map((sl) => sl.slate_number)));
       setShareAll(true);
       setShowAdvanced(false);
       onChanged?.();
     } catch (e) {
-      setError(e.message || s.toggleError);
+      setError(e.message === 'locked' ? s.locked : (e.message || s.toggleError));
     } finally {
       setBulk(null);
     }
@@ -211,14 +184,17 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
   };
 
   const working = bulk !== null;
+  // Block closing the modal while a bulk share/unshare is mid-flight — closing
+  // partway leaves the UI out of sync with what was actually wrapped.
+  const guardedClose = () => { if (!working) onClose(); };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={guardedClose}>
       <div className="bg-[#111] border border-[#333] rounded-lg w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-[#333]">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-white text-sm">{s.title}</h3>
-            <button onClick={onClose} className="text-[#666] hover:text-white text-sm">✕</button>
+            <button onClick={guardedClose} disabled={working} className="text-[#666] hover:text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed">✕</button>
           </div>
           <p className="text-xs text-[#666] mt-1">{s.subtitle(appName)}</p>
         </div>
@@ -305,8 +281,8 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
         </div>
 
         <div className="p-4 border-t border-[#333] flex items-center justify-between">
-          <span className="text-xs text-[#666]">{s.note}</span>
-          <button onClick={onClose} className="text-sm text-white border border-[#333] rounded px-4 py-1.5 hover:bg-[#1a1a1a]">{s.done}</button>
+          <span className="text-xs text-[#666]">{working ? s.workingNote : s.note}</span>
+          <button onClick={guardedClose} disabled={working} className="text-sm text-white border border-[#333] rounded px-4 py-1.5 hover:bg-[#1a1a1a] disabled:opacity-40 disabled:cursor-not-allowed">{s.done}</button>
         </div>
       </div>
     </div>

@@ -18,6 +18,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
   const [tagFilter, setTagFilter] = useState(null);
+  const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState('');
@@ -397,12 +398,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  // Distinct apps that have created (dropped) slates, for the "from app" filter.
+  const sourceApps = useMemo(() => {
+    const map = new Map(); // client_id -> display name
+    for (const s of slates) {
+      if (s.source_app) map.set(s.source_app, s.source_app_name || s.source_app);
+    }
+    return Array.from(map, ([id, name]) => ({ id, name }));
+  }, [slates]);
+
   const filteredAndSortedSlates = useMemo(() => {
     const q = debouncedSearchQuery.trim().toLowerCase();
     const activeTag = tagFilter;
 
     const filtered = slates.filter(slate => {
       const tags = Array.isArray(slate.tags) ? slate.tags : [];
+
+      if (appFilter && slate.source_app !== appFilter) {
+        return false;
+      }
 
       if (activeTag && !tags.includes(activeTag)) {
         return false;
@@ -447,7 +461,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
 
       return compareBySort(a, b);
     });
-  }, [slates, debouncedSearchQuery, tagFilter, sortBy]);
+  }, [slates, debouncedSearchQuery, tagFilter, appFilter, sortBy]);
+
+  // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
+  useEffect(() => {
+    if (appFilter && !sourceApps.some(a => a.id === appFilter)) setAppFilter(null);
+  }, [appFilter, sourceApps]);
 
   if (loading) {
     return (
@@ -547,6 +566,37 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                 </button>
               ))}
             </div>
+
+            {/* Filter by source app (only when app-created slates exist) */}
+            {sourceApps.length > 0 && (
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                <span className="text-[var(--theme-text-dim)]">{strings.slates.filterByApp}</span>
+                <button
+                  onClick={() => setAppFilter(null)}
+                  className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
+                    !appFilter
+                      ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-text)]'
+                      : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
+                  }`}
+                >
+                  {strings.slates.filterAllApps}
+                </button>
+                {sourceApps.map(app => (
+                  <button
+                    key={app.id}
+                    onClick={() => setAppFilter(app.id)}
+                    title={app.name}
+                    className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm max-w-[12rem] truncate ${
+                      appFilter === app.id
+                        ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-green)]'
+                        : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
+                    }`}
+                  >
+                    {app.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

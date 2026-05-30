@@ -147,6 +147,11 @@ function mountOAuth(app, deps) {
     .ghost { background: transparent; color: #aaa; border: 1px solid #333; }
     .ghost:hover { color: #fff; border-color: #555; }
     .who { color: #666; font-size: 0.8rem; margin-top: 1rem; text-align: center; }
+    label.shareall { display: flex; gap: 0.6rem; align-items: flex-start; background: #161616;
+            border: 1px solid #262626; border-radius: 8px; padding: 0.75rem; color: #b5b5b5;
+            font-size: 0.82rem; line-height: 1.5; cursor: pointer; }
+    label.shareall input { width: 1rem; height: 1rem; margin-top: 0.15rem; flex-shrink: 0; accent-color: #fff; }
+    label.shareall strong { color: #eaeaea; font-weight: 600; }
     .error { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
     a { color: #888; }
   </style>
@@ -180,7 +185,7 @@ function mountOAuth(app, deps) {
       });
     </script>`;
 
-  const consentPageBody = (user, client, scopeList, ticket) => {
+  const consentPageBody = (user, client, scopeList, ticket, grantable) => {
     const items = scopeList.map(s =>
       `<li><span class="check">✓</span><span>${escapeHtml(SCOPES[s])}</span></li>`).join('');
     const site = client.website
@@ -200,6 +205,7 @@ function mountOAuth(app, deps) {
       ${createNote}
       <form method="POST" action="/oauth/authorize/decide">
         <input type="hidden" name="ticket" value="${escapeHtml(ticket)}">
+        ${grantable ? `<label class="shareall"><input type="checkbox" name="share_all" value="1"><span>also let <strong>${escapeHtml(client.name)}</strong> read &amp; write <strong>all</strong> my private slates (current + future). you can change this anytime in your account.</span></label>` : ''}
         <div class="row">
           <button type="submit" name="decision" value="deny" class="ghost">cancel</button>
           <button type="submit" name="decision" value="approve" class="primary">authorize</button>
@@ -351,7 +357,10 @@ function mountOAuth(app, deps) {
       code_challenge, code_challenge_method: 'S256'
     }, JWT_SECRET, { expiresIn: CONSENT_TTL });
 
-    res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket)));
+    // Offer the inline "share all private slates" opt-in only when it would work:
+    // the app requested private-read access and has a public key to wrap to.
+    const grantable = !!(client.public_key && requested.includes('slates:read:private'));
+    res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable)));
   });
 
   app.post('/oauth/authorize/decide', form, (req, res) => {
@@ -381,6 +390,33 @@ function mountOAuth(app, deps) {
       return res.redirect(u.toString());
     }
 
+    // Inline "allow full access": the user ticked share-all on the consent screen.
+    // Only honor it if the app actually requested private-read and has a public key
+    // to wrap to. We record the share-all INTENT now (server-side, no crypto — this
+    // is a verified approval), which also lets the user's browser use the grant
+    // endpoints before any token is issued. We then hand off to a same-origin React
+    // page that does the client-side slate wrapping and finalizes the code, so the
+    // authorization code is minted last and never expires while wrapping runs.
+    const wantsShareAll = req.body.share_all === '1';
+    const scopeList = (t.scope || '').split(' ').filter(Boolean);
+    const client = getClient(t.client_id);
+    const canShareAll = wantsShareAll && client && client.public_key && scopeList.includes('slates:read:private');
+
+    if (canShareAll) {
+      db.prepare(`INSERT INTO oauth_share_all (client_id, user_id) VALUES (?, ?)
+        ON CONFLICT(client_id, user_id) DO NOTHING`).run(t.client_id, user.id);
+      const finalizeToken = jwt.sign({
+        purpose: 'oauth_finalize', uid: user.id, client_id: t.client_id,
+        redirect_uri: t.redirect_uri, scope: t.scope, state: t.state || '',
+        code_challenge: t.code_challenge, code_challenge_method: t.code_challenge_method
+      }, JWT_SECRET, { expiresIn: CONSENT_TTL });
+      const share = new URL('/authorize/share', isProduction ? 'https://justtype.io' : 'http://localhost:3003');
+      share.searchParams.set('t', finalizeToken);
+      share.searchParams.set('client_id', t.client_id);
+      share.searchParams.set('app', client.name);
+      return res.redirect(share.toString());
+    }
+
     const code = randomToken(32);
     db.prepare(`INSERT INTO oauth_codes
       (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at)
@@ -391,6 +427,36 @@ function mountOAuth(app, deps) {
 
     u.searchParams.set('code', code);
     res.redirect(u.toString());
+  });
+
+  // Finalize an authorization that detoured through the React share step: verify the
+  // signed finalize token + the session, mint the one-time code now, and return the
+  // app redirect URL for the browser to follow. Minting here (not at decide) keeps the
+  // 60s code lifetime independent of how long client-side slate wrapping took.
+  app.post('/oauth/authorize/finalize', publicCors, express.json(), (req, res) => {
+    const { t: token } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'invalid_request' });
+    let t;
+    try {
+      t = jwt.verify(token, JWT_SECRET);
+      if (t.purpose !== 'oauth_finalize') throw new Error('bad purpose');
+    } catch {
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'authorization expired; start again from the app' });
+    }
+    const user = getSessionUser(req);
+    if (!user || user.id !== t.uid) return res.status(401).json({ error: 'session_expired' });
+
+    const code = randomToken(32);
+    db.prepare(`INSERT INTO oauth_codes
+      (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      code, t.client_id, user.id, t.redirect_uri, t.scope,
+      t.code_challenge, t.code_challenge_method, now() + CODE_TTL
+    );
+    const u = new URL(t.redirect_uri);
+    if (t.state) u.searchParams.set('state', t.state);
+    u.searchParams.set('code', code);
+    res.json({ redirect: u.toString() });
   });
 
   // --- token endpoint -----------------------------------------------------
@@ -1028,11 +1094,19 @@ function mountOAuth(app, deps) {
   const grantableClient = (userId, clientId) => {
     const client = db.prepare('SELECT client_id, name, public_key FROM oauth_clients WHERE client_id = ?').get(clientId);
     if (!client || !client.public_key) return null;
+    // Authorized to receive grants if a live token carries the private scope...
     const tok = db.prepare(`SELECT scope FROM oauth_tokens
       WHERE user_id = ? AND client_id = ? AND revoked = 0 AND refresh_expires_at > ?
       ORDER BY created_at DESC LIMIT 1`).get(userId, clientId, now());
-    if (!tok) return null;
-    if (!(tok.scope || '').split(' ').includes('slates:read:private')) return null;
+    const tokenOk = tok && (tok.scope || '').split(' ').includes('slates:read:private');
+    // ...OR the user recorded a share-all intent at consent time. That row is only
+    // written after a verified private-scope approval (consent decide, or the
+    // post-token share-all endpoint), so its presence implies authorization. This
+    // lets the inline consent → React share step wrap slates before the app has
+    // exchanged its code for a token.
+    const intentOk = !!db.prepare('SELECT 1 FROM oauth_share_all WHERE client_id = ? AND user_id = ?')
+      .get(clientId, userId);
+    if (!tokenOk && !intentOk) return null;
     return client;
   };
 

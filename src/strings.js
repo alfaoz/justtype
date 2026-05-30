@@ -115,6 +115,8 @@ const strings = {
       za: 'z-a',
       words: 'words',
     },
+    filterByApp: 'from app:',
+    filterAllApps: 'all',
     viewToggle: {
       list: 'list view',
       grid: 'grid view',
@@ -398,6 +400,7 @@ const strings = {
       working: '...',
       toggleError: 'could not update sharing. try again.',
       note: 'revocable anytime',
+      workingNote: 'sharing… please wait',
       done: 'done',
       allTitle: 'allow all private slates',
       allDesc: 'this app can read and write every private slate, including ones you create later. edits it makes sync back to you. you can turn this off anytime.',
@@ -407,6 +410,18 @@ const strings = {
       unsharingAll: 'turning off…',
       advanced: 'or share specific slates only',
       advancedHint: 'pick individual slates instead of granting full access.'
+    },
+    authorizeShare: {
+      sharing: (app) => `sharing your private slates with ${app}`,
+      finishing: (app) => `finishing up with ${app}`,
+      preparing: 'preparing your slates…',
+      progress: (done, total) => `encrypting and sharing… ${done}/${total}`,
+      finishingNote: 'almost there — sending you back to the app.',
+      lockedNote: (app) => `${app} will get access to your slates the next time you open justtype unlocked. sending you back now.`,
+      dontClose: 'this only takes a moment. please don\'t close this tab.',
+      errorTitle: 'something went wrong',
+      missing: 'this authorization link is incomplete. please start again from the app.',
+      finalizeError: 'could not finish authorizing. please start again from the app.'
     },
     sessions: {
       title: 'sessions',
@@ -958,7 +973,13 @@ take care!
           'the note is tagged "from <your app>" in the user\'s list. once adopted it is re-encrypted to their master key and is theirs permanently — it stays even if they remove your app, and an un-adopted drop survives revocation too.'
         ]
       },
-      scopes: { title: 'scopes' },
+      scopes: {
+        title: 'scopes',
+        recommendedTitle: 'recommended: a full justtype integration',
+        recommendedBody: 'building a real justtype client — one that handles a user\'s writing the way justtype does? request this bundle. it is end-to-end encrypted by default (read private + create), with full lifecycle control (delete, publish). the user approves it on one consent screen, which also offers a one-tap "allow full access to all my private slates" toggle.',
+        recommendedBundle: 'identity slates:read:meta slates:read:private slates:create slates:delete slates:publish',
+        recommendedNote: 'add slates:write only if you also need to create/edit plaintext published slates directly. an e2e-first client doesn\'t need it.'
+      },
       flow: {
         title: 'the flow',
         steps: [

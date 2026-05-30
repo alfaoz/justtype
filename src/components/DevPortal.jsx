@@ -662,6 +662,12 @@ function DocsTab({ onWizard }) {
               </div>
             ))}
           </div>
+          <div className="mt-4 rounded-xl border border-[#2a3a2a] bg-green-400/5 px-5 py-4">
+            <h3 className="text-sm text-green-300 mb-2">{d.scopes.recommendedTitle}</h3>
+            <p className="text-[#a0a0a0] text-sm leading-relaxed mb-2">{d.scopes.recommendedBody}</p>
+            <code className="block text-green-300/90 text-xs bg-[#0f140f] border border-[#1f2a1f] rounded px-3 py-2 break-all">{d.scopes.recommendedBundle}</code>
+            <p className="text-[#666] text-xs mt-2">{d.scopes.recommendedNote}</p>
+          </div>
         </section>
 
         <section id="endpoints" className="scroll-mt-20">

@@ -87,6 +87,38 @@ The two private-slate capabilities are independent: `slates:read:private` lets y
 read/edit slates the user shares **with you**; `slates:create` lets you add **new**
 encrypted slates **to the user**. An app can hold either, both, or neither.
 
+### Recommended: a full justtype integration
+
+If you are building a real justtype client — something that behaves the way justtype
+itself does, with full access to a user's writing — request this bundle:
+
+```
+identity slates:read:meta slates:read:private slates:create slates:delete slates:publish
+```
+
+| scope | what it lets your client do |
+|---|---|
+| `identity` | know who the user is |
+| `slates:read:meta` | list the user's slates (counts, dates) to build a library view |
+| `slates:read:private` | read **and edit** the private slates the user shares with you (also covers all published content) |
+| `slates:create` | add brand-new **end-to-end-encrypted** slates to the user (the drop box) |
+| `slates:delete` | delete slates on the user's behalf |
+| `slates:publish` | publish / unpublish slates |
+
+This is the **intended** shape of a justtype integration: end-to-end-encrypted by
+default (`read:private` + `create`), with full lifecycle control (`delete`,
+`publish`). The user approves it on **one** consent screen, and — because you
+requested `read:private` with a registered public key — that same screen offers a
+one-tap **"allow full access to all my private slates (current + future)"** toggle,
+so the user can hand your client their whole library in a single step (see §6).
+
+Add `slates:write` **only** if you also need to create/edit *plaintext, published*
+slates directly (e.g. a blog-style publishing tool). An E2E-first client does not
+need it: new private notes go through `slates:create`, and edits to shared private
+notes go through the delegated write (§6) under `slates:read:private`.
+
+Request `email` only if you actually need the address — fewer scopes, more trust.
+
 ---
 
 ## 4. Endpoints
@@ -242,9 +274,19 @@ private key PEM **once** — store it (e.g. an env var). (Advanced: you may inst
 supply your own `public_key` (base64 SPKI) to `POST /api/oauth/clients`, or rotate it
 via `PUT /api/oauth/clients/:clientId/public-key`.)
 
-After the user authorizes your app, they choose what to share in
-**justtype account → connected apps → manage slate access** — either "allow all
-private slates" (current + future) or specific ones.
+There are two ways the user grants you slates, and you don't have to do anything
+different for either — you just read whatever ends up shared:
+- **On the consent screen (one tap):** because you requested `slates:read:private`
+  and registered a public key, the authorize screen shows an **"allow full access to
+  all my private slates (current + future)"** toggle. If the user ticks it, justtype
+  wraps their entire library to your key during authorization, before redirecting
+  back to you — so by the time you exchange your code for a token, the grants are
+  already there.
+- **Later, anytime:** in **justtype account → connected apps → manage slate access**,
+  the user can allow-all, or pick specific slates, or revoke.
+
+Either way, call `GET /api/oauth/shared` to see which slates you can read, and
+`GET /api/oauth/slates/:n` to read each.
 
 ### Read (Node)
 ```js
@@ -477,3 +519,36 @@ users approve with the timing and permanence in mind.
   on iOS, Custom Tabs on Android).
 - The OAuth/identity half needs no crypto. Only private-slate read/write does — see §5,
   and mind the 16-byte IV note for CryptoKit.
+
+---
+
+## 9. Integration checklist (end to end)
+
+A full justtype client, in order. Each step links to the section that specifies it.
+
+1. **Register** your app at `https://justtype.io/dev` (or `POST /api/oauth/clients`).
+   Request the full bundle from §3: `identity slates:read:meta slates:read:private
+   slates:create slates:delete slates:publish`. Registering with `slates:read:private`
+   generates your RSA-2048 keypair — **store the private key PEM** (shown once).
+2. **Implement the OAuth flow** (§2): PKCE S256, exchange code at `/oauth/token`,
+   store + rotate refresh tokens, always verify `state`.
+3. **Read the user's library:** `GET /api/oauth/slates` (meta list, §4) and
+   `GET /api/oauth/slates/:n` per slate. Published → plaintext; delegated private →
+   decrypt per §5/§6; not-shared private → opaque (ask the user to share).
+4. **Get private slates shared with you** (§6): the user can grant all of them in one
+   tap on the consent screen, or later in their account. Poll `GET /api/oauth/shared`.
+5. **Edit a shared private slate** (§6): GET it for the current `wrapped_key`,
+   re-encrypt under that same content key, `PATCH .../delegated`.
+6. **Create new private slates** (§7): fetch the user's public key, wrap a fresh
+   content key to it, `POST /api/oauth/slates/drop`. Handle `409 keypair_unavailable`
+   by retrying later.
+7. **Manage lifecycle:** `DELETE /api/oauth/slates/:n` (§4) and
+   `PATCH /api/oauth/slates/:n/publish` (§4).
+8. **Respect the model:** never expect the server to reveal plaintext of a private
+   slate or any key; surface drop timing honestly ("shows up next time you open
+   justtype"); tell users that `slates:write` content is plaintext-on-server, while
+   `slates:create` content is end-to-end encrypted.
+
+If you implement steps 1–7 correctly, your client is a first-class justtype app:
+end-to-end encrypted, two-way syncing, with full lifecycle control — exactly how
+justtype itself treats a user's writing.
