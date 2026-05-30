@@ -965,7 +965,7 @@ take care!
           ['GET',   '/api/oauth/userinfo',            'scope: identity → { id, username, email? }'],
           ['GET',   '/api/oauth/slates',              'scope: slates:read:meta → slate list + counts'],
           ['GET',   '/api/oauth/slates/published',    'scope: slates:read:public → full published text'],
-          ['GET',   '/api/oauth/slates/:n',           'scope: slates:read:private → ciphertext (or decryptable if delegated)'],
+          ['GET',   '/api/oauth/slates/:n',           'scope: slates:read:private → published→plaintext, delegated→decryptable, else ciphertext'],
           ['GET',   '/api/oauth/shared',              'scope: slates:read:private → slates delegated to your app'],
           ['POST',  '/api/oauth/slates',              'scope: slates:write → create a slate (published by default)'],
           ['PUT',   '/api/oauth/slates/:n',           'scope: slates:write → update title/content of a plaintext slate'],
@@ -982,8 +982,9 @@ take care!
           ['POST /oauth/token', '{ access_token, token_type: "Bearer", expires_in, refresh_token, scope }'],
           ['GET /api/oauth/userinfo', '{ id, username, email?, email_verified? }'],
           ['GET /api/oauth/slates', '[ { slate_number, is_published, share_id, title|null,\n    title_encrypted, word_count, char_count,\n    created_at, updated_at, published_at } ]'],
+          ['GET /api/oauth/slates/:n  (published)', '{ slate_number, delegated: false, published: true,\n  title, content }   // plaintext — published slates are public'],
           ['GET /api/oauth/slates/:n  (delegated)', '{ slate_number, delegated: true,\n  key_scheme: "rsa-oaep-sha256", content_scheme: "aes-256-gcm",\n  wrapped_key, enc_content, enc_title, shared_at }'],
-          ['GET /api/oauth/slates/:n  (not shared)', '{ slate_number, delegated: false, encrypted: true,\n  encrypted_content, note }'],
+          ['GET /api/oauth/slates/:n  (private, not shared)', '{ slate_number, delegated: false, encrypted: true,\n  encrypted_content, note }'],
           ['GET /api/oauth/shared', '[ { slate_number, shared_at, word_count, char_count,\n    created_at, updated_at } ]   // field is slate_number'],
           ['PATCH /api/oauth/slates/:n/delegated', '{ success: true }'],
           ['POST /oauth/revoke', '{ success: true }   // body { token }, JSON or form; always 200']
@@ -997,7 +998,8 @@ take care!
           'RSA unwrap MUST set oaepHash: "sha256". node defaults OAEP to sha-1, which fails with a garbage key and an opaque error.',
           'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational — set it to an ISO timestamp when you write; it is not authoritative.',
           'a stale content key is expected, not a bug: the user\'s own edits rotate the per-slate key, so a cached key fails with a GCM auth error ("unable to authenticate data"). always GET the slate again right before writing.',
-          'bring-your-own-key is supported: POST /api/oauth/clients accepts a public_key (base64 SPKI) and PUT /api/oauth/clients/:clientId/public-key rotates it — the /dev page just generates one for you by default.'
+          'bring-your-own-key is supported: POST /api/oauth/clients accepts a public_key (base64 SPKI) and PUT /api/oauth/clients/:clientId/public-key rotates it — the /dev page just generates one for you by default.',
+          'slates:read:private is the full-read scope: it also covers published slates (which are public anyway), so GET /api/oauth/slates/:n returns plaintext for a published slate and you do not need slates:read:public as well. it does NOT include the slate list (slates:read:meta) — request that separately if you need to enumerate.'
         ]
       },
       errors: {

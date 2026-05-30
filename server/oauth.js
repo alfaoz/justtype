@@ -31,6 +31,17 @@ const REFRESH_TTL = 90 * 24 * 3600; // 90 days
 const CODE_TTL = 60;                // 1 minute
 const CONSENT_TTL = 600;            // 10 minutes
 
+// Scope implications: holding the key on the left satisfies the scopes on the
+// right. Reading private slates is the "full read" scope — it also covers
+// published content (which is world-public anyway). It deliberately does NOT
+// imply slates:read:meta, since enumerating the whole slate list is a distinct
+// privacy boundary an app must request explicitly.
+const SCOPE_IMPLIES = {
+  'slates:read:private': ['slates:read:public']
+};
+const scopeSatisfied = (granted, required) =>
+  granted.includes(required) || granted.some((g) => (SCOPE_IMPLIES[g] || []).includes(required));
+
 function mountOAuth(app, deps) {
   const { db, jwt, JWT_SECRET, crypto, b2Storage, isProduction,
           generateUniqueShareId, checkStorageLimit, updateUserStorage } = deps;
@@ -503,7 +514,7 @@ function mountOAuth(app, deps) {
       return res.status(401).json({ error: 'invalid_token', error_description: 'token revoked or expired' });
     }
     const scopes = (row.scope || '').split(' ').filter(Boolean);
-    if (requiredScope && !scopes.includes(requiredScope)) {
+    if (requiredScope && !scopeSatisfied(scopes, requiredScope)) {
       return res.status(403).json({ error: 'insufficient_scope', error_description: `requires scope: ${requiredScope}` });
     }
     db.prepare('UPDATE oauth_tokens SET last_used_at = ? WHERE id = ?').run(now(), row.id);
@@ -870,7 +881,16 @@ function mountOAuth(app, deps) {
         });
       }
 
-      // Not delegated: owner-encrypted ciphertext only (unreadable by the app).
+      // Published slates are world-public plaintext anyway — return readable
+      // content + title here too, so reads are uniform: one endpoint, content
+      // comes back for anything the app may see (no branching on slate type).
+      if (slate.is_published) {
+        let content = null;
+        try { content = await b2Storage.getSlate(slate.b2_public_file_id || slate.b2_file_id, null); } catch { content = null; }
+        return res.json({ ...base, delegated: false, published: true, title: slate.title, content });
+      }
+
+      // Private + not delegated: owner-encrypted ciphertext only (unreadable by the app).
       let raw = null;
       try {
         const buf = await b2Storage.downloadRawFile(slate.b2_file_id);
