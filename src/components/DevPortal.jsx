@@ -635,6 +635,37 @@ function DocsTab({ onWizard }) {
               </div>
             ))}
           </div>
+
+          <h3 className="text-base text-white tracking-tight mt-8 mb-2">{d.responses.title}</h3>
+          <p className="text-[#a0a0a0] mb-3">{d.responses.body}</p>
+          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
+            {d.responses.items.map(([path, shape], i) => (
+              <div key={i} className="px-4 py-3">
+                <code className="text-blue-400 text-xs break-all">{path}</code>
+                <pre className="text-[#a0a0a0] text-xs mt-1.5 whitespace-pre-wrap break-all font-mono leading-relaxed">{shape}</pre>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 rounded-xl border border-orange-400/30 bg-orange-400/5 px-5 py-4">
+            <h3 className="text-sm text-orange-300 mb-2">{d.gotchas.title}</h3>
+            <ul className="space-y-2">
+              {d.gotchas.points.map((p, i) => (
+                <li key={i} className="flex gap-2.5 text-[#a0a0a0] text-xs leading-relaxed">
+                  <span className="text-orange-400/70 shrink-0">⚠</span><span>{p}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <h3 className="text-base text-white tracking-tight mt-6 mb-2">{d.errors.title}</h3>
+          <ul className="space-y-2">
+            {d.errors.points.map((p, i) => (
+              <li key={i} className="flex gap-2.5 text-[#a0a0a0] text-xs leading-relaxed">
+                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              </li>
+            ))}
+          </ul>
         </section>
 
         <section id="delegation" className="scroll-mt-20">

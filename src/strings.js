@@ -975,6 +975,42 @@ take care!
           ['GET',   '/api/oauth/scopes',              'the scope catalogue (no auth)']
         ]
       },
+      responses: {
+        title: 'response shapes',
+        body: 'exact JSON each endpoint returns, with real field names.',
+        items: [
+          ['POST /oauth/token', '{ access_token, token_type: "Bearer", expires_in, refresh_token, scope }'],
+          ['GET /api/oauth/userinfo', '{ id, username, email?, email_verified? }'],
+          ['GET /api/oauth/slates', '[ { slate_number, is_published, share_id, title|null,\n    title_encrypted, word_count, char_count,\n    created_at, updated_at, published_at } ]'],
+          ['GET /api/oauth/slates/:n  (delegated)', '{ slate_number, delegated: true,\n  key_scheme: "rsa-oaep-sha256", content_scheme: "aes-256-gcm",\n  wrapped_key, enc_content, enc_title, shared_at }'],
+          ['GET /api/oauth/slates/:n  (not shared)', '{ slate_number, delegated: false, encrypted: true,\n  encrypted_content, note }'],
+          ['GET /api/oauth/shared', '[ { slate_number, shared_at, word_count, char_count,\n    created_at, updated_at } ]   // field is slate_number'],
+          ['PATCH /api/oauth/slates/:n/delegated', '{ success: true }'],
+          ['POST /oauth/revoke', '{ success: true }   // body { token }, JSON or form; always 200']
+        ]
+      },
+      gotchas: {
+        title: 'gotchas — read these',
+        points: [
+          'the delegated write (PATCH /api/oauth/slates/:n/delegated) is authorized by slates:read:private, NOT slates:write — slates:write is only for plaintext/published slates. requesting slates:write and PATCHing delegated returns 403.',
+          'the blob IV is 16 bytes, not the usual 12. layout is IV(16) + authTag(16) + ciphertext, base64. a hardcoded 12-byte IV produces blobs justtype cannot read.',
+          'RSA unwrap MUST set oaepHash: "sha256". node defaults OAEP to sha-1, which fails with a garbage key and an opaque error.',
+          'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational — set it to an ISO timestamp when you write; it is not authoritative.',
+          'a stale content key is expected, not a bug: the user\'s own edits rotate the per-slate key, so a cached key fails with a GCM auth error ("unable to authenticate data"). always GET the slate again right before writing.',
+          'bring-your-own-key is supported: POST /api/oauth/clients accepts a public_key (base64 SPKI) and PUT /api/oauth/clients/:clientId/public-key rotates it — the /dev page just generates one for you by default.'
+        ]
+      },
+      errors: {
+        title: 'errors',
+        points: [
+          '400 invalid_request / invalid_grant — bad or expired code, PKCE mismatch, or missing parameters.',
+          '401 invalid_client — wrong client_id/secret. 401 invalid_token — missing, expired, or revoked bearer token.',
+          '403 insufficient_scope — your token lacks the scope the endpoint needs (error_description names it).',
+          '403 on a delegated slate — the user has not shared that slate with your app yet.',
+          '413 — content over 5 MB, or a grant blob over 8 MB per field.',
+          'GCM "unable to authenticate data" on decrypt — almost always a stale rotated key (re-GET), or a wrong oaepHash / IV length. not a server error.'
+        ]
+      },
       tokens: {
         title: 'tokens',
         points: [
