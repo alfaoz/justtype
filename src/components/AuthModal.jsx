@@ -8,7 +8,7 @@ import { saveSlateKey, getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 import { VerifyBadge } from './VerifyBadge';
 
-export function AuthModal({ onClose, onAuth }) {
+export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = '' }) {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -89,8 +89,11 @@ export function AuthModal({ onClose, onAuth }) {
     throw new Error(strings.auth.turnstile.tryAgain);
   };
 
-  // Initialize Turnstile widget when modal opens
+  // Initialize Turnstile widget when modal opens.
+  // In OAuth-gate mode the request is already vouched for by a signed gate, so we
+  // skip the turnstile challenge entirely (no widget, no token wait).
   useEffect(() => {
+    if (oauthGate) return;
     const initTurnstile = () => {
       if (window.turnstile && turnstileRef.current && !turnstileWidgetId.current) {
         try {
@@ -212,8 +215,9 @@ export function AuthModal({ onClose, onAuth }) {
     const termsAccepted = formData.get('terms') === 'on';
 
     try {
-      // Wait for Turnstile token if not ready yet
-      if (!turnstileTokenRef.current) {
+      // Wait for Turnstile token if not ready yet — unless this is an OAuth-gated
+      // sign-in, where the signed gate stands in for the challenge.
+      if (!oauthGate && !turnstileTokenRef.current) {
         // Show spinning animation after 50ms delay
         const animationTimeout = setTimeout(() => setShowLoadingAnimation(true), 50);
 
@@ -226,10 +230,15 @@ export function AuthModal({ onClose, onAuth }) {
       setShowLoadingAnimation(true);
 
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
+      // In OAuth-gate mode send the gate instead of a turnstile token; the server
+      // accepts it as proof the flow came from a real app authorization request.
+      const authProof = oauthGate
+        ? { oauth_gate: oauthGate }
+        : { turnstile_token: turnstileTokenRef.current || turnstileToken };
       let body;
 
       if (isLogin) {
-        body = { username, password, turnstile_token: turnstileTokenRef.current || turnstileToken };
+        body = { username, password, ...authProof };
       } else {
         // E2E: generate keys client-side before registration
         const slateKey = await generateSlateKey();
@@ -249,7 +258,7 @@ export function AuthModal({ onClose, onAuth }) {
 
         body = {
           username, password, email, termsAccepted,
-          turnstile_token: turnstileTokenRef.current || turnstileToken,
+          ...authProof,
           wrappedKey, recoveryWrappedKey, recoverySalt, encryptionSalt
         };
       }
@@ -1076,7 +1085,12 @@ export function AuthModal({ onClose, onAuth }) {
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-modal-overlay" onClick={onClose}>
       <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl text-white mb-6">{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
+        <h2 className={`text-xl text-white ${oauthGate ? 'mb-2' : 'mb-6'}`}>{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
+        {oauthGate && (
+          <p className="text-sm opacity-60 mb-6">
+            {oauthAppName ? strings.auth.oauthContinue.toApp(oauthAppName) : strings.auth.oauthContinue.generic}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

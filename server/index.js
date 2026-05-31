@@ -53,6 +53,18 @@ if (!process.env.TURNSTILE_SECRET_KEY) {
 
 // Cloudflare Turnstile verification middleware
 async function verifyTurnstileToken(req, res, next) {
+  // Logins/registrations started from a third-party OAuth flow carry a signed
+  // gate proving they originated from /oauth/authorize for a registered client.
+  // In that trusted, app-initiated context we skip the turnstile challenge — the
+  // user is already mid-handshake with an app, and the gate is non-forgeable.
+  const oauthGate = req.body.oauth_gate;
+  if (oauthGate) {
+    try {
+      const t = jwt.verify(oauthGate, JWT_SECRET);
+      if (t.purpose === 'oauth_login_gate') return next();
+    } catch { /* fall through to the normal turnstile check */ }
+  }
+
   const turnstileToken = req.body.turnstile_token;
 
   if (!turnstileToken) {

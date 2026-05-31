@@ -187,6 +187,10 @@ const strings = {
 
   // auth modal
   auth: {
+    oauthContinue: {
+      toApp: (app) => `to continue to ${app}`,
+      generic: 'sign in to continue'
+    },
     login: {
       title: 'login',
       username: 'username',

@@ -37,6 +37,11 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  // OAuth login gate: when a logged-out user is sent to /login?gate=... from an
+  // OAuth authorize request, we open the auth modal and bounce back to consent
+  // once they finish (and any recovery-key / PIN steps are done).
+  const [oauthGate, setOauthGate] = useState(null);
+  const [oauthAppName, setOauthAppName] = useState('');
   const [showRepublishModal, setShowRepublishModal] = useState(false);
   const [showGoogleSuccessModal, setShowGoogleSuccessModal] = useState(false);
   const [showGoogleErrorModal, setShowGoogleErrorModal] = useState(false);
@@ -195,6 +200,15 @@ export default function App() {
     fetchUserData();
   }, []);
 
+  // Once an OAuth-gated user is authenticated, return them to the consent screen.
+  // We wait until any post-auth steps (recovery key, PIN setup) are cleared so they
+  // are never skipped, then hand back to the server via the signed gate.
+  useEffect(() => {
+    if (!oauthGate || !token) return;
+    if (pendingRecoveryPhrase || showPinSetup) return;
+    window.location.href = `/oauth/continue?gate=${encodeURIComponent(oauthGate)}`;
+  }, [oauthGate, token, pendingRecoveryPhrase, showPinSetup]);
+
   // Fetch notifications when authenticated
   const fetchNotifications = async () => {
     try {
@@ -305,6 +319,18 @@ export default function App() {
         setView('cli-info');
       } else if (path === '/authorize/share') {
         setView('authorize-share');
+      } else if (path === '/login') {
+        // OAuth login gate: a logged-out user was sent here from /oauth/authorize
+        // to sign in / sign up through the familiar justtype modal, then returns
+        // to the consent screen. The signed `gate` carries the return target.
+        const params = new URLSearchParams(window.location.search);
+        const gate = params.get('gate');
+        setView('writer');
+        if (gate) {
+          setOauthGate(gate);
+          setOauthAppName(params.get('app') || '');
+          setShowAuthModal(true);
+        }
       } else if (path === '/dev') {
         setView('dev');
       } else if (path === '/feedback') {
@@ -1187,6 +1213,8 @@ export default function App() {
         <AuthModal
           onClose={() => setShowAuthModal(false)}
           onAuth={handleAuth}
+          oauthGate={oauthGate}
+          oauthAppName={oauthAppName}
         />
       )}
 

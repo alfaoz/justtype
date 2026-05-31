@@ -177,32 +177,6 @@ function mountOAuth(app, deps) {
 <body><div class="card">${bodyHtml}</div></body>
 </html>`;
 
-  const loginPageBody = (clientName) => `
-    <h1>sign in to justtype</h1>
-    <p class="sub"><span class="app">${escapeHtml(clientName)}</span> wants to connect to your justtype account. log in to continue.</p>
-    <form id="loginForm">
-      <input type="text" name="username" placeholder="username or email" required autocomplete="username">
-      <input type="password" name="password" placeholder="password" required autocomplete="current-password">
-      <button type="submit" class="primary">log in</button>
-    </form>
-    <div class="error" id="error"></div>
-    <script>
-      document.getElementById('loginForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const f = e.target, err = document.getElementById('error');
-        try {
-          const r = await fetch('/api/auth/login', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ username: f.username.value, password: f.password.value })
-          });
-          const data = await r.json();
-          if (r.ok && !data.requiresVerification) { window.location.reload(); }
-          else { err.textContent = data.requiresVerification ? 'please verify your email first' : (data.error || 'login failed'); err.style.display = 'block'; }
-        } catch { err.textContent = 'connection error'; err.style.display = 'block'; }
-      });
-    </script>`;
-
   const consentPageBody = (user, client, scopeList, ticket, grantable) => {
     const items = scopeList.map(s =>
       `<li><span class="check">✓</span><span>${escapeHtml(SCOPES[s])}</span></li>`).join('');
@@ -577,7 +551,17 @@ function mountOAuth(app, deps) {
 
     const user = getSessionUser(req);
     if (!user) {
-      return res.send(renderPage('sign in to justtype', loginPageBody(client.name)));
+      // Send the user through the familiar justtype sign-in / sign-up experience
+      // (the SPA auth modal), then bring them straight back here to consent. The
+      // return target is sealed inside a signed gate so it can't be tampered with
+      // (no open redirect), and so login/register can skip the turnstile challenge
+      // in this trusted, app-initiated context.
+      const gate = jwt.sign(
+        { purpose: 'oauth_login_gate', client_id, return_to: req.originalUrl },
+        JWT_SECRET, { expiresIn: CONSENT_TTL }
+      );
+      const params = new URLSearchParams({ gate, app: client.name });
+      return res.redirect('/login?' + params.toString());
     }
 
     // Signed, short-lived consent ticket binds this approval to the user + request
@@ -595,6 +579,24 @@ function mountOAuth(app, deps) {
     // wraps once the app registers an install.
     const grantable = requested.includes('slates:read:private');
     res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable)));
+  });
+
+  // After a logged-out user signs in / signs up through the SPA auth modal (the
+  // /login gate), the browser returns here. We verify the signed gate and bounce
+  // back to the original /oauth/authorize request — now carrying a session cookie,
+  // so the consent screen renders. The return target lives inside the signed gate,
+  // so there is no open-redirect surface.
+  app.get('/oauth/continue', (req, res) => {
+    const { gate } = req.query;
+    try {
+      const t = jwt.verify(gate, JWT_SECRET);
+      if (t.purpose !== 'oauth_login_gate' || !t.return_to) throw new Error('bad gate');
+      if (!String(t.return_to).startsWith('/oauth/authorize')) throw new Error('bad return');
+      return res.redirect(t.return_to);
+    } catch {
+      return res.status(400).send(renderPage('sign-in expired',
+        '<h1>sign-in expired</h1><p class="sub">this sign-in step expired. please start again from the app.</p>'));
+    }
   });
 
   app.post('/oauth/authorize/decide', form, (req, res) => {
