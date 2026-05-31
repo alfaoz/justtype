@@ -7,11 +7,15 @@
 
 import { API_URL } from './config';
 import { sweepDrops } from './dropInbox';
+import { reconcileDeviceWraps } from './shareAll';
 
 let eventSource = null;
 
-// Open the SSE stream. On any "drops" event, sweep. The browser's native
-// EventSource handles reconnection. onAdopted bubbles up to refresh the UI.
+// Open the SSE stream. Two content-free pings:
+//   'drops'     — an app deposited a drop → sweep + adopt.
+//   'reconcile' — an app registered a new install key → wrap shared slates to it.
+// The browser's native EventSource handles reconnection. onAdopted bubbles up to
+// refresh the UI after drops adopt.
 function startSse(userId, masterKey, onAdopted) {
   if (eventSource) return;
   try {
@@ -20,6 +24,7 @@ function startSse(userId, masterKey, onAdopted) {
       try {
         const data = JSON.parse(ev.data);
         if (data && data.type === 'drops') sweepDrops(userId, masterKey, onAdopted);
+        else if (data && data.type === 'reconcile') reconcileDeviceWraps(userId);
       } catch {}
     };
     eventSource.onerror = () => { /* browser auto-reconnects */ };
@@ -32,8 +37,10 @@ function startSse(userId, masterKey, onAdopted) {
 export function startDropRealtime(userId, masterKey, onAdopted) {
   if (!userId || !masterKey) return;
   startSse(userId, masterKey, onAdopted);
-  // Catch up on anything deposited while we were away.
+  // Catch up on anything that happened while we were away: adopt pending drops and
+  // wrap any shared slates to installs registered since we were last open.
   sweepDrops(userId, masterKey, onAdopted);
+  reconcileDeviceWraps(userId);
 }
 
 // Tear down the SSE stream (on logout).

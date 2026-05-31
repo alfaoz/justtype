@@ -1640,6 +1640,11 @@ app.delete('/api/account/slate-drops/:id', authenticateToken, (req, res) => {
   if (!drop) return res.json({ success: true, removed: 0 });
   const discard = db.transaction(() => {
     if (drop.is_inplace && drop.adopted_slate_number != null) {
+      // Drop per-device wraps before the grants they hang off (FK not enforced),
+      // so the slate-delete tombstone trigger can't leave them orphaned.
+      db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+        SELECT id FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?)`)
+        .run(req.user.id, drop.adopted_slate_number);
       db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?')
         .run(req.user.id, drop.adopted_slate_number);
       db.prepare('DELETE FROM slates WHERE user_id = ? AND slate_number = ? AND adoption_pending = 1')

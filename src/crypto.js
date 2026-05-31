@@ -220,20 +220,29 @@ export async function wrapKeyToAppKey(keyBytes, appPublicKey) {
   return bufToBase64(new Uint8Array(out));
 }
 
-// Re-encrypt a slate's plaintext for an app. Generates a fresh content key,
-// encrypts content + title under it (justtype's own blob format), and wraps the
-// content key to the app's public key. Returns base64 blobs ready to upload.
+// Re-encrypt a slate's plaintext for an app's INSTALLATIONS. Generates one fresh
+// content key, encrypts content + title under it (justtype's own blob format), and
+// wraps that single content key once per registered device key. Returns base64
+// blobs + a device_wraps[] array ready to upload to /api/account/slate-grants.
+//
+// deviceKeys: [{ device_id, public_key }] where public_key is base64 SPKI (the
+// app's per-install RSA-OAEP key). There is no longer a single global app key.
 //
 // For two-way sharing, pass the user's masterKey: the content key is ALSO wrapped
-// to it (owner_wrapped_key) so the justtype client can later decrypt edits the app
-// makes to this grant. Without masterKey the grant stays app-readable only.
-export async function reencryptForApp(plainContent, plainTitle, appPublicKey, masterKey = null) {
+// to it (owner_wrapped_key) so the justtype client can later decrypt edits any
+// install makes to this grant. Without masterKey the grant stays app-readable only.
+export async function reencryptForApp(plainContent, plainTitle, deviceKeys, masterKey = null) {
   const contentKey = crypto.getRandomValues(new Uint8Array(32));
   const enc_content = await encryptContent(plainContent || '', contentKey);
   const enc_title = (plainTitle != null && plainTitle !== '') ? await encryptTitle(plainTitle, contentKey) : null;
-  const wrapped_key = await wrapKeyToAppKey(contentKey, appPublicKey);
+  const device_wraps = [];
+  for (const dk of (deviceKeys || [])) {
+    if (!dk || !dk.device_id || !dk.public_key) continue;
+    const pub = await importAppPublicKey(dk.public_key);
+    device_wraps.push({ device_id: dk.device_id, wrapped_key: await wrapKeyToAppKey(contentKey, pub) });
+  }
   const owner_wrapped_key = masterKey ? await wrapKey(contentKey, masterKey) : null;
-  return { wrapped_key, owner_wrapped_key, enc_content, enc_title };
+  return { device_wraps, owner_wrapped_key, enc_content, enc_title };
 }
 
 // Owner-side read of a grant an app may have written to. Unwraps the content key

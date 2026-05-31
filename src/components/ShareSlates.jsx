@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { getSlateKey } from '../keyStore';
-import { decryptContent, decryptTitle, importAppPublicKey, reencryptForApp } from '../crypto';
+import { decryptContent, decryptTitle, reencryptForApp } from '../crypto';
 import { enableShareAll } from '../shareAll';
 
 // Modal for controlling which private slates a connected app can read and write.
@@ -19,7 +19,7 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
   const [slates, setSlates] = useState([]);          // [{ slate_number, title }]
   const [shared, setShared] = useState(new Set());    // slate_numbers currently shared
   const [busy, setBusy] = useState(new Set());        // slate_numbers mid-toggle
-  const [appKey, setAppKey] = useState(null);         // imported public key
+  const [deviceKeys, setDeviceKeys] = useState([]);   // app's registered install keys [{device_id, public_key}]
   const [slateKey, setSlateKey] = useState(null);     // user's master key
   const [shareAll, setShareAll] = useState(false);    // blanket access on/off
   const [bulk, setBulk] = useState(null);             // { done, total } | 'off' while working
@@ -41,7 +41,7 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
         if (!grantRes.ok) throw new Error(grantData.error || 'not grantable');
         if (!listRes.ok) throw new Error(listData.error || 'failed to load slates');
 
-        const pubKey = await importAppPublicKey(grantData.public_key);
+        const dks = grantData.device_keys || [];
         const sharedSet = new Set((grantData.shared || []).map((g) => g.slate_number));
 
         // Only private (unpublished) slates — published ones are already readable
@@ -60,7 +60,7 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
 
         if (!cancelled) {
           setSlateKey(mk);
-          setAppKey(pubKey);
+          setDeviceKeys(dks);
           setShared(sharedSet);
           setSlates(privateSlates);
           setShareAll(!!grantData.share_all);
@@ -94,7 +94,7 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
     if ((!title || title === 'untitled') && encTitle) {
       try { title = (await decryptTitle(encTitle, slateKey)).trim(); } catch { title = ''; }
     }
-    const grant = await reencryptForApp(content, title, appKey, slateKey);
+    const grant = await reencryptForApp(content, title, deviceKeys, slateKey);
     return { slate_number: n, ...grant };
   };
 
@@ -208,6 +208,12 @@ export function ShareSlates({ clientId, appName, userId, onClose, onChanged }) {
             <p className="text-[#666] text-sm">{s.none}</p>
           ) : (
             <div className="space-y-4">
+              {/* app hasn't registered an install key yet — access applies once it connects */}
+              {deviceKeys.length === 0 && (
+                <div className="rounded-lg border border-[#333] bg-[#161616] px-3.5 py-3 text-xs text-[#9a9a9a] leading-relaxed">
+                  {s.noDevices(appName)}
+                </div>
+              )}
               {/* master switch: all private slates */}
               <div className="flex items-start gap-3 rounded-lg border border-[#333] bg-[#1a1a1a] px-3.5 py-3">
                 <div className="flex-1 min-w-0">

@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, importAppPublicKey, reencryptForApp, decryptOwnerGrant } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
 
@@ -20,8 +20,9 @@ async function resyncSharedGrants(slateNumber, content, title, masterKey) {
     if (!Array.isArray(apps) || apps.length === 0) return;
     for (const app of apps) {
       try {
-        const pub = await importAppPublicKey(app.public_key);
-        const grant = await reencryptForApp(content, title, pub, masterKey);
+        // Wrap the fresh content key to every registered install of this app.
+        if (!app.device_keys || app.device_keys.length === 0) continue;
+        const grant = await reencryptForApp(content, title, app.device_keys, masterKey);
         await fetch(`${API_URL}/account/slate-grants`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

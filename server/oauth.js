@@ -258,11 +258,12 @@ function mountOAuth(app, deps) {
     if (website && (typeof website !== 'string' || website.length > 200)) {
       return res.status(400).json({ error: 'Invalid website URL.' });
     }
+    // NOTE: client-level public_key is the deprecated single global app key. It is
+    // no longer used for delegation — apps register a per-installation key via
+    // POST /api/oauth/devices after authorization. Still accepted (validated) for
+    // backward compatibility, but never required and never wrapped to.
     if (public_key && !validPublicKey(public_key)) {
       return res.status(400).json({ error: 'Invalid public key (expected base64 SPKI).' });
-    }
-    if (requested.includes('slates:read:private') && !public_key) {
-      return res.status(400).json({ error: 'The slates:read:private scope requires a public key for key delegation.' });
     }
 
     const clientId = 'jt_' + randomToken(16);
@@ -318,7 +319,11 @@ function mountOAuth(app, deps) {
     const client = db.prepare('SELECT id FROM oauth_clients WHERE client_id = ? AND owner_user_id = ?')
       .get(req.params.clientId, req.user.id);
     if (!client) return res.status(404).json({ error: 'Client not found' });
+    // Per-device wraps hang off this client's grants; clear them first (FK off).
+    db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+      SELECT id FROM oauth_slate_grants WHERE client_id = ?)`).run(req.params.clientId);
     db.prepare('DELETE FROM oauth_slate_grants WHERE client_id = ?').run(req.params.clientId);
+    db.prepare('DELETE FROM oauth_device_keys WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_tokens WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_codes WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_clients WHERE client_id = ?').run(req.params.clientId);
@@ -377,7 +382,10 @@ function mountOAuth(app, deps) {
 
     // Offer the inline "share all private slates" opt-in only when it would work:
     // the app requested private-read access and has a public key to wrap to.
-    const grantable = !!(client.public_key && requested.includes('slates:read:private'));
+    // Offer "share all" whenever private read is requested. Per-installation device
+    // keys are registered after authorization, so there is nothing to wrap to yet;
+    // ticking it records intent and the user's client wraps on its next sync.
+    const grantable = requested.includes('slates:read:private');
     res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable)));
   });
 
@@ -409,30 +417,17 @@ function mountOAuth(app, deps) {
     }
 
     // Inline "allow full access": the user ticked share-all on the consent screen.
-    // Only honor it if the app actually requested private-read and has a public key
-    // to wrap to. We record the share-all INTENT now (server-side, no crypto — this
-    // is a verified approval), which also lets the user's browser use the grant
-    // endpoints before any token is issued. We then hand off to a same-origin React
-    // page that does the client-side slate wrapping and finalizes the code, so the
-    // authorization code is minted last and never expires while wrapping runs.
+    // Under per-installation device keys there is nothing to wrap at consent time
+    // (the app registers its device key only after token exchange), so we simply
+    // record the share-all INTENT — a verified approval. The user's justtype client
+    // wraps every private slate to the app's device key(s) on its next sync (or
+    // immediately, nudged by the SSE 'reconcile' ping when the app registers). No
+    // crypto and no React detour here; the code is minted directly below.
     const wantsShareAll = req.body.share_all === '1';
     const scopeList = (t.scope || '').split(' ').filter(Boolean);
-    const client = getClient(t.client_id);
-    const canShareAll = wantsShareAll && client && client.public_key && scopeList.includes('slates:read:private');
-
-    if (canShareAll) {
+    if (wantsShareAll && scopeList.includes('slates:read:private')) {
       db.prepare(`INSERT INTO oauth_share_all (client_id, user_id) VALUES (?, ?)
         ON CONFLICT(client_id, user_id) DO NOTHING`).run(t.client_id, user.id);
-      const finalizeToken = jwt.sign({
-        purpose: 'oauth_finalize', uid: user.id, client_id: t.client_id,
-        redirect_uri: t.redirect_uri, scope: t.scope, state: t.state || '',
-        code_challenge: t.code_challenge, code_challenge_method: t.code_challenge_method
-      }, JWT_SECRET, { expiresIn: CONSENT_TTL });
-      const share = new URL('/authorize/share', isProduction ? 'https://justtype.io' : 'http://localhost:3003');
-      share.searchParams.set('t', finalizeToken);
-      share.searchParams.set('client_id', t.client_id);
-      share.searchParams.set('app', client.name);
-      return res.redirect(share.toString());
     }
 
     const code = randomToken(32);
@@ -447,35 +442,10 @@ function mountOAuth(app, deps) {
     res.redirect(u.toString());
   });
 
-  // Finalize an authorization that detoured through the React share step: verify the
-  // signed finalize token + the session, mint the one-time code now, and return the
-  // app redirect URL for the browser to follow. Minting here (not at decide) keeps the
-  // 60s code lifetime independent of how long client-side slate wrapping took.
-  app.post('/oauth/authorize/finalize', publicCors, express.json(), (req, res) => {
-    const { t: token } = req.body || {};
-    if (!token) return res.status(400).json({ error: 'invalid_request' });
-    let t;
-    try {
-      t = jwt.verify(token, JWT_SECRET);
-      if (t.purpose !== 'oauth_finalize') throw new Error('bad purpose');
-    } catch {
-      return res.status(400).json({ error: 'invalid_grant', error_description: 'authorization expired; start again from the app' });
-    }
-    const user = getSessionUser(req);
-    if (!user || user.id !== t.uid) return res.status(401).json({ error: 'session_expired' });
-
-    const code = randomToken(32);
-    db.prepare(`INSERT INTO oauth_codes
-      (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      code, t.client_id, user.id, t.redirect_uri, t.scope,
-      t.code_challenge, t.code_challenge_method, now() + CODE_TTL
-    );
-    const u = new URL(t.redirect_uri);
-    if (t.state) u.searchParams.set('state', t.state);
-    u.searchParams.set('code', code);
-    res.json({ redirect: u.toString() });
-  });
+  // (The former /oauth/authorize/finalize + /authorize/share React detour existed
+  // only to do client-side slate wrapping during consent. With per-installation
+  // device keys there is nothing to wrap at consent time, so share-all is recorded
+  // as intent in /decide and the code is minted there directly — no detour.)
 
   // --- token endpoint -----------------------------------------------------
 
@@ -612,9 +582,104 @@ function mountOAuth(app, deps) {
       return res.status(403).json({ error: 'insufficient_scope', error_description: `requires scope: ${requiredScope}` });
     }
     db.prepare('UPDATE oauth_tokens SET last_used_at = ? WHERE id = ?').run(now(), row.id);
-    req.oauth = { userId: row.user_id, clientId: row.client_id, scopes };
+    // Resolve the calling INSTALL: the token row is stamped with a device_id when
+    // the app registers a per-installation key (POST /api/oauth/devices). Reads use
+    // this to return the wrap THIS device can decrypt. Null until a device registers,
+    // or if the stamped device was revoked/removed.
+    let deviceId = null;
+    if (row.device_id) {
+      const dev = db.prepare('SELECT device_id FROM oauth_device_keys WHERE device_id = ? AND client_id = ? AND user_id = ? AND revoked = 0')
+        .get(row.device_id, row.client_id, row.user_id);
+      if (dev) {
+        deviceId = dev.device_id;
+        db.prepare('UPDATE oauth_device_keys SET last_seen_at = ? WHERE device_id = ?').run(now(), deviceId);
+      }
+    }
+    req.oauth = { userId: row.user_id, clientId: row.client_id, scopes, tokenId: row.id, deviceId };
     next();
   };
+
+  // Guard for private-read/delegation endpoints: a registered device key is now
+  // mandatory (no global app key). 409 tells the app to POST /api/oauth/devices.
+  const requireDevice = (req, res) => {
+    if (!req.oauth.deviceId) {
+      res.status(409).json({
+        error: 'needs_device',
+        error_description: 'register an installation public key via POST /api/oauth/devices before reading or writing private slates'
+      });
+      return false;
+    }
+    return true;
+  };
+
+  // --- per-installation device keys ---------------------------------------
+  //
+  // Each install of an app registers its OWN RSA-OAEP public key (the matching
+  // private key never leaves the device). This replaces the single global app key:
+  // slates are wrapped per device, so extracting one install's key cannot decrypt
+  // another user's — or even another install's — slates. Registration stamps the
+  // calling token row, so subsequent reads resolve the device with no extra params.
+
+  const mintDeviceId = () => 'dev_' + randomToken(16);
+
+  // Register (or re-assert) this installation's public key for the current grant.
+  app.post('/api/oauth/devices', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    const { public_key, key_scheme, name } = req.body || {};
+    if (!validPublicKey(public_key)) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'public_key (base64 SPKI RSA-OAEP) required' });
+    }
+    if (key_scheme && key_scheme !== 'rsa-oaep-sha256') {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'unsupported key_scheme (only rsa-oaep-sha256)' });
+    }
+    if (name != null && (typeof name !== 'string' || name.length > 120)) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'name too long (max 120)' });
+    }
+    const { userId, clientId, tokenId } = req.oauth;
+    // Idempotent on the key itself: re-registering the same key returns the same
+    // device_id and un-revokes it (a reinstall that kept its key keeps its access).
+    const existing = db.prepare('SELECT device_id FROM oauth_device_keys WHERE client_id = ? AND user_id = ? AND public_key = ?')
+      .get(clientId, userId, public_key);
+    let deviceId;
+    if (existing) {
+      deviceId = existing.device_id;
+      db.prepare('UPDATE oauth_device_keys SET revoked = 0, last_seen_at = ?, name = COALESCE(?, name) WHERE device_id = ?')
+        .run(now(), name || null, deviceId);
+    } else {
+      deviceId = mintDeviceId();
+      db.prepare(`INSERT INTO oauth_device_keys (device_id, client_id, user_id, public_key, key_scheme, name, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(deviceId, clientId, userId, public_key, key_scheme || 'rsa-oaep-sha256', name || null, now());
+    }
+    // Bind this device to the access-token row that registered it.
+    db.prepare('UPDATE oauth_tokens SET device_id = ? WHERE id = ?').run(deviceId, tokenId);
+    // Nudge any open justtype tab to wrap existing shared slates to this new key
+    // now (closed clients reconcile on next unlock). Best-effort, content-free.
+    if (dropHub) { try { dropHub.sendSse(userId, { type: 'reconcile' }); } catch {} }
+    res.status(201).json({ device_id: deviceId, key_scheme: key_scheme || 'rsa-oaep-sha256' });
+  });
+
+  // List the installs registered under this grant (the caller is is_self).
+  app.get('/api/oauth/devices', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    const rows = db.prepare(`SELECT device_id, key_scheme, name, created_at, last_seen_at
+      FROM oauth_device_keys WHERE client_id = ? AND user_id = ? AND revoked = 0 ORDER BY created_at ASC`)
+      .all(req.oauth.clientId, req.oauth.userId);
+    res.json(rows.map(r => ({
+      device_id: r.device_id, key_scheme: r.key_scheme, name: r.name || null,
+      created_at: toIso(r.created_at), last_seen_at: toIso(r.last_seen_at),
+      is_self: r.device_id === req.oauth.deviceId
+    })));
+  });
+
+  // Remove an install under this grant (the app de-registering itself or a sibling).
+  // Future wraps stop and reads exclude it; existing wrap rows are dropped too.
+  app.delete('/api/oauth/devices/:deviceId', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    const dev = db.prepare('SELECT device_id FROM oauth_device_keys WHERE device_id = ? AND client_id = ? AND user_id = ?')
+      .get(req.params.deviceId, req.oauth.clientId, req.oauth.userId);
+    if (!dev) return res.status(404).json({ error: 'not_found' });
+    db.prepare('UPDATE oauth_device_keys SET revoked = 1 WHERE device_id = ?').run(dev.device_id);
+    db.prepare('DELETE FROM oauth_grant_device_wraps WHERE device_id = ?').run(dev.device_id);
+    db.prepare('UPDATE oauth_tokens SET device_id = NULL WHERE device_id = ?').run(dev.device_id);
+    res.json({ success: true });
+  });
 
   // --- resource endpoints -------------------------------------------------
 
@@ -874,14 +939,16 @@ function mountOAuth(app, deps) {
   // ALREADY editable by the calling app, without waiting for the user to adopt it.
   // The app generates one fresh content key and wraps it to BOTH the user's public
   // key (wrapped_key_user — so the user can adopt it in place later) and its own
-  // public key (wrapped_key_app — so it can read/edit now via the delegated
+  // public key (wrapped_key_app — the content key wrapped to the CALLING install's
+  // registered device key, so this install can read/edit now via the delegated
   // endpoints). A real, numbered slate is created in adoption_pending state; the
   // user's client re-keys it to their master key on next open. Requires BOTH
-  // slates:create and slates:read:private, and a registered app public key.
+  // slates:create and slates:read:private, and a registered device key.
   app.post('/api/oauth/slates/create-delegated', publicCors, authenticateOAuth('slates:create'), (req, res) => {
     if (!scopeSatisfied(req.oauth.scopes, 'slates:read:private')) {
       return res.status(403).json({ error: 'insufficient_scope', error_description: 'requires scope: slates:read:private' });
     }
+    if (!requireDevice(req, res)) return;
     const { wrapped_key_user, wrapped_key_app, enc_content, enc_title, word_count, char_count } = req.body || {};
     for (const [k, v] of [['wrapped_key_user', wrapped_key_user], ['wrapped_key_app', wrapped_key_app], ['enc_content', enc_content]]) {
       if (!v || typeof v !== 'string') {
@@ -894,10 +961,6 @@ function mountOAuth(app, deps) {
       }
     }
     try {
-      const client = db.prepare('SELECT public_key FROM oauth_clients WHERE client_id = ?').get(req.oauth.clientId);
-      if (!client || !client.public_key) {
-        return res.status(400).json({ error: 'client_has_no_public_key', error_description: 'register a public key for your app to receive delegated access' });
-      }
       const user = db.prepare('SELECT public_key FROM users WHERE id = ?').get(req.oauth.userId);
       if (!user || !user.public_key) {
         return res.status(409).json({ error: 'keypair_unavailable', error_description: 'the user has not published an encryption key yet; retry after they next open justtype' });
@@ -922,24 +985,32 @@ function mountOAuth(app, deps) {
           req.oauth.clientId, req.oauth.userId, wrapped_key_user, enc_content, enc_title || null, slateNumber
         );
         dropId = Number(info.lastInsertRowid);
-        // Grant gives the app immediate delegated read/write (wrapped to the app key).
-        // owner_wrapped_key is filled when the user adopts (re-keys) the slate.
-        // UPSERT (not plain INSERT) as defense-in-depth: a freshly assigned MAX+1
-        // slate_number is strictly above every live slate, so any pre-existing grant
-        // for it is necessarily a stale orphan and is safe to overwrite. Matches the
-        // ON CONFLICT pattern used by the other grant-write endpoints.
+        // Grant holds the shared ciphertext; the per-device wrap (below) gives THIS
+        // install immediate read/edit access. owner_wrapped_key is filled when the
+        // user adopts (re-keys) the slate; other installs get their wrap on that
+        // sync. wrapped_key is the dead legacy column → ''.
+        // UPSERT as defense-in-depth: a freshly assigned MAX+1 slate_number is
+        // strictly above every live slate, so any pre-existing grant for it is a
+        // stale orphan and is safe to overwrite (matches the other grant writers).
         db.prepare(`INSERT INTO oauth_slate_grants
           (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
-          VALUES (?, ?, ?, ?, NULL, ?, ?, 'app', strftime('%s','now'), strftime('%s','now'))
+          VALUES (?, ?, ?, '', NULL, ?, ?, 'app', strftime('%s','now'), strftime('%s','now'))
           ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
-            wrapped_key = excluded.wrapped_key,
+            wrapped_key = '',
             owner_wrapped_key = NULL,
             enc_content = excluded.enc_content,
             enc_title = excluded.enc_title,
             last_writer = 'app',
             updated_at = strftime('%s','now')`).run(
-          req.oauth.clientId, req.oauth.userId, slateNumber, wrapped_key_app, enc_content, enc_title || null
+          req.oauth.clientId, req.oauth.userId, slateNumber, enc_content, enc_title || null
         );
+        const grantId = db.prepare('SELECT id FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?')
+          .get(req.oauth.clientId, req.oauth.userId, slateNumber).id;
+        // The app-wrapped content key for the calling install's device.
+        db.prepare(`INSERT INTO oauth_grant_device_wraps (grant_id, device_id, wrapped_key, created_at, updated_at)
+          VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+          ON CONFLICT(grant_id, device_id) DO UPDATE SET wrapped_key = excluded.wrapped_key, updated_at = strftime('%s','now')`)
+          .run(grantId, req.oauth.deviceId, wrapped_key_app);
       })();
 
       // Nudge any open client to adopt now (SSE/push). Best-effort, fire-and-forget.
@@ -1089,6 +1160,7 @@ function mountOAuth(app, deps) {
   // content key (retrieved from the grant), which the server stores verbatim.
   // The user's justtype client merges the change on next open.
   app.patch('/api/oauth/slates/:n/delegated', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
+    if (!requireDevice(req, res)) return;
     const { enc_content, enc_title, word_count, char_count } = req.body || {};
     if (!enc_content || typeof enc_content !== 'string') {
       return res.status(400).json({ error: 'enc_content (base64 AES-256-GCM blob) required' });
@@ -1096,11 +1168,16 @@ function mountOAuth(app, deps) {
     if (enc_content.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'blob too large' });
 
     try {
-      // Confirm a grant exists (app was delegated this slate).
+      // Confirm this INSTALL was delegated the slate: a grant exists AND this
+      // device holds a wrap for it. The content key is unchanged by an edit, so
+      // every device wrap and the owner_wrapped_key stay valid.
       const grant = db.prepare(
-        'SELECT wrapped_key FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
+        'SELECT id FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
       ).get(req.oauth.clientId, req.oauth.userId, req.params.n);
       if (!grant) return res.status(403).json({ error: 'this slate has not been shared with your app' });
+      const hasWrap = db.prepare('SELECT 1 FROM oauth_grant_device_wraps WHERE grant_id = ? AND device_id = ?')
+        .get(grant.id, req.oauth.deviceId);
+      if (!hasWrap) return res.status(403).json({ error: 'this slate has not been re-wrapped to this installation yet' });
 
       // Mark last_writer = 'app' so the owner's client knows to pull this edit
       // into the canonical (master-key encrypted) slate on next open. The content
@@ -1152,6 +1229,10 @@ function mountOAuth(app, deps) {
         try { await b2Storage.deleteSlate(slate.b2_public_file_id); } catch { /* best-effort */ }
       }
 
+      // Drop per-device wraps before the grants they reference (FK not enforced),
+      // so the tombstone trigger's grant cleanup can't leave them orphaned.
+      db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+        SELECT id FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?)`).run(req.oauth.userId, slate.slate_number);
       db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?').run(req.oauth.userId, slate.slate_number);
       db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.n, req.oauth.userId);
       updateUserStorage(req.oauth.userId);
@@ -1210,15 +1291,20 @@ function mountOAuth(app, deps) {
     }
   });
 
-  // List the private slates the user has delegated to THIS app (readable ones).
+  // List the private slates the user has delegated to THIS app, wrapped to the
+  // calling INSTALL's device key. Only slates that have a wrap for this device are
+  // listed; slates shared but not yet re-wrapped to this device (e.g. a freshly
+  // registered install awaiting the user's next sync) are simply absent until then.
   app.get('/api/oauth/shared', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    if (!requireDevice(req, res)) return;
     const rows = db.prepare(`SELECT g.slate_number, g.updated_at AS shared_at,
-        g.wrapped_key, g.enc_title,
+        w.wrapped_key, g.enc_title,
         s.word_count, s.char_count, s.created_at, s.updated_at
-      FROM oauth_slate_grants g JOIN slates s
-        ON s.slate_number = g.slate_number AND s.user_id = g.user_id
+      FROM oauth_slate_grants g
+      JOIN oauth_grant_device_wraps w ON w.grant_id = g.id AND w.device_id = ?
+      JOIN slates s ON s.slate_number = g.slate_number AND s.user_id = g.user_id
       WHERE g.client_id = ? AND g.user_id = ? ORDER BY g.updated_at DESC`)
-      .all(req.oauth.clientId, req.oauth.userId);
+      .all(req.oauth.deviceId, req.oauth.clientId, req.oauth.userId);
     // wrapped_key + enc_title are included so a client can render the list with
     // real titles (unwrap the content key once, decrypt each enc_title) without
     // fetching every slate one by one. enc_content is omitted — use POST
@@ -1237,10 +1323,12 @@ function mountOAuth(app, deps) {
 
   // Shared read-view builder for one slate, used by both GET /slates/:n and the
   // batch read. Returns the response object (does not send). `grant` is the
-  // calling app's delegation row for this slate (or null). includeEncrypted=false
-  // omits the (potentially large) not-shared ciphertext blob — batch reads skip it
-  // since an app cannot decrypt it anyway; the single GET keeps it for parity.
-  const buildSlateView = async (slate, grant, { includeEncrypted = false } = {}) => {
+  // calling app's delegation row for this slate (or null); `deviceWrap` is the
+  // content key wrapped to the CALLING install's device key (or null if the slate
+  // is shared but not yet re-wrapped to this device). includeEncrypted=false omits
+  // the (potentially large) not-shared ciphertext blob — batch reads skip it since
+  // an app cannot decrypt it anyway; the single GET keeps it for parity.
+  const buildSlateView = async (slate, grant, deviceWrap, { includeEncrypted = false } = {}) => {
     const base = {
       slate_number: slate.slate_number,
       is_published: !!slate.is_published,
@@ -1250,19 +1338,31 @@ function mountOAuth(app, deps) {
       created_at: toIso(slate.created_at), updated_at: toIso(slate.updated_at)
     };
 
-    if (grant) {
-      // Delegated: the user re-wrapped this slate to your public key.
-      // enc_content decrypts (with the unwrapped content key) to JSON { content, uploadedAt }.
+    if (grant && deviceWrap) {
+      // Delegated AND wrapped to this install: enc_content decrypts (with the
+      // content key unwrapped from wrapped_key) to JSON { content, uploadedAt };
       // enc_title decrypts to the raw title string (null if untitled).
       return {
         ...base,
         delegated: true,
         key_scheme: 'rsa-oaep-sha256',
         content_scheme: 'aes-256-gcm',
-        wrapped_key: grant.wrapped_key,
+        wrapped_key: deviceWrap.wrapped_key,
         enc_content: grant.enc_content,
         enc_title: grant.enc_title || null,
         shared_at: toIso(grant.updated_at)
+      };
+    }
+
+    if (grant && !deviceWrap) {
+      // Shared with the app, but no wrap exists for THIS install yet. The user's
+      // client wraps to each registered device on its next save/sync; until then
+      // this install cannot read it. Not an error — poll again after a sync.
+      return {
+        ...base,
+        delegated: false,
+        pending_device: true,
+        note: 'this slate is shared with your app but has not been re-wrapped to this installation yet; it will appear after the user next syncs.'
       };
     }
 
@@ -1296,14 +1396,19 @@ function mountOAuth(app, deps) {
   // key). Otherwise return the owner-encrypted ciphertext, which the app cannot
   // read — justtype stays zero-knowledge either way.
   app.get('/api/oauth/slates/:n', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
+    if (!requireDevice(req, res)) return;
     try {
       const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
         .get(req.params.n, req.oauth.userId);
       if (!slate) return res.status(404).json({ error: 'not_found' });
       const grant = db.prepare(
-        'SELECT wrapped_key, enc_content, enc_title, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
+        'SELECT id, enc_content, enc_title, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
       ).get(req.oauth.clientId, req.oauth.userId, slate.slate_number);
-      res.json(await buildSlateView(slate, grant, { includeEncrypted: true }));
+      const deviceWrap = grant
+        ? db.prepare('SELECT wrapped_key FROM oauth_grant_device_wraps WHERE grant_id = ? AND device_id = ?')
+            .get(grant.id, req.oauth.deviceId)
+        : null;
+      res.json(await buildSlateView(slate, grant, deviceWrap, { includeEncrypted: true }));
     } catch (e) {
       res.status(500).json({ error: 'server_error' });
     }
@@ -1314,6 +1419,7 @@ function mountOAuth(app, deps) {
   // published plaintext / not-shared flag), minus the big ciphertext blob.
   // Published bodies are fetched from B2 with bounded concurrency.
   app.post('/api/oauth/slates/batch', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
+    if (!requireDevice(req, res)) return;
     const nums = req.body?.slate_numbers;
     if (!Array.isArray(nums) || nums.length === 0) {
       return res.status(400).json({ error: 'invalid_request', error_description: 'slate_numbers (non-empty array) required' });
@@ -1330,10 +1436,18 @@ function mountOAuth(app, deps) {
       const found = new Map(slates.map(s => [s.slate_number, s]));
       const missing = wanted.filter(n => !found.has(n));
       const grants = db.prepare(
-        `SELECT slate_number, wrapped_key, enc_content, enc_title, updated_at FROM oauth_slate_grants
+        `SELECT id, slate_number, enc_content, enc_title, updated_at FROM oauth_slate_grants
          WHERE client_id = ? AND user_id = ? AND slate_number IN (${wanted.map(() => '?').join(',')})`
       ).all(req.oauth.clientId, req.oauth.userId, ...wanted);
       const grantBy = new Map(grants.map(g => [g.slate_number, g]));
+      // This install's wrap for each shared slate (keyed by grant id).
+      const grantIds = grants.map(g => g.id);
+      const wraps = grantIds.length
+        ? db.prepare(`SELECT grant_id, wrapped_key FROM oauth_grant_device_wraps
+            WHERE device_id = ? AND grant_id IN (${grantIds.map(() => '?').join(',')})`)
+            .all(req.oauth.deviceId, ...grantIds)
+        : [];
+      const wrapByGrant = new Map(wraps.map(w => [w.grant_id, w]));
 
       // Bounded concurrency so a big batch of published slates doesn't open 100
       // simultaneous B2 reads. Mirrors the share-all concurrency approach.
@@ -1342,7 +1456,9 @@ function mountOAuth(app, deps) {
       const worker = async () => {
         while (queue.length) {
           const slate = queue.shift();
-          out.push(await buildSlateView(slate, grantBy.get(slate.slate_number) || null, { includeEncrypted: false }));
+          const grant = grantBy.get(slate.slate_number) || null;
+          const deviceWrap = grant ? (wrapByGrant.get(grant.id) || null) : null;
+          out.push(await buildSlateView(slate, grant, deviceWrap, { includeEncrypted: false }));
         }
       };
       await Promise.all(Array.from({ length: Math.min(10, slates.length) }, worker));
@@ -1368,11 +1484,16 @@ function mountOAuth(app, deps) {
         .get(r.client_id, req.user.id).n;
       const shareAll = !!db.prepare('SELECT 1 FROM oauth_share_all WHERE client_id = ? AND user_id = ?')
         .get(r.client_id, req.user.id);
+      const deviceCount = db.prepare('SELECT COUNT(*) AS n FROM oauth_device_keys WHERE client_id = ? AND user_id = ? AND revoked = 0')
+        .get(r.client_id, req.user.id).n;
       return {
         client_id: r.client_id, name: r.name, website: r.website,
         scopes,
-        can_share: scopes.includes('slates:read:private') && !!r.public_key,
-        has_public_key: !!r.public_key,
+        // Sharing needs the private scope AND at least one registered installation
+        // key to wrap to. device_count = 0 means "authorized but no app install has
+        // connected a device yet"; sharing applies once one does.
+        can_share: scopes.includes('slates:read:private') && deviceCount > 0,
+        device_count: deviceCount,
         shared_count: sharedCount,
         share_all: shareAll,
         authorized_at: r.authorized_at, last_used_at: r.last_used_at
@@ -1386,8 +1507,12 @@ function mountOAuth(app, deps) {
     const result = db.prepare('UPDATE oauth_tokens SET revoked = 1 WHERE user_id = ? AND client_id = ?')
       .run(req.user.id, client_id);
     // Revoking access also revokes any delegated private-slate read access
-    // (per-slate grants and any blanket "share all" relationship).
+    // (per-slate grants + their per-device wraps, registered device keys, and any
+    // blanket "share all" relationship). Delete wraps first (FK is not enforced).
+    db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+      SELECT id FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?)`).run(req.user.id, client_id);
     db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
+    db.prepare('DELETE FROM oauth_device_keys WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
     db.prepare('DELETE FROM oauth_share_all WHERE user_id = ? AND client_id = ?').run(req.user.id, client_id);
     // NOTE: we deliberately do NOT delete pending oauth_slate_drops here. A drop is
     // encrypted to the USER's key, not the app's, so revoking the app never locks
@@ -1396,75 +1521,122 @@ function mountOAuth(app, deps) {
     res.json({ success: true, revoked: result.changes });
   });
 
+  // The installations (device keys) a connected app has registered, for the
+  // Account UI ("connected devices"). Read-only view of oauth_device_keys.
+  app.get('/api/account/connected-apps/:clientId/devices', deps.authenticateToken, (req, res) => {
+    const rows = db.prepare(`SELECT device_id, key_scheme, name, created_at, last_seen_at
+      FROM oauth_device_keys WHERE client_id = ? AND user_id = ? AND revoked = 0 ORDER BY created_at ASC`)
+      .all(req.params.clientId, req.user.id);
+    res.json(rows.map(r => ({
+      device_id: r.device_id, key_scheme: r.key_scheme, name: r.name || null,
+      created_at: r.created_at, last_seen_at: r.last_seen_at
+    })));
+  });
+
+  // Remove one installation the user no longer trusts. Drops its key + wraps; that
+  // install loses access going forward (it can re-register if reinstalled).
+  app.delete('/api/account/connected-apps/:clientId/devices/:deviceId', deps.authenticateToken, (req, res) => {
+    const dev = db.prepare('SELECT device_id FROM oauth_device_keys WHERE device_id = ? AND client_id = ? AND user_id = ?')
+      .get(req.params.deviceId, req.params.clientId, req.user.id);
+    if (!dev) return res.status(404).json({ error: 'device not found' });
+    db.prepare('UPDATE oauth_device_keys SET revoked = 1 WHERE device_id = ?').run(dev.device_id);
+    db.prepare('DELETE FROM oauth_grant_device_wraps WHERE device_id = ?').run(dev.device_id);
+    db.prepare('UPDATE oauth_tokens SET device_id = NULL WHERE device_id = ?').run(dev.device_id);
+    res.json({ success: true });
+  });
+
   // --- private-slate delegation (key re-wrapping), owner-driven -----------
   // The browser does all crypto; these endpoints only move opaque blobs.
 
   const MAX_GRANT_BLOB = 8 * 1024 * 1024; // 8MB base64 ceiling per field
 
-  // Confirm the user has actually authorized this client with the private scope,
-  // and the client has a public key to wrap to. Returns the client row or null.
+  // The active per-installation device keys an app has registered under this grant.
+  // Wrapping targets these (one wrap per device); empty until an install connects.
+  const activeDeviceKeys = (userId, clientId) =>
+    db.prepare(`SELECT device_id, public_key, key_scheme, name FROM oauth_device_keys
+      WHERE client_id = ? AND user_id = ? AND revoked = 0 ORDER BY created_at ASC`)
+      .all(clientId, userId);
+
+  // Confirm the user has actually authorized this client with the private scope.
+  // (No client public-key requirement anymore — wrap targets are the per-install
+  // device keys, fetched separately via activeDeviceKeys.) Returns client or null.
   const grantableClient = (userId, clientId) => {
-    const client = db.prepare('SELECT client_id, name, public_key FROM oauth_clients WHERE client_id = ?').get(clientId);
-    if (!client || !client.public_key) return null;
+    const client = db.prepare('SELECT client_id, name FROM oauth_clients WHERE client_id = ?').get(clientId);
+    if (!client) return null;
     // Authorized to receive grants if a live token carries the private scope...
     const tok = db.prepare(`SELECT scope FROM oauth_tokens
       WHERE user_id = ? AND client_id = ? AND revoked = 0 AND refresh_expires_at > ?
       ORDER BY created_at DESC LIMIT 1`).get(userId, clientId, now());
     const tokenOk = tok && (tok.scope || '').split(' ').includes('slates:read:private');
     // ...OR the user recorded a share-all intent at consent time. That row is only
-    // written after a verified private-scope approval (consent decide, or the
-    // post-token share-all endpoint), so its presence implies authorization. This
-    // lets the inline consent → React share step wrap slates before the app has
-    // exchanged its code for a token.
+    // written after a verified private-scope approval, so its presence implies
+    // authorization (and lets the client begin wrapping as soon as a device exists).
     const intentOk = !!db.prepare('SELECT 1 FROM oauth_share_all WHERE client_id = ? AND user_id = ?')
       .get(clientId, userId);
     if (!tokenOk && !intentOk) return null;
     return client;
   };
 
-  // The app's public key + which slates are currently shared (for the share UI).
-  // share_all reflects whether the user has given this app blanket access to all
-  // private slates (current + future).
+  // The app's active device keys + which slates are shared and which device(s)
+  // each is already wrapped to (so the client only fills coverage gaps). share_all
+  // reflects blanket access. device_keys may be empty (app hasn't connected a
+  // device yet); the client should show "waiting for the app to connect".
   app.get('/api/account/slate-grants/:clientId', deps.authenticateToken, (req, res) => {
     const client = grantableClient(req.user.id, req.params.clientId);
     if (!client) return res.status(404).json({ error: 'not_grantable' });
-    const rows = db.prepare('SELECT slate_number, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?')
+    const deviceKeys = activeDeviceKeys(req.user.id, req.params.clientId);
+    const grants = db.prepare('SELECT id, slate_number, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?')
       .all(req.params.clientId, req.user.id);
+    // Which device_ids already cover each grant (for gap-only re-wrapping).
+    const cover = grants.length
+      ? db.prepare(`SELECT w.grant_id, w.device_id FROM oauth_grant_device_wraps w
+          WHERE w.grant_id IN (${grants.map(() => '?').join(',')})`).all(...grants.map(g => g.id))
+      : [];
+    const coverBy = new Map();
+    for (const c of cover) {
+      if (!coverBy.has(c.grant_id)) coverBy.set(c.grant_id, []);
+      coverBy.get(c.grant_id).push(c.device_id);
+    }
     const shareAll = !!db.prepare('SELECT 1 FROM oauth_share_all WHERE client_id = ? AND user_id = ?')
       .get(req.params.clientId, req.user.id);
     res.json({
       client_id: client.client_id,
       name: client.name,
-      public_key: client.public_key,
+      device_keys: deviceKeys,
       share_all: shareAll,
-      shared: rows.map(r => ({ slate_number: r.slate_number, updated_at: r.updated_at }))
+      shared: grants.map(g => ({
+        slate_number: g.slate_number, updated_at: g.updated_at,
+        device_ids: coverBy.get(g.id) || []
+      }))
     });
   });
 
-  // Which apps a given slate must be kept in sync with (+ their public keys) —
+  // Which apps a given slate must be kept in sync with (+ their device keys) —
   // used on save (push) and on open (pull). Includes apps with an explicit grant
   // for this slate AND apps the user gave "share all" access (so newly written
-  // slates auto-share). For apps that already hold a grant, the stored blobs and
-  // last_writer come along so the client can pull edits the app made
-  // (last_writer = 'app') back into the canonical slate. Revoked/expired apps are
-  // excluded so they stop receiving updates.
+  // slates auto-share), restricted to apps that have at least one active device key
+  // to wrap to. For apps that already hold a grant, the stored blobs + last_writer
+  // come along so the client can pull edits the app made (last_writer = 'app') back
+  // into the canonical slate. Revoked/expired apps are excluded.
   app.get('/api/account/slate-grants/by-slate/:n', deps.authenticateToken, (req, res) => {
     const rows = db.prepare(`
-      SELECT c.client_id, c.public_key, c.name,
+      SELECT c.client_id, c.name,
              g.id AS grant_id, g.enc_content, g.enc_title, g.owner_wrapped_key, g.last_writer
       FROM oauth_clients c
       LEFT JOIN oauth_slate_grants g
         ON g.client_id = c.client_id AND g.user_id = ? AND g.slate_number = ?
-      WHERE c.public_key IS NOT NULL
-        AND (g.id IS NOT NULL
+      WHERE (g.id IS NOT NULL
              OR c.client_id IN (SELECT client_id FROM oauth_share_all WHERE user_id = ?))
         AND c.client_id IN (
           SELECT client_id FROM oauth_tokens
           WHERE user_id = ? AND revoked = 0 AND refresh_expires_at > ?
         )
-    `).all(req.user.id, req.params.n, req.user.id, req.user.id, now());
+        AND EXISTS (SELECT 1 FROM oauth_device_keys d
+          WHERE d.client_id = c.client_id AND d.user_id = ? AND d.revoked = 0)
+    `).all(req.user.id, req.params.n, req.user.id, req.user.id, now(), req.user.id);
     res.json(rows.map(r => ({
-      client_id: r.client_id, public_key: r.public_key, name: r.name,
+      client_id: r.client_id, name: r.name,
+      device_keys: activeDeviceKeys(req.user.id, r.client_id),
       grant: (r.grant_id && r.owner_wrapped_key) ? {
         enc_content: r.enc_content, enc_title: r.enc_title,
         owner_wrapped_key: r.owner_wrapped_key, last_writer: r.last_writer
@@ -1490,14 +1662,50 @@ function mountOAuth(app, deps) {
     const { client_id } = req.body || {};
     if (!client_id) return res.status(400).json({ error: 'client_id required' });
     db.prepare('DELETE FROM oauth_share_all WHERE client_id = ? AND user_id = ?').run(client_id, req.user.id);
+    // Drop the per-device wraps before the grants they hang off (FK not enforced).
+    db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+      SELECT id FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?)`).run(client_id, req.user.id);
     const r = db.prepare('DELETE FROM oauth_slate_grants WHERE client_id = ? AND user_id = ?').run(client_id, req.user.id);
     res.json({ success: true, removed: r.changes });
   });
 
+  // Upsert a grant + its per-device wraps. The content key is wrapped once per
+  // active device (device_wraps:[{device_id, wrapped_key}]); the shared ciphertext
+  // (enc_content/enc_title) and owner_wrapped_key live on the grant row. Returns
+  // the resolved grant id so callers can correlate. last_writer = 'owner'.
+  // Helper shared by the single + batch endpoints. Skips device_ids that aren't an
+  // active key of this client+user (so a client can't write to arbitrary devices).
+  const upsertGrantStmt = db.prepare(`INSERT INTO oauth_slate_grants
+      (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
+    VALUES (?, ?, ?, '', ?, ?, ?, 'owner', strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
+      owner_wrapped_key = excluded.owner_wrapped_key,
+      enc_content = excluded.enc_content,
+      enc_title = excluded.enc_title,
+      last_writer = 'owner',
+      updated_at = strftime('%s','now')`);
+  const upsertWrapStmt = db.prepare(`INSERT INTO oauth_grant_device_wraps (grant_id, device_id, wrapped_key, created_at, updated_at)
+    VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now'))
+    ON CONFLICT(grant_id, device_id) DO UPDATE SET wrapped_key = excluded.wrapped_key, updated_at = strftime('%s','now')`);
+  const writeGrant = (clientId, userId, g, validDeviceIds) => {
+    upsertGrantStmt.run(clientId, userId, g.slate_number, g.owner_wrapped_key || null, g.enc_content, g.enc_title || null);
+    const grantId = db.prepare('SELECT id FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?')
+      .get(clientId, userId, g.slate_number).id;
+    for (const w of (g.device_wraps || [])) {
+      if (w && w.device_id && w.wrapped_key && validDeviceIds.has(w.device_id)) {
+        upsertWrapStmt.run(grantId, w.device_id, w.wrapped_key);
+      }
+    }
+  };
+  const validGrantBlob = (g) =>
+    [g.owner_wrapped_key, g.enc_content, g.enc_title].every(v => v == null || (typeof v === 'string' && v.length <= MAX_GRANT_BLOB))
+    && Array.isArray(g.device_wraps)
+    && g.device_wraps.every(w => w && typeof w.device_id === 'string' && typeof w.wrapped_key === 'string' && w.wrapped_key.length <= MAX_GRANT_BLOB);
+
   // Bulk upsert many re-wrapped grants in a single transaction — used when sharing
   // all slates, so the client makes one request per batch instead of one per slate.
-  // Each entry is the same shape as the single POST below; all marked last_writer
-  // = 'owner'. Slates the user doesn't own are skipped.
+  // Each entry: { slate_number, enc_content, enc_title?, owner_wrapped_key?,
+  // device_wraps:[{device_id, wrapped_key}] }. Slates the user doesn't own are skipped.
   app.post('/api/account/slate-grants/batch', deps.authenticateToken, (req, res) => {
     const { client_id, grants } = req.body || {};
     if (!client_id || !Array.isArray(grants) || grants.length === 0) {
@@ -1508,48 +1716,36 @@ function mountOAuth(app, deps) {
       return res.status(403).json({ error: 'client not authorized for private slates' });
     }
     for (const g of grants) {
-      if (!g || g.slate_number == null || !g.wrapped_key || !g.enc_content) {
-        return res.status(400).json({ error: 'each grant needs slate_number, wrapped_key, enc_content' });
+      if (!g || g.slate_number == null || !g.enc_content || !Array.isArray(g.device_wraps)) {
+        return res.status(400).json({ error: 'each grant needs slate_number, enc_content, device_wraps[]' });
       }
-      if ([g.wrapped_key, g.owner_wrapped_key, g.enc_content, g.enc_title].some(v => v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB))) {
-        return res.status(413).json({ error: 'blob too large' });
-      }
+      if (!validGrantBlob(g)) return res.status(413).json({ error: 'blob too large or malformed device_wraps' });
     }
     const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ?').all(req.user.id).map(r => r.slate_number));
-    const upsert = db.prepare(`INSERT INTO oauth_slate_grants
-        (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'owner', strftime('%s','now'), strftime('%s','now'))
-      ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
-        wrapped_key = excluded.wrapped_key,
-        owner_wrapped_key = excluded.owner_wrapped_key,
-        enc_content = excluded.enc_content,
-        enc_title = excluded.enc_title,
-        last_writer = 'owner',
-        updated_at = strftime('%s','now')`);
+    const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
     const run = db.transaction((rows) => {
       let saved = 0;
       for (const g of rows) {
         if (!owned.has(Number(g.slate_number))) continue;
-        upsert.run(client_id, req.user.id, g.slate_number, g.wrapped_key, g.owner_wrapped_key || null, g.enc_content, g.enc_title || null);
+        writeGrant(client_id, req.user.id, g, validDeviceIds);
         saved++;
       }
       return saved;
     });
-    res.json({ success: true, saved: run(grants) });
+    res.json({ success: true, saved: run(grants), devices: validDeviceIds.size });
   });
 
-  // Upsert a re-wrapped slate blob (share, or refresh an existing share).
+  // Upsert one re-wrapped slate (share, or refresh an existing share).
   // owner_wrapped_key (the content key wrapped to the user's own master key) is
-  // optional but required for two-way sync — without it the client can't later
-  // read edits the app makes. Writing here always marks last_writer = 'owner'
-  // since the owner's content is authoritative at this moment.
+  // optional but required for two-way sync — without it the client can't later read
+  // edits the app makes. device_wraps[] carries the content key wrapped per install.
   app.post('/api/account/slate-grants', deps.authenticateToken, (req, res) => {
-    const { client_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title } = req.body || {};
-    if (!client_id || slate_number == null || !wrapped_key || !enc_content) {
-      return res.status(400).json({ error: 'missing required fields' });
+    const { client_id, slate_number, owner_wrapped_key, enc_content, enc_title, device_wraps } = req.body || {};
+    if (!client_id || slate_number == null || !enc_content || !Array.isArray(device_wraps)) {
+      return res.status(400).json({ error: 'missing required fields (client_id, slate_number, enc_content, device_wraps[])' });
     }
-    if ([wrapped_key, owner_wrapped_key, enc_content, enc_title].some(v => v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB))) {
-      return res.status(413).json({ error: 'blob too large' });
+    if (!validGrantBlob({ owner_wrapped_key, enc_content, enc_title, device_wraps })) {
+      return res.status(413).json({ error: 'blob too large or malformed device_wraps' });
     }
     if (!grantableClient(req.user.id, client_id)) {
       return res.status(403).json({ error: 'client not authorized for private slates' });
@@ -1558,30 +1754,25 @@ function mountOAuth(app, deps) {
       .get(slate_number, req.user.id);
     if (!slate) return res.status(404).json({ error: 'slate not found' });
 
-    db.prepare(`INSERT INTO oauth_slate_grants
-        (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'owner', strftime('%s','now'), strftime('%s','now'))
-      ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
-        wrapped_key = excluded.wrapped_key,
-        owner_wrapped_key = excluded.owner_wrapped_key,
-        enc_content = excluded.enc_content,
-        enc_title = excluded.enc_title,
-        last_writer = 'owner',
-        updated_at = strftime('%s','now')`).run(
-      client_id, req.user.id, slate_number, wrapped_key, owner_wrapped_key || null, enc_content, enc_title || null
-    );
-    res.json({ success: true });
+    const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
+    db.transaction(() => writeGrant(client_id, req.user.id,
+      { slate_number, owner_wrapped_key, enc_content, enc_title, device_wraps }, validDeviceIds))();
+    res.json({ success: true, devices: validDeviceIds.size });
   });
 
-  // Unshare one slate, or all slates, from an app.
+  // Unshare one slate, or all slates, from an app. Drops per-device wraps first.
   app.delete('/api/account/slate-grants', deps.authenticateToken, (req, res) => {
     const { client_id, slate_number } = req.body || {};
     if (!client_id) return res.status(400).json({ error: 'client_id required' });
     let result;
     if (slate_number == null) {
+      db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+        SELECT id FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?)`).run(req.user.id, client_id);
       result = db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ?')
         .run(req.user.id, client_id);
     } else {
+      db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+        SELECT id FROM oauth_slate_grants WHERE user_id = ? AND client_id = ? AND slate_number = ?)`).run(req.user.id, client_id, slate_number);
       result = db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND client_id = ? AND slate_number = ?')
         .run(req.user.id, client_id, slate_number);
     }

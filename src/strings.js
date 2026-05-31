@@ -387,7 +387,9 @@ const strings = {
       revoking: 'revoking...',
       shareSlates: 'manage slate access',
       sharedCount: (n) => `${n} slate${n === 1 ? '' : 's'} shared`,
-      sharesAll: 'full access — all private slates'
+      sharesAll: 'full access — all private slates',
+      deviceCount: (n) => `${n} connected installation${n === 1 ? '' : 's'}`,
+      noDeviceYet: 'no installation connected yet — sharing applies once the app connects one.'
     },
     shareSlates: {
       title: 'private slate access',
@@ -411,7 +413,8 @@ const strings = {
       sharingAll: (done, total) => `sharing… ${done}/${total}`,
       unsharingAll: 'turning off…',
       advanced: 'or share specific slates only',
-      advancedHint: 'pick individual slates instead of granting full access.'
+      advancedHint: 'pick individual slates instead of granting full access.',
+      noDevices: (app) => `${app} hasn't connected an installation yet. you can turn on access now — your slates will sync to it automatically the moment it connects.`
     },
     authorizeShare: {
       sharing: (app) => `sharing your private slates with ${app}`,
@@ -955,13 +958,13 @@ take care!
       },
       delegation: {
         title: 'private slates',
-        body: 'with the slates:read:private scope plus a registered public key, a user can grant your app access to their private slates — all of them (current + future) with one switch, or specific ones. it works by key delegation: in the user\'s browser, each shared slate is re-encrypted under a fresh content key, and that key is wrapped to your public key. justtype only stores the wrapped blobs — it still cannot read them. you decrypt with your private key.',
+        body: 'with the slates:read:private scope, a user can grant your app access to their private slates — all of them (current + future) with one switch, or specific ones. it works by per-installation key delegation: each install of your app registers its own public key, and in the user\'s browser each shared slate is re-encrypted under a fresh content key wrapped to that install\'s key. justtype only stores the wrapped blobs — it still cannot read them, and one install\'s key can never decrypt another\'s. you decrypt with the install\'s private key.',
         steps: [
-          'register your app with the slates:read:private scope — /dev generates an rsa keypair and shows you the private key once.',
-          'request the scope in your oauth flow as usual; the user approves.',
-          'the user opens their justtype account → connected apps → manage slate access, and flips on "allow all private slates" (or picks specific ones).',
-          'GET /api/oauth/slates/:n returns { wrapped_key, enc_content, enc_title } for shared slates (delegated: true).',
-          'unwrap the content key with your private key, then aes-256-gcm decrypt the content and title.'
+          'request the slates:read:private scope in your oauth flow as usual; the user approves.',
+          'after the token exchange, register THIS install\'s public key: POST /api/oauth/devices { public_key } (it generates its own keypair; the private key never leaves the device). private reads return 409 needs_device until you do.',
+          'the user opens their justtype account → connected apps → manage slate access, and flips on "allow all private slates" (or picks specific ones); their client wraps the library to your install\'s key on its next sync.',
+          'GET /api/oauth/slates/:n returns { wrapped_key, enc_content, enc_title } for slates wrapped to this install (delegated: true); ones shared but not yet wrapped to you show pending_device: true.',
+          'unwrap the content key with this install\'s private key, then aes-256-gcm decrypt the content and title.'
         ],
         note: 'access is revocable anytime: the user (or revoking your app) deletes the blobs and future reads stop. while a slate stays shared, the user\'s own edits re-sync to you automatically.',
         writeTitle: 'writing back (two-way)',
@@ -1051,7 +1054,7 @@ take care!
           'RSA unwrap MUST set oaepHash: "sha256". node defaults OAEP to sha-1, which fails with a garbage key and an opaque error.',
           'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational — set it to an ISO timestamp when you write; it is not authoritative.',
           'a stale content key is expected, not a bug: the user\'s own edits rotate the per-slate key, so a cached key fails with a GCM auth error ("unable to authenticate data"). always GET the slate again right before writing.',
-          'bring-your-own-key is supported: POST /api/oauth/clients accepts a public_key (base64 SPKI) and PUT /api/oauth/clients/:clientId/public-key rotates it — the /dev page just generates one for you by default.',
+          'there is no shared app key. each INSTALL generates its own RSA keypair and registers the public half via POST /api/oauth/devices after authorizing (the private key never leaves the device). private reads/writes return 409 needs_device until you do. never embed a private key in a distributed build.',
           'slates:read:private is the full-read scope: it also covers published slates (which are public anyway), so GET /api/oauth/slates/:n returns plaintext for a published slate and you do not need slates:read:public as well. it does NOT include the slate list (slates:read:meta) — request that separately if you need to enumerate.'
         ]
       },
@@ -1101,10 +1104,7 @@ take care!
       copyHint: 'click to copy client id',
       secretTitle: 'save your client secret',
       secretBody: 'this is shown once and cannot be retrieved later. store it somewhere safe.',
-      secretDismiss: 'done, i saved it',
-      keyTitle: 'save your private key',
-      keyBody: 'this app can read private slates users share with it. we generated a keypair in your browser and registered the public half. this private key is shown once — store it in your app (e.g. an env var) and never commit it. it is what decrypts shared slates.',
-      keyDownload: 'download .pem'
+      secretDismiss: 'done, i saved it'
     },
     errors: {
       nameRequired: 'app name is required.',

@@ -1452,7 +1452,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                           {strings.account.connectedApps.canAccess}: {app.scopes.join(', ')}
                         </div>
                         {app.can_share && (
-                          <div className="mt-2 flex items-center gap-3">
+                          <div className="mt-2 flex items-center gap-3 flex-wrap">
                             <button
                               onClick={() => setShareApp({ client_id: app.client_id, name: app.name })}
                               className="text-xs text-white border border-[#333] rounded px-3 py-1 hover:bg-[#1a1a1a] transition-colors"
@@ -1464,7 +1464,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                             ) : app.shared_count > 0 && (
                               <span className="text-xs text-[#666]">{strings.account.connectedApps.sharedCount(app.shared_count)}</span>
                             )}
+                            {app.device_count > 0 && (
+                              <span className="text-xs text-[#666]">{strings.account.connectedApps.deviceCount(app.device_count)}</span>
+                            )}
                           </div>
+                        )}
+                        {!app.can_share && app.scopes.includes('slates:read:private') && (
+                          <div className="text-xs text-[#666] mt-2">{strings.account.connectedApps.noDeviceYet}</div>
                         )}
                       </div>
                     ))}

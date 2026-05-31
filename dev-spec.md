@@ -23,7 +23,10 @@ A **slate** is a document. It is one of:
   viewers at `/s/:shareId`). An app reads its plaintext directly.
 - **private** — end-to-end encrypted under the user's master key. The server only
   holds ciphertext. An app can read/write a private slate **only** if the user
-  delegates it (see §6), via per-slate key wrapping.
+  delegates it (see §6), via per-slate key wrapping. Delegation targets a key your
+  app registers **per installation** (§6), not a single shared app key — so each
+  device decrypts only what is wrapped to it, and one extracted key can never read
+  another user's or another install's slates.
 
 There is one read endpoint for individual slates (`GET /api/oauth/slates/:n`); it
 returns plaintext for published slates, a decryptable blob for delegated private
@@ -109,9 +112,10 @@ identity slates:read:meta slates:read:private slates:create slates:delete slates
 This is the **intended** shape of a justtype integration: end-to-end-encrypted by
 default (`read:private` + `create`), with full lifecycle control (`delete`,
 `publish`). The user approves it on **one** consent screen, and — because you
-requested `read:private` with a registered public key — that same screen offers a
-one-tap **"allow full access to all my private slates (current + future)"** toggle,
-so the user can hand your client their whole library in a single step (see §6).
+requested `read:private` — that same screen offers a one-tap **"allow full access to
+all my private slates (current + future)"** toggle. Ticking it records the user's
+intent; their client wraps the library to your installation's key on its next sync
+(immediately if a justtype tab is open), once you have registered a device (see §6).
 
 Add `slates:write` **only** if you also need to create/edit *plaintext, published*
 slates directly (e.g. a blog-style publishing tool). An E2E-first client does not
@@ -130,6 +134,9 @@ Request `email` only if you actually need the address — fewer scopes, more tru
 | POST | `/oauth/token` | — | exchange code, or refresh (rotates both tokens) |
 | POST | `/oauth/revoke` | — | revoke an access or refresh token |
 | GET | `/api/oauth/userinfo` | identity | `{ id, username, email?, email_verified?, public_key? }` (public_key present with `slates:create`) |
+| POST | `/api/oauth/devices` | slates:read:private | register THIS installation's public key (§6). Required before any private read/write. |
+| GET | `/api/oauth/devices` | slates:read:private | list installs registered under this grant (`is_self` flags yours) |
+| DELETE | `/api/oauth/devices/:deviceId` | slates:read:private | de-register an installation |
 | GET | `/api/oauth/users/me/public-key` | slates:create | the user's RSA-OAEP public key to wrap a drop to (`null` if not generated yet) |
 | POST | `/api/oauth/slates/drop` | slates:create | create a new private (E2E) slate for the user (§7) |
 | POST | `/api/oauth/slates/create-delegated` | slates:create + slates:read:private | create a new private slate **already editable by your app** (§9) |
@@ -139,9 +146,9 @@ Request `email` only if you actually need the address — fewer scopes, more tru
 | GET | `/api/oauth/slates` | slates:read:meta | slate list + counts |
 | GET | `/api/oauth/sync` | slates:read:meta | incremental sync: `?since=<ISO>` → changed + deleted (tombstones) + cursor (§8) |
 | GET | `/api/oauth/slates/published` | slates:read:public | all published slates with full text |
-| GET | `/api/oauth/slates/:n` | slates:read:private | published→plaintext, delegated→decryptable, else ciphertext |
-| POST | `/api/oauth/slates/batch` | slates:read:private | read many slates at once: `{ slate_numbers }` (max 100) |
-| GET | `/api/oauth/shared` | slates:read:private | slates delegated to your app, **with `wrapped_key` + `enc_title`** (render titles without N fetches) |
+| GET | `/api/oauth/slates/:n` | slates:read:private | published→plaintext, delegated→decryptable, else ciphertext. **Needs a registered device (§6).** |
+| POST | `/api/oauth/slates/batch` | slates:read:private | read many slates at once: `{ slate_numbers }` (max 100). **Needs a registered device.** |
+| GET | `/api/oauth/shared` | slates:read:private | slates delegated to **this installation**, **with `wrapped_key` + `enc_title`** (render titles without N fetches). **Needs a registered device.** |
 | POST | `/api/oauth/slates` | slates:write | create a slate (published by default) |
 | PUT | `/api/oauth/slates/:n` | slates:write | update a plaintext slate |
 | PATCH | `/api/oauth/slates/:n/delegated` | slates:read:private | write back a delegated private slate |
@@ -161,6 +168,12 @@ GET /api/oauth/userinfo
   { id, username, email?, email_verified?,
     public_key?, key_scheme? }            // public_key + key_scheme only with slates:create
 
+POST /api/oauth/devices                    (scope slates:read:private)
+  request:  { public_key: "<base64 SPKI>", key_scheme?: "rsa-oaep-sha256", name?: "..." }
+  success:  { device_id, key_scheme }       // stamps this token; reads now resolve your install
+GET /api/oauth/devices                     (scope slates:read:private)
+  [ { device_id, key_scheme, name|null, created_at, last_seen_at, is_self } ]
+
 GET /api/oauth/users/me/public-key         (scope slates:create)
   { public_key: "<base64 SPKI>" | null, key_scheme: "rsa-oaep-sha256" }
 
@@ -171,9 +184,12 @@ POST /api/oauth/slates/drop                 (scope slates:create)
 
 POST /api/oauth/slates/create-delegated     (scope slates:create + slates:read:private)
   request:  { wrapped_key_user, wrapped_key_app, enc_content, enc_title?,
-              word_count?, char_count? }   // one content key, wrapped to BOTH the user's and your key
+              word_count?, char_count? }
+            // one content key, wrapped to the USER's public key (wrapped_key_user) AND
+            // to THIS installation's registered device key (wrapped_key_app, see §6)
   success:  { success: true, slate_number, drop_id, status: "pending_adoption" }
-  409:      { error: "keypair_unavailable" }   // see §9
+  409:      { error: "keypair_unavailable" }   // user has no key yet (see §9)
+  409:      { error: "needs_device" }          // register your install first (§6)
 
 GET /api/oauth/drops[/:id]                   (scope slates:create)
   /:id ->  { drop_id, status, slate_number|null, created_at, adopted_at, discarded_at }
@@ -209,12 +225,18 @@ GET /api/oauth/slates/:n  — delegated private
 GET /api/oauth/slates/:n  — private, not shared with you
   { slate_number, delegated: false, encrypted: true, encrypted_content, note }
 
+GET /api/oauth/slates/:n  — shared, but not yet wrapped to THIS installation
+  { slate_number, delegated: false, pending_device: true, note }
+  // the slate is shared with your app but the user's client hasn't re-wrapped it to
+  // this install's device key yet; it appears after their next sync. Poll again.
+
 GET /api/oauth/shared                      (scope slates:read:private)
   [ { slate_number, shared_at, key_scheme, content_scheme,
       wrapped_key, enc_title, word_count, char_count, created_at, updated_at } ]
-  // wrapped_key + enc_title let you render real titles without fetching each slate:
-  // unwrap wrapped_key once (your RSA key), then AES-decrypt each enc_title. enc_content
-  // is NOT included here — use POST /api/oauth/slates/batch for bodies.
+  // Only slates already wrapped to THIS installation are listed. wrapped_key is the
+  // content key wrapped to your device key; unwrap it once (your RSA private key),
+  // then AES-decrypt each enc_title to render titles without fetching each slate.
+  // enc_content is NOT included here — use POST /api/oauth/slates/batch for bodies.
 
 PATCH /api/oauth/slates/:n/delegated  ->  { success: true }
 POST  /oauth/revoke                   ->  { success: true }   // body { token }, JSON or form; always 200
@@ -235,6 +257,9 @@ failures alike, so you can `JSON.parse` an error response unconditionally.
 - `404 not_found` — no such slate, drop, or endpoint.
 - `409 keypair_unavailable` on `POST /api/oauth/slates/drop` (or `/create-delegated`) — the
   user has not generated an encryption keypair yet (they will on next unlock). Retry later.
+- `409 needs_device` on any private read/write (`/shared`, `/slates/:n`, `/slates/batch`,
+  `/slates/:n/delegated`, `/create-delegated`) — this installation has not registered a
+  device key yet. `POST /api/oauth/devices` with your install's public key first (§6).
 - `413` — content over 5 MB, or a grant/drop blob over 8 MB per field.
 - `429 rate_limited` — too many requests. Honour the **`Retry-After`** response header
   (seconds) and back off. The body is JSON like any other error.
@@ -262,10 +287,12 @@ these blobs. Use an API that accepts a 16-byte nonce, or assemble the GCM call m
 ### 5.2 Algorithms
 - Content/title symmetric encryption: **AES-256-GCM**, 16-byte IV, 16-byte tag.
 - Per-slate content key: **32 random bytes**.
-- Key wrapping to an app: **RSA-OAEP** with **SHA-256** (`oaepHash: "sha256"`).
+- Key wrapping to an installation: **RSA-OAEP** with **SHA-256** (`oaepHash: "sha256"`).
   Note: many RSA libraries default OAEP to SHA-1 — you must set SHA-256 explicitly
   or decryption silently produces garbage.
-- App keypair: **RSA 2048**, public key registered as base64 SPKI (DER).
+- Installation keypair: **RSA 2048**, public key registered (per install, §6) as
+  base64 SPKI (DER). The content key is wrapped once per registered device key, so
+  `wrapped_key` on a read is the copy encrypted to **your** install's key.
 
 ### 5.3 Plaintext encoding (after AES-GCM decryption)
 - **Content** decrypts to JSON: `{ "content": "<the text>", "uploadedAt": "<ISO8601>" }`.
@@ -283,8 +310,10 @@ current `wrapped_key`, and use that key for the write.
 When you `PATCH .../delegated`, justtype stores your re-encrypted blob and marks the
 slate as app-edited. The next time the user opens that slate in justtype, their client
 decrypts your edit with their master key and merges it into their canonical copy. The
-content key is stored wrapped to both your app key and the user's master key, so the
-round-trip works without the server ever seeing plaintext.
+content key is stored wrapped to the user's master key (for this round-trip) and to
+each registered installation key, so the round-trip works without the server ever
+seeing plaintext. An edit keeps the same content key, so existing device wraps stay
+valid — no re-registration needed.
 
 ### 5.6 Creating private slates (drop crypto)
 Delegation (§5.1–5.5) wraps a content key to **your app's** public key — that is for
@@ -311,31 +340,47 @@ used is discarded. See §7 for the full flow, timing, and what the user experien
 
 ## 6. Delegated private slates — read & write
 
-### Setup
-Register your app at `https://justtype.io/dev` with the `slates:read:private` scope.
-The page generates an RSA-2048 keypair, registers the public half, and shows you the
-private key PEM **once** — store it (e.g. an env var). (Advanced: you may instead
-supply your own `public_key` (base64 SPKI) to `POST /api/oauth/clients`, or rotate it
-via `PUT /api/oauth/clients/:clientId/public-key`.)
+### Setup — register a per-installation key
+There is **no shared app key**. Each installation of your app generates its **own**
+RSA-2048 keypair on first run, keeps the private key locally (e.g. the OS keychain),
+and registers the public half **after** the OAuth token exchange:
 
-There are two ways the user grants you slates, and you don't have to do anything
-different for either — you just read whatever ends up shared:
-- **On the consent screen (one tap):** because you requested `slates:read:private`
-  and registered a public key, the authorize screen shows an **"allow full access to
-  all my private slates (current + future)"** toggle. If the user ticks it, justtype
-  wraps their entire library to your key during authorization, before redirecting
-  back to you — so by the time you exchange your code for a token, the grants are
-  already there.
+```
+POST /api/oauth/devices            Authorization: Bearer <access_token>
+  { "public_key": "<base64 SPKI>", "key_scheme": "rsa-oaep-sha256", "name": "MyApp on MacBook" }
+  -> { "device_id": "dev_…", "key_scheme": "rsa-oaep-sha256" }
+```
+
+This binds the device to the calling token, so every later private read/write
+resolves your installation automatically from the bearer token — **you send nothing
+extra** on reads. Until you register, private endpoints return `409 needs_device`.
+Re-registering the same public key is idempotent (same `device_id`); a reinstall
+that kept its key keeps its access. List or remove installs via `GET`/`DELETE
+/api/oauth/devices`.
+
+> Do **not** embed a private key in a distributed binary. It is extractable, and a
+> shared key would let one copy decrypt every user's slates. Generate per install.
+
+There are two ways the user grants you slates; you just read whatever ends up wrapped
+to **your** device key:
+- **On the consent screen (one tap):** because you requested `slates:read:private`,
+  the authorize screen shows an **"allow full access to all my private slates
+  (current + future)"** toggle. Ticking it records intent; the user's client wraps
+  their library to your installation's key on its next sync — immediately if a
+  justtype tab is open (a push nudges it the moment you register a device),
+  otherwise the next time they unlock justtype. So shared slates may take a moment to
+  appear after authorization; poll `GET /api/oauth/shared` (a slate you can see but
+  that isn't wrapped to you yet shows up as `pending_device` on `GET /slates/:n`).
 - **Later, anytime:** in **justtype account → connected apps → manage slate access**,
   the user can allow-all, or pick specific slates, or revoke.
 
-Either way, call `GET /api/oauth/shared` to see which slates you can read, and
-`GET /api/oauth/slates/:n` to read each.
+Either way, call `GET /api/oauth/shared` to see which slates **this installation** can
+read, and `GET /api/oauth/slates/:n` to read each.
 
 ### Read (Node)
 ```js
 const { privateDecrypt, createDecipheriv, constants } = require('crypto');
-const PRIVATE_KEY = process.env.JT_PRIVATE_KEY;     // the PEM justtype showed once
+const PRIVATE_KEY = loadDevicePrivateKey();          // this install's local RSA private key (§6)
 const b64 = (s) => Buffer.from(s, 'base64');
 
 function aesGcmDecrypt(blob, key) {
@@ -647,15 +692,17 @@ adopts it. `create-delegated` removes that wait — it creates a **new private s
 is already a real, numbered slate your app can read and edit immediately**, while still
 being end-to-end encrypted and owned by the user once they open justtype.
 
-How it works: you generate **one** fresh content key and wrap it to **both** keys —
+How it works: you generate **one** fresh content key and wrap it to **both** —
 `wrapped_key_user` (to the user's public key, so they can adopt it later) and
-`wrapped_key_app` (to your own registered public key, so you can read/edit it now). The
-server creates the slate in a *pending-adoption* state and immediately delegates it to
-you; the user's client re-keys it to their master key on next open (in place — the slate
-keeps its number), after which two-way sync (§5.5) works normally.
+`wrapped_key_app` (to **this installation's** registered device key, so you can
+read/edit it now). The server creates the slate in a *pending-adoption* state and
+immediately delegates it to your install; the user's client re-keys it to their master
+key on next open (in place — the slate keeps its number), after which two-way sync
+(§5.5) works normally. (Other installs of your app pick it up once the user adopts it
+and their client wraps it to every registered device key.)
 
-Requires **both** `slates:create` and `slates:read:private`, and a registered app public
-key. Same blob format and algorithms as everywhere else (§5.1–5.2).
+Requires **both** `slates:create` and `slates:read:private`, and a **registered device
+key** (§6). Same blob format and algorithms as everywhere else (§5.1–5.2).
 
 ```
 POST /api/oauth/slates/create-delegated      (scope slates:create + slates:read:private)
@@ -663,6 +710,7 @@ POST /api/oauth/slates/create-delegated      (scope slates:create + slates:read:
               word_count?, char_count? }
   success:  { success: true, slate_number, drop_id, status: "pending_adoption" }
   409:      { error: "keypair_unavailable" }     // user has no published key yet; retry later
+  409:      { error: "needs_device" }            // register this install first (§6)
 ```
 
 Steps:
@@ -671,7 +719,8 @@ Steps:
    `enc_title` = AES-256-GCM of the raw title (optional) — both under the content key.
 3. `wrapped_key_user` = content key RSA-OAEP-SHA256-wrapped to the **user's** public key
    (`GET /api/oauth/users/me/public-key`).
-4. `wrapped_key_app` = the **same** content key wrapped to **your app's** public key.
+4. `wrapped_key_app` = the **same** content key wrapped to **this installation's** device
+   public key (the one you registered via `POST /api/oauth/devices`, §6).
 5. `POST` it. You immediately get a `slate_number` you can `GET /api/oauth/slates/:n`
    (returns it as a delegated slate) and `PATCH .../delegated` to edit.
 

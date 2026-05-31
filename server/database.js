@@ -655,6 +655,12 @@ try {
       -- A slate's per-app delegation grants die with the slate. Clean them on EVERY
       -- delete path (regular, oauth, account, admin) so slate_number reuse (MAX+1)
       -- can't collide with a stale grant — that previously 500'd create-delegated.
+      -- Per-device wraps hang off the grant; delete them first (FK is not enforced
+      -- on this connection, so this must be explicit) while the grant ids still resolve.
+      DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
+        SELECT id FROM oauth_slate_grants
+          WHERE user_id = OLD.user_id AND slate_number = OLD.slate_number
+      );
       DELETE FROM oauth_slate_grants
         WHERE user_id = OLD.user_id AND slate_number = OLD.slate_number;
       -- If a still-pending create-already-delegated slate is deleted, mark its
@@ -678,6 +684,82 @@ try {
   if (orphanCleanup.changes > 0) {
     console.log(`✓ Database cleanup: removed ${orphanCleanup.changes} orphan oauth_slate_grants`);
   }
+
+  // ---- per-installation device keys (replaces the single global app key) ----
+  //
+  // A distributed app (e.g. a desktop client) cannot ship one shared
+  // private key: it would be extractable from the binary and could decrypt every
+  // user's private slates. Instead each INSTALL registers its own RSA-OAEP public
+  // key, bound to the (user, client) grant. A user can run several installs, so a
+  // grant supports MULTIPLE active device keys. The per-slate content key is then
+  // wrapped once per device (oauth_grant_device_wraps). The server still only ever
+  // stores public keys + ciphertext — zero-knowledge is unchanged.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_device_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id TEXT UNIQUE NOT NULL,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      public_key TEXT NOT NULL,          -- RSA-OAEP SPKI, base64
+      key_scheme TEXT NOT NULL DEFAULT 'rsa-oaep-sha256',
+      name TEXT,                         -- optional human label ("MyApp on MacBook")
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      last_seen_at INTEGER,
+      revoked INTEGER DEFAULT 0,
+      UNIQUE (client_id, user_id, public_key),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_device_keys_grant ON oauth_device_keys(client_id, user_id, revoked);
+    CREATE INDEX IF NOT EXISTS idx_oauth_device_keys_device ON oauth_device_keys(device_id);
+
+    -- The per-device wrapped content key for a delegated slate. One slate has one
+    -- content key + one enc_content (on oauth_slate_grants); that key is wrapped
+    -- once per device here, so a multi-device user stores the blob once plus a
+    -- small RSA wrap per device. Dies with its grant (ON DELETE CASCADE).
+    CREATE TABLE IF NOT EXISTS oauth_grant_device_wraps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      grant_id INTEGER NOT NULL,
+      device_id TEXT NOT NULL,
+      wrapped_key TEXT NOT NULL,         -- content key RSA-OAEP wrapped to THAT device key (base64)
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (grant_id, device_id),
+      FOREIGN KEY (grant_id) REFERENCES oauth_slate_grants(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_grant_device_wraps_grant ON oauth_grant_device_wraps(grant_id);
+    CREATE INDEX IF NOT EXISTS idx_grant_device_wraps_device ON oauth_grant_device_wraps(device_id);
+  `);
+
+  // Bind a registered device to the access-token row that registered it, so reads
+  // resolve the calling device transparently from the bearer token (no extra
+  // params). Survives refresh rotation (refresh UPDATEs the same row in place).
+  const oauthTokenCols = db.pragma('table_info(oauth_tokens)');
+  if (!oauthTokenCols.some(col => col.name === 'device_id')) {
+    db.exec(`ALTER TABLE oauth_tokens ADD COLUMN device_id TEXT;`);
+    console.log('✓ Database migrated: Added device_id column to oauth_tokens');
+  }
+  // Sweep device wraps whose grant is already gone (idempotent; covers any delete
+  // path that ran before this table existed). Same spirit as the grant orphan sweep.
+  try {
+    const wrapOrphans = db.prepare(`DELETE FROM oauth_grant_device_wraps
+      WHERE NOT EXISTS (SELECT 1 FROM oauth_slate_grants g WHERE g.id = oauth_grant_device_wraps.grant_id)`).run();
+    if (wrapOrphans.changes > 0) {
+      console.log(`✓ Database cleanup: removed ${wrapOrphans.changes} orphan oauth_grant_device_wraps`);
+    }
+  } catch {}
+  console.log('✓ OAuth per-device key tables initialized');
+
+  // Note: oauth_slate_grants.wrapped_key (the old single global-app-key wrap) is
+  // NOT NULL and can't be cheaply dropped in SQLite. It is now dead — write '' on
+  // insert and never read it; the canonical app wrap lives in
+  // oauth_grant_device_wraps. better-sqlite3 enables foreign_keys by default, so
+  // oauth_grant_device_wraps (grant_id -> oauth_slate_grants ON DELETE CASCADE)
+  // and oauth_device_keys (user_id -> users ON DELETE CASCADE) auto-clean when
+  // their parent row goes. The grant/slate delete paths still delete wraps
+  // explicitly too (belt-and-suspenders + clear intent), which is a harmless no-op
+  // under cascade. NOTE: grants reference user_id, not the slate, so a SLATE delete
+  // does NOT cascade them — that is why the tombstone trigger below removes grants
+  // (and their wraps) by slate_number on every delete path.
 
   // Drop old empty announcement tables if they exist
   db.exec(`DROP TABLE IF EXISTS announcement_reads;`);

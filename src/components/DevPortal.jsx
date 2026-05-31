@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
-import { generateAppKeyPair } from '../crypto';
 
 const SCOPE_OPTIONS = [
   ['identity', strings.dev.scopes.identity],
@@ -206,7 +205,7 @@ const GENERATORS = { node: genNode, browser: genBrowser, python: genPython, curl
 
 // Node snippet showing how an app decrypts a private slate the user delegated to it.
 const DECRYPT_SNIPPET = `const { privateDecrypt, createDecipheriv, constants } = require('crypto');
-const PRIVATE_KEY = process.env.JT_PRIVATE_KEY;   // the PEM justtype showed you once
+const PRIVATE_KEY = process.env.JT_PRIVATE_KEY;   // this install's RSA private key (registered via POST /api/oauth/devices)
 const JT = '${origin}';
 
 const b64 = (s) => Buffer.from(s, 'base64');
@@ -423,7 +422,6 @@ export function DevPortal({ token, username, onLogin }) {
   const [deleting, setDeleting] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [newSecret, setNewSecret] = useState(null);
-  const [newKey, setNewKey] = useState(null);
 
   // wizard
   const [wizStep, setWizStep] = useState(1);
@@ -456,26 +454,21 @@ export function DevPortal({ token, username, onLogin }) {
     if (scopes.length === 0) return setCreateError(strings.dev.errors.scopeRequired);
     setCreating(true);
     try {
-      // Private-slate access uses key delegation: generate an RSA keypair in the
-      // browser, register the public key, and hand the private key to the dev once.
-      let public_key, privateKeyPem;
-      if (scopes.includes('slates:read:private')) {
-        const kp = await generateAppKeyPair();
-        public_key = kp.publicKeySpkiBase64;
-        privateKeyPem = kp.privateKeyPem;
-      }
+      // Private-slate access uses PER-INSTALLATION key delegation: there is no app
+      // keypair created here. Each install generates its own RSA keypair at runtime
+      // and registers the public half via POST /api/oauth/devices after authorizing
+      // (see the developer reference, §6). Nothing secret is minted at registration.
       const res = await fetch(`${API_URL}/oauth/clients`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined, redirect_uris, scopes, public_key })
+        body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined, redirect_uris, scopes })
       });
       const data = await res.json();
       if (res.ok) {
         setShowCreate(false);
         setName(''); setWebsite(''); setRedirects(''); setScopes(['identity']);
         if (data.client_secret) setNewSecret({ id: data.client_id, secret: data.client_secret });
-        if (privateKeyPem) setNewKey({ id: data.client_id, pem: privateKeyPem });
         loadApps();
       } else {
         setCreateError(data.error || strings.dev.errors.createFailed);
@@ -553,7 +546,6 @@ export function DevPortal({ token, username, onLogin }) {
           creating={creating} createError={createError} createApp={createApp}
           deleting={deleting} deleteApp={deleteApp} copyId={copyId} copiedId={copiedId}
           newSecret={newSecret} dismissSecret={() => setNewSecret(null)}
-          newKey={newKey} dismissKey={() => setNewKey(null)}
           goWizard={() => setTab('wizard')}
         />
         </div>
@@ -805,26 +797,6 @@ function AppsTab(p) {
           <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.secretBody}</div>
           <code className="block bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
           <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{strings.dev.apps.secretDismiss}</button>
-        </div>
-      )}
-
-      {p.newKey && (
-        <div className="bg-[#1a1a1a] border border-orange-400/40 rounded-xl p-4">
-          <div className="text-sm text-white mb-1">{strings.dev.apps.keyTitle}</div>
-          <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.keyBody}</div>
-          <pre className="bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-[10px] leading-relaxed text-orange-400 overflow-x-auto whitespace-pre">{p.newKey.pem}</pre>
-          <div className="flex gap-3 mt-3">
-            <button
-              onClick={() => navigator.clipboard?.writeText(p.newKey.pem).catch(() => {})}
-              className="text-xs text-[#808080] hover:text-white"
-            >{strings.dev.copy}</button>
-            <a
-              href={`data:application/x-pem-file;charset=utf-8,${encodeURIComponent(p.newKey.pem)}`}
-              download={`${p.newKey.id}-private-key.pem`}
-              className="text-xs text-[#808080] hover:text-white"
-            >{strings.dev.apps.keyDownload}</a>
-            <button onClick={p.dismissKey} className="text-xs text-[#808080] hover:text-white ml-auto">{strings.dev.apps.secretDismiss}</button>
-          </div>
         </div>
       )}
 
