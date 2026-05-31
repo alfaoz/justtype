@@ -404,6 +404,47 @@ const inputClass =
   'w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-3.5 py-2.5 text-sm text-white ' +
   'placeholder:text-[#666] focus:outline-none focus:border-[#666] transition-colors';
 
+// justtype-style centered modal. Closes on overlay click or Escape.
+function Modal({ title, subtitle, onClose, children, maxWidth = 'max-w-md' }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-[modalOverlayIn_0.15s_ease-out]"
+      onClick={onClose}
+    >
+      <div
+        className={`bg-[#1a1a1a] border border-[#333] rounded-xl p-6 w-full ${maxWidth} animate-[modalContentIn_0.18s_ease-out] max-h-[90vh] overflow-y-auto`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {title && <h2 className="text-lg text-white mb-1">{title}</h2>}
+        {subtitle && <p className="text-sm text-[#808080] mb-5 leading-relaxed">{subtitle}</p>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const ROLE_STYLE = {
+  owner: 'bg-white/10 text-white border-white/20',
+  editor: 'bg-blue-400/10 text-blue-300 border-blue-400/20',
+  viewer: 'bg-[#222] text-[#a0a0a0] border-[#333]'
+};
+
+function RoleBadge({ role }) {
+  const label = role === 'owner' ? strings.dev.apps.ownerBadge
+    : role === 'editor' ? strings.dev.apps.editorBadge
+    : strings.dev.apps.viewerBadge;
+  return (
+    <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md border ${ROLE_STYLE[role] || ROLE_STYLE.viewer}`}>
+      {label}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 export function DevPortal({ token, username, onLogin }) {
@@ -419,14 +460,30 @@ export function DevPortal({ token, username, onLogin }) {
   const [scopes, setScopes] = useState(['identity']);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
-  const [deleting, setDeleting] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
   const [newSecret, setNewSecret] = useState(null);
 
   // wizard
   const [wizStep, setWizStep] = useState(1);
   const [wizAppId, setWizAppId] = useState('');
   const [wizLang, setWizLang] = useState('node');
+
+  // invite-link onboarding (?join=<token>)
+  const [joinToken, setJoinToken] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('join');
+  });
+
+  const dismissJoin = () => {
+    setJoinToken(null);
+    // drop the ?join= param without a reload
+    window.history.replaceState({}, '', '/dev');
+  };
+
+  const onJoined = () => {
+    dismissJoin();
+    setTab('apps');
+    loadApps();
+  };
 
   useEffect(() => {
     if (token) loadApps();
@@ -480,31 +537,15 @@ export function DevPortal({ token, username, onLogin }) {
     }
   };
 
-  const deleteApp = async (clientId) => {
-    setDeleting(clientId);
-    try {
-      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(clientId)}`, {
-        method: 'DELETE', credentials: 'include'
-      });
-      if (res.ok) setApps((a) => a.filter((x) => x.client_id !== clientId));
-    } catch { /* ignore */ }
-    finally { setDeleting(null); }
-  };
-
-  const copyId = (id) => {
-    navigator.clipboard?.writeText(id).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
-    }).catch(() => {});
-  };
-
   if (!token) {
     return (
       <Shell>
         <div className="text-center py-24">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[#1a1a1a] border border-[#333] mb-6 text-xl">{'</>'}</div>
           <h1 className="text-2xl text-white mb-3">{strings.dev.title}</h1>
-          <p className="text-[#a0a0a0] mb-8 max-w-md mx-auto leading-relaxed">{strings.dev.gate.message}</p>
+          <p className="text-[#a0a0a0] mb-8 max-w-md mx-auto leading-relaxed">
+            {joinToken ? strings.dev.join.gate : strings.dev.gate.message}
+          </p>
           <button onClick={onLogin} className="bg-white text-black px-6 py-3 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
             {strings.dev.gate.login}
           </button>
@@ -544,7 +585,7 @@ export function DevPortal({ token, username, onLogin }) {
           name={name} setName={setName} website={website} setWebsite={setWebsite}
           redirects={redirects} setRedirects={setRedirects} scopes={scopes} toggleScope={toggleScope}
           creating={creating} createError={createError} createApp={createApp}
-          deleting={deleting} deleteApp={deleteApp} copyId={copyId} copiedId={copiedId}
+          reload={loadApps} username={username}
           newSecret={newSecret} dismissSecret={() => setNewSecret(null)}
           goWizard={() => setTab('wizard')}
         />
@@ -559,7 +600,93 @@ export function DevPortal({ token, username, onLogin }) {
         />
         </div>
       )}
+
+      {joinToken && <JoinModal token={joinToken} onClose={dismissJoin} onJoined={onJoined} />}
     </Shell>
+  );
+}
+
+// Onboarding modal shown when a user opens an invite link (/dev?join=<token>).
+function JoinModal({ token, onClose, onJoined }) {
+  const j = strings.dev.join;
+  const [loading, setLoading] = useState(true);
+  const [invite, setInvite] = useState(null);
+  const [error, setError] = useState('');
+  const [accepting, setAccepting] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/oauth/invites/${encodeURIComponent(token)}`, { credentials: 'include' });
+        const data = await res.json();
+        if (!alive) return;
+        if (res.ok) setInvite(data);
+        else setError(data.error || j.invalid);
+      } catch { if (alive) setError(j.invalid); }
+      finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [token]);
+
+  const accept = async () => {
+    setAccepting(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/oauth/invites/${encodeURIComponent(token)}/accept`, {
+        method: 'POST', credentials: 'include'
+      });
+      const data = await res.json();
+      if (res.ok) onJoined();
+      else setError(data.error || j.invalid);
+    } catch { setError(j.invalid); }
+    finally { setAccepting(false); }
+  };
+
+  return (
+    <Modal title={loading ? j.title : (invite ? j.heading(invite.app_name) : j.title)} onClose={onClose}>
+      {loading ? (
+        <p className="text-sm text-[#808080]">{strings.dev.loading}</p>
+      ) : !invite ? (
+        <>
+          <p className="text-sm text-red-400 mb-5">{error || j.invalid}</p>
+          <button onClick={onClose} className="w-full border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] text-sm transition-colors">
+            {strings.dev.apps.access.close}
+          </button>
+        </>
+      ) : invite.is_owner ? (
+        <>
+          <p className="text-sm text-[#a0a0a0] mb-5">{j.isOwner}</p>
+          <button onClick={onJoined} className="w-full bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
+            {strings.dev.apps.access.close}
+          </button>
+        </>
+      ) : invite.already_member ? (
+        <>
+          <p className="text-sm text-[#a0a0a0] mb-5">{j.alreadyMember}</p>
+          <button onClick={onJoined} className="w-full bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
+            {strings.dev.apps.access.close}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-[#a0a0a0] mb-3 leading-relaxed">{j.body(invite.owner_username, invite.role)}</p>
+          <div className="flex items-center gap-2 mb-1">
+            <RoleBadge role={invite.role} />
+            <span className="text-xs text-[#666]">{j.roleNote[invite.role]}</span>
+          </div>
+          {error && <p className="text-red-400 text-xs mt-3">{error}</p>}
+          <div className="flex gap-3 mt-6">
+            <button onClick={accept} disabled={accepting} className="flex-1 bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
+              {accepting ? j.accepting : j.accept}
+            </button>
+            <button onClick={onClose} disabled={accepting} className="flex-1 border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+              {j.decline}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -785,104 +912,502 @@ function ScopeChecklist({ scopes, toggleScope }) {
   );
 }
 
+// Section header: small label + count, like a workspace console section.
+function SectionHeader({ label, count }) {
+  return (
+    <div className="flex items-baseline gap-2 mb-3">
+      <span className="text-[11px] uppercase tracking-wider text-[#666]">{label}</span>
+      {count != null && <span className="text-[11px] text-[#444]">{count}</span>}
+    </div>
+  );
+}
+
+// A single copyable credential/value row.
+function CopyRow({ label, value, hint }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  };
+  return (
+    <button
+      onClick={copy}
+      className="w-full text-left flex items-center justify-between gap-2 bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 hover:border-[#666] transition-colors group"
+      title={hint}
+    >
+      <span className="min-w-0">
+        {label && <span className="block text-[10px] uppercase tracking-wider text-[#555] mb-0.5">{label}</span>}
+        <code className="font-mono text-xs text-[#a0a0a0] break-all">{value}</code>
+      </span>
+      <span className="text-[10px] text-[#666] group-hover:text-white shrink-0">
+        {copied ? strings.dev.copied : strings.dev.copy}
+      </span>
+    </button>
+  );
+}
+
+function AppCard({ app, onEdit, onManageAccess, onDelete }) {
+  const a = strings.dev.apps;
+  const isOwner = app.role === 'owner';
+  const canEdit = isOwner || app.role === 'editor';
+  return (
+    <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 transition-colors hover:border-[#3a3a3a]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-white truncate">{app.name}</span>
+            <RoleBadge role={app.role} />
+          </div>
+          {app.website ? (
+            <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-blue-400 break-all">{app.website}</a>
+          ) : !isOwner && app.owner_username ? (
+            <span className="text-xs text-[#666]">{a.sharedBy(app.owner_username)}</span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <CopyRow value={app.client_id} hint={a.copyHint} />
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 mt-3">
+        {app.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
+      </div>
+      <div className="text-xs text-[#666] mt-3 break-all">
+        {a.redirectsLabel}: {app.redirect_uris.join(', ')}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-[#222]">
+        {canEdit && (
+          <button onClick={() => onEdit(app)} className="text-xs text-[#d4d4d4] border border-[#333] rounded-lg px-3 py-1.5 hover:bg-[#222] transition-colors">
+            {a.edit}
+          </button>
+        )}
+        <button onClick={() => onManageAccess(app)} className="text-xs text-[#d4d4d4] border border-[#333] rounded-lg px-3 py-1.5 hover:bg-[#222] transition-colors">
+          {a.manageAccess}
+        </button>
+        {isOwner && (
+          <button onClick={() => onDelete(app)} className="text-xs text-red-400/90 hover:text-red-300 border border-[#3a2222] hover:border-red-400/40 rounded-lg px-3 py-1.5 transition-colors ml-auto">
+            {a.delete}
+          </button>
+        )}
+        {!canEdit && (
+          <span className="text-[11px] text-[#555] ml-auto">{a.viewOnlyNote}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeleteAppModal({ app, onClose, onDeleted }) {
+  const a = strings.dev.apps;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const del = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}`, {
+        method: 'DELETE', credentials: 'include'
+      });
+      if (res.ok) { onDeleted(app.client_id); return; }
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || strings.dev.apps.access.loadFailed);
+    } catch { setError(strings.dev.apps.access.loadFailed); }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal title={a.deleteModal.title} onClose={onClose}>
+      <p className="text-sm text-[#a0a0a0] mb-6 leading-relaxed">{a.deleteModal.message(app.name)}</p>
+      {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
+      <div className="flex gap-3">
+        <button onClick={del} disabled={busy} className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm transition-colors">
+          {busy ? a.deleteModal.deleting : a.deleteModal.confirm}
+        </button>
+        <button onClick={onClose} disabled={busy} className="flex-1 border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+          {a.deleteModal.cancel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function EditAppModal({ app, onClose, onSaved }) {
+  const a = strings.dev.apps;
+  const [name, setName] = useState(app.name || '');
+  const [website, setWebsite] = useState(app.website || '');
+  const [redirects, setRedirects] = useState((app.redirect_uris || []).join('\n'));
+  const [scopes, setScopes] = useState(app.scopes && app.scopes.length ? app.scopes : ['identity']);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const toggleScope = (s) => setScopes((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
+
+  const save = async (e) => {
+    e.preventDefault();
+    setError('');
+    const redirect_uris = redirects.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    if (!name.trim()) return setError(strings.dev.errors.nameRequired);
+    if (redirect_uris.length === 0) return setError(strings.dev.errors.redirectRequired);
+    if (scopes.length === 0) return setError(strings.dev.errors.scopeRequired);
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined, redirect_uris, scopes })
+      });
+      const data = await res.json();
+      if (res.ok) { onSaved(); return; }
+      setError(data.error || strings.dev.errors.createFailed);
+    } catch { setError(strings.dev.errors.createFailed); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={a.editTitle} subtitle={app.name} onClose={onClose} maxWidth="max-w-lg">
+      <form onSubmit={save} className="space-y-4">
+        <Field label={a.nameLabel}>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={a.namePlaceholder} maxLength={80} className={inputClass} autoFocus />
+        </Field>
+        <Field label={a.websiteLabel} hint={a.optional}>
+          <input type="text" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder={a.websitePlaceholder} className={inputClass} />
+        </Field>
+        <Field label={a.redirectsFieldLabel} hint={a.redirectsHint}>
+          <textarea value={redirects} onChange={(e) => setRedirects(e.target.value)} placeholder={a.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
+        </Field>
+        <div>
+          <p className="text-xs text-[#808080] mb-2">{a.scopesLabel}</p>
+          <ScopeChecklist scopes={scopes} toggleScope={toggleScope} />
+        </div>
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+        <div className="flex gap-3 pt-1">
+          <button type="submit" disabled={busy} className="bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
+            {busy ? a.saving : a.save}
+          </button>
+          <button type="button" onClick={onClose} disabled={busy} className="border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+            {a.cancel}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AccessManager({ app, currentUsername, onClose, onChanged }) {
+  const ax = strings.dev.apps.access;
+  const isOwner = app.role === 'owner';
+  const [loading, setLoading] = useState(true);
+  const [team, setTeam] = useState(null);     // { owner, collaborators, your_role }
+  const [invites, setInvites] = useState([]);
+  const [error, setError] = useState('');
+  const [inviteRole, setInviteRole] = useState('editor');
+  const [creatingLink, setCreatingLink] = useState(false);
+  const [busyUser, setBusyUser] = useState(null);
+  const [busyToken, setBusyToken] = useState(null);
+  const [copiedToken, setCopiedToken] = useState(null);
+
+  const inviteUrl = (token) => `${origin}/dev?join=${token}`;
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}/collaborators`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok) setTeam(data); else setError(data.error || ax.loadFailed);
+      if (isOwner) {
+        const ir = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}/invites`, { credentials: 'include' });
+        const idata = await ir.json();
+        if (ir.ok) setInvites(Array.isArray(idata) ? idata : []);
+      }
+    } catch { setError(ax.loadFailed); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const createLink = async () => {
+    setCreatingLink(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}/invites`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ role: inviteRole })
+      });
+      const data = await res.json();
+      if (res.ok) setInvites((prev) => [{ token: data.token, role: data.role, expires_at: data.expires_at }, ...prev]);
+      else setError(data.error || ax.loadFailed);
+    } catch { setError(ax.loadFailed); }
+    finally { setCreatingLink(false); }
+  };
+
+  const copyLink = (token) => {
+    navigator.clipboard?.writeText(inviteUrl(token)).then(() => {
+      setCopiedToken(token);
+      setTimeout(() => setCopiedToken(null), 1500);
+    }).catch(() => {});
+  };
+
+  const revokeLink = async (token) => {
+    setBusyToken(token);
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}/invites/${encodeURIComponent(token)}`, {
+        method: 'DELETE', credentials: 'include'
+      });
+      if (res.ok) setInvites((prev) => prev.filter((i) => i.token !== token));
+    } catch { /* ignore */ }
+    finally { setBusyToken(null); }
+  };
+
+  const removeMember = async (userId) => {
+    setBusyUser(userId);
+    try {
+      const res = await fetch(`${API_URL}/oauth/clients/${encodeURIComponent(app.client_id)}/collaborators/${userId}`, {
+        method: 'DELETE', credentials: 'include'
+      });
+      if (res.ok) {
+        // if we removed ourselves, our access is gone — close + refresh the list.
+        if (!isOwner) { onChanged(); onClose(); return; }
+        setTeam((t) => ({ ...t, collaborators: t.collaborators.filter((c) => c.user_id !== userId) }));
+        onChanged();
+      }
+    } catch { /* ignore */ }
+    finally { setBusyUser(null); }
+  };
+
+  return (
+    <Modal title={ax.title} subtitle={ax.subtitle(app.name)} onClose={onClose} maxWidth="max-w-lg">
+      {loading ? (
+        <p className="text-sm text-[#808080]">{strings.dev.loading}</p>
+      ) : (
+        <div className="space-y-6">
+          {/* team */}
+          <div>
+            <SectionHeader label={ax.membersHeading} />
+            <div className="space-y-1.5">
+              {team?.owner && (
+                <MemberRow
+                  username={team.owner.username} role="owner"
+                  isYou={team.owner.username === currentUsername}
+                />
+              )}
+              {(team?.collaborators || []).map((c) => (
+                <MemberRow
+                  key={c.user_id} username={c.username} role={c.role}
+                  isYou={c.username === currentUsername}
+                  onRemove={(isOwner || c.username === currentUsername) ? () => removeMember(c.user_id) : null}
+                  removing={busyUser === c.user_id}
+                  removeLabel={c.username === currentUsername ? ax.leave : ax.remove}
+                />
+              ))}
+              {(!team?.collaborators || team.collaborators.length === 0) && (
+                <p className="text-xs text-[#666] py-1">{ax.empty}</p>
+              )}
+            </div>
+          </div>
+
+          {/* invite links (owner only) */}
+          {isOwner ? (
+            <div className="pt-2 border-t border-[#222]">
+              <SectionHeader label={ax.inviteHeading} />
+              <p className="text-xs text-[#666] mb-3 leading-relaxed">{ax.inviteBody}</p>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs text-[#808080] shrink-0">{ax.inviteRoleLabel}</span>
+                <div className="inline-flex gap-1 p-1 bg-[#0a0a0a] border border-[#333] rounded-lg">
+                  {['editor', 'viewer'].map((r) => (
+                    <button key={r} onClick={() => setInviteRole(r)}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${inviteRole === r ? 'bg-[#222] text-white' : 'text-[#808080] hover:text-[#d4d4d4]'}`}>
+                      {r === 'editor' ? ax.roleEditor : ax.roleViewer}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={createLink} disabled={creatingLink}
+                  className="ml-auto text-xs bg-white text-black px-3 py-1.5 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 transition-colors shrink-0">
+                  {creatingLink ? ax.creatingLink : ax.createLink}
+                </button>
+              </div>
+              {invites.length === 0 ? (
+                <p className="text-xs text-[#555]">{ax.noLinks}</p>
+              ) : (
+                <div className="space-y-2">
+                  {invites.map((inv) => (
+                    <div key={inv.token} className="bg-[#0a0a0a] border border-[#333] rounded-lg p-2.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <RoleBadge role={inv.role} />
+                        <span className="text-[11px] text-[#666]">{ax.linkRole(inv.role)}</span>
+                        <button onClick={() => revokeLink(inv.token)} disabled={busyToken === inv.token}
+                          className="ml-auto text-[11px] text-red-400/80 hover:text-red-300 disabled:opacity-50 transition-colors">
+                          {busyToken === inv.token ? ax.revoking : ax.revokeLink}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 min-w-0 truncate text-[11px] text-[#808080] font-mono">{inviteUrl(inv.token)}</code>
+                        <button onClick={() => copyLink(inv.token)}
+                          className="text-[11px] px-2 py-1 rounded-md bg-[#1a1a1a] border border-[#333] text-[#a0a0a0] hover:text-white transition-colors shrink-0">
+                          {copiedToken === inv.token ? ax.copiedLink : ax.copyLink}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-[#555] pt-2 border-t border-[#222]">{ax.ownerOnly}</p>
+          )}
+
+          {error && <p className="text-red-400 text-xs">{error}</p>}
+
+          <div className="flex justify-end">
+            <button onClick={onClose} className="text-sm border border-[#333] text-[#d4d4d4] px-4 py-2 rounded-lg hover:bg-[#222] transition-colors">
+              {ax.close}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function MemberRow({ username, role, isYou, onRemove, removing, removeLabel }) {
+  const ax = strings.dev.apps.access;
+  return (
+    <div className="flex items-center gap-3 bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2">
+      <span className="w-7 h-7 rounded-full bg-[#222] border border-[#333] flex items-center justify-center text-xs text-[#a0a0a0] shrink-0 uppercase">
+        {(username || '?')[0]}
+      </span>
+      <span className="min-w-0">
+        <span className="text-sm text-white">@{username}</span>
+        {isYou && <span className="text-[11px] text-[#666] ml-1.5">({ax.you})</span>}
+      </span>
+      <span className="ml-auto flex items-center gap-2 shrink-0">
+        <RoleBadge role={role} />
+        {onRemove && (
+          <button onClick={onRemove} disabled={removing}
+            className="text-[11px] text-red-400/80 hover:text-red-300 disabled:opacity-50 transition-colors">
+            {removing ? ax.removing : removeLabel}
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function AppsTab(p) {
+  const a = strings.dev.apps;
+  const [editApp, setEditApp] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [accessApp, setAccessApp] = useState(null);
+
   if (p.loadingApps) {
     return <p className="text-[#666] text-sm">{strings.dev.loading}</p>;
   }
+
+  const owned = p.apps.filter((x) => x.role === 'owner');
+  const shared = p.apps.filter((x) => x.role && x.role !== 'owner');
+  // keep modal targets in sync with reloaded data
+  const liveAccessApp = accessApp && p.apps.find((x) => x.client_id === accessApp.client_id);
+  const liveEditApp = editApp && p.apps.find((x) => x.client_id === editApp.client_id);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       {p.newSecret && (
         <div className="bg-[#1a1a1a] border border-orange-400/40 rounded-xl p-4">
-          <div className="text-sm text-white mb-1">{strings.dev.apps.secretTitle}</div>
-          <div className="text-xs text-[#a0a0a0] mb-3">{strings.dev.apps.secretBody}</div>
+          <div className="text-sm text-white mb-1">{a.secretTitle}</div>
+          <div className="text-xs text-[#a0a0a0] mb-3">{a.secretBody}</div>
           <code className="block bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
-          <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{strings.dev.apps.secretDismiss}</button>
+          <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{a.secretDismiss}</button>
         </div>
       )}
 
+      {/* empty state — no apps at all */}
       {p.apps.length === 0 && !p.showCreate && (
         <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-8 text-center">
-          <p className="text-[#a0a0a0] text-sm mb-4">{strings.dev.apps.empty}</p>
+          <p className="text-[#a0a0a0] text-sm mb-4">{a.empty}</p>
           <button onClick={() => p.setShowCreate(true)} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
-            {strings.dev.apps.createButton}
+            {a.createButton}
           </button>
         </div>
       )}
 
-      {p.apps.map((app) => (
-        <div key={app.client_id} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-white">{app.name}</div>
-              {app.website && (
-                <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-blue-400 break-all">{app.website}</a>
-              )}
-            </div>
-            <button
-              onClick={() => p.deleteApp(app.client_id)}
-              disabled={p.deleting === app.client_id}
-              className="text-red-400 hover:text-red-300 text-xs disabled:opacity-50 shrink-0"
-            >
-              {p.deleting === app.client_id ? strings.dev.apps.deleting : strings.dev.apps.delete}
-            </button>
+      {/* owned apps */}
+      {(owned.length > 0 || (p.apps.length > 0 && shared.length > 0)) && (
+        <section>
+          {(owned.length > 0 || shared.length > 0) && <SectionHeader label={a.ownedHeading} count={owned.length || null} />}
+          <div className="space-y-4">
+            {owned.map((app) => (
+              <AppCard key={app.client_id} app={app}
+                onEdit={setEditApp} onManageAccess={setAccessApp} onDelete={setDeleteTarget} />
+            ))}
           </div>
+        </section>
+      )}
 
-          <button
-            onClick={() => p.copyId(app.client_id)}
-            className="mt-3 w-full text-left flex items-center justify-between gap-2 bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 hover:border-[#666] transition-colors group"
-            title={strings.dev.apps.copyHint}
-          >
-            <code className="font-mono text-xs text-[#a0a0a0] break-all">{app.client_id}</code>
-            <span className="text-[10px] text-[#666] group-hover:text-white shrink-0">
-              {p.copiedId === app.client_id ? strings.dev.copied : strings.dev.copy}
-            </span>
-          </button>
-
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {app.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
+      {/* shared with you */}
+      {shared.length > 0 && (
+        <section>
+          <SectionHeader label={a.sharedHeading} count={shared.length} />
+          <div className="space-y-4">
+            {shared.map((app) => (
+              <AppCard key={app.client_id} app={app}
+                onEdit={setEditApp} onManageAccess={setAccessApp} onDelete={setDeleteTarget} />
+            ))}
           </div>
-          <div className="text-xs text-[#666] mt-3 break-all">
-            {strings.dev.apps.redirectsLabel}: {app.redirect_uris.join(', ')}
-          </div>
-        </div>
-      ))}
+        </section>
+      )}
 
+      {/* create */}
       {!p.showCreate ? (
         (p.apps.length > 0) && (
           <div className="flex flex-wrap gap-3">
             <button onClick={() => p.setShowCreate(true)} className="text-sm text-white border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
-              {strings.dev.apps.createButton}
+              {a.createButton}
             </button>
             <button onClick={p.goWizard} className="text-sm text-[#a0a0a0] border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
-              {strings.dev.apps.openWizard}
+              {a.openWizard}
             </button>
           </div>
         )
       ) : (
         <form onSubmit={p.createApp} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 space-y-4">
-          <Field label={strings.dev.apps.nameLabel}>
-            <input type="text" value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder={strings.dev.apps.namePlaceholder} maxLength={80} className={inputClass} autoFocus />
+          <Field label={a.nameLabel}>
+            <input type="text" value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder={a.namePlaceholder} maxLength={80} className={inputClass} autoFocus />
           </Field>
-          <Field label={strings.dev.apps.websiteLabel} hint={strings.dev.apps.optional}>
-            <input type="text" value={p.website} onChange={(e) => p.setWebsite(e.target.value)} placeholder={strings.dev.apps.websitePlaceholder} className={inputClass} />
+          <Field label={a.websiteLabel} hint={a.optional}>
+            <input type="text" value={p.website} onChange={(e) => p.setWebsite(e.target.value)} placeholder={a.websitePlaceholder} className={inputClass} />
           </Field>
-          <Field label={strings.dev.apps.redirectsFieldLabel} hint={strings.dev.apps.redirectsHint}>
-            <textarea value={p.redirects} onChange={(e) => p.setRedirects(e.target.value)} placeholder={strings.dev.apps.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
+          <Field label={a.redirectsFieldLabel} hint={a.redirectsHint}>
+            <textarea value={p.redirects} onChange={(e) => p.setRedirects(e.target.value)} placeholder={a.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
           </Field>
           <div>
-            <p className="text-xs text-[#808080] mb-2">{strings.dev.apps.scopesLabel}</p>
+            <p className="text-xs text-[#808080] mb-2">{a.scopesLabel}</p>
             <ScopeChecklist scopes={p.scopes} toggleScope={p.toggleScope} />
           </div>
           {p.createError && <p className="text-red-400 text-xs">{p.createError}</p>}
           <div className="flex gap-3 pt-1">
             <button type="submit" disabled={p.creating} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
-              {p.creating ? strings.dev.apps.creating : strings.dev.apps.create}
+              {p.creating ? a.creating : a.create}
             </button>
             <button type="button" onClick={() => p.setShowCreate(false)} className="border border-[#333] text-[#d4d4d4] px-4 py-2 rounded-lg hover:bg-[#222] text-sm transition-colors">
-              {strings.dev.apps.cancel}
+              {a.cancel}
             </button>
           </div>
         </form>
+      )}
+
+      {/* modals */}
+      {liveEditApp && (
+        <EditAppModal app={liveEditApp} onClose={() => setEditApp(null)}
+          onSaved={() => { setEditApp(null); p.reload(); }} />
+      )}
+      {deleteTarget && (
+        <DeleteAppModal app={deleteTarget} onClose={() => setDeleteTarget(null)}
+          onDeleted={() => { setDeleteTarget(null); p.reload(); }} />
+      )}
+      {liveAccessApp && (
+        <AccessManager app={liveAccessApp} currentUsername={p.username}
+          onClose={() => setAccessApp(null)} onChanged={p.reload} />
       )}
     </div>
   );

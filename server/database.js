@@ -500,6 +500,41 @@ try {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_oauth_share_all_user ON oauth_share_all(user_id);
+
+    -- Team / shared developer access to an app. The app's registrant is the
+    -- owner (oauth_clients.owner_user_id); rows here grant other justtype users
+    -- collaborator access to manage or use that app in the dev portal. Roles:
+    --   'editor' — can view credentials and edit the app's settings
+    --   'viewer' — can view credentials and use the wizard, but not edit
+    -- Only the owner can add/remove collaborators or delete the app.
+    CREATE TABLE IF NOT EXISTS oauth_client_collaborators (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'editor',
+      added_by INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (client_id, user_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_collab_client ON oauth_client_collaborators(client_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_collab_user ON oauth_client_collaborators(user_id);
+
+    -- Shareable invite links for collaborator access. The owner generates a link
+    -- carrying a role; anyone logged in who opens it is onboarded as a
+    -- collaborator on accept. Reusable until revoked or expired.
+    CREATE TABLE IF NOT EXISTS oauth_client_invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT UNIQUE NOT NULL,
+      client_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'editor',
+      created_by INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      expires_at INTEGER,
+      revoked INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_invite_client ON oauth_client_invites(client_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_invite_token ON oauth_client_invites(token);
   `);
 
   // Add public_key to oauth_clients for key delegation (apps that want private-slate access).

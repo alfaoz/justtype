@@ -292,16 +292,202 @@ function mountOAuth(app, deps) {
     });
   });
 
+  // Resolve a user's relationship to an app: 'owner', a collaborator role
+  // ('editor'/'viewer'), or null if they have no access. Used to gate every
+  // client route below so shared collaborators get the access they were granted.
+  const clientRoleFor = (clientId, userId) => {
+    const owned = db.prepare('SELECT 1 FROM oauth_clients WHERE client_id = ? AND owner_user_id = ?').get(clientId, userId);
+    if (owned) return 'owner';
+    const collab = db.prepare('SELECT role FROM oauth_client_collaborators WHERE client_id = ? AND user_id = ?').get(clientId, userId);
+    return collab ? collab.role : null;
+  };
+
+  // Serialize one client row for the portal, including the caller's role and the
+  // owner's username (so shared apps can show "shared by @x").
+  const serializeClient = (r, role) => ({
+    client_id: r.client_id, name: r.name, website: r.website,
+    redirect_uris: JSON.parse(r.redirect_uris || '[]'),
+    scopes: (r.allowed_scopes || '').split(' ').filter(Boolean),
+    is_confidential: !!r.is_confidential, has_public_key: !!r.public_key,
+    created_at: r.created_at, role,
+    owner_username: r.owner_username || null
+  });
+
   app.get('/api/oauth/clients', deps.authenticateToken, (req, res) => {
-    const rows = db.prepare(
-      'SELECT client_id, name, website, redirect_uris, allowed_scopes, is_confidential, public_key, created_at FROM oauth_clients WHERE owner_user_id = ? ORDER BY created_at DESC'
+    // Apps the user owns, plus apps shared with them as a collaborator.
+    const owned = db.prepare(
+      `SELECT c.*, u.username AS owner_username FROM oauth_clients c
+       LEFT JOIN users u ON u.id = c.owner_user_id
+       WHERE c.owner_user_id = ? ORDER BY c.created_at DESC`
     ).all(req.user.id);
-    res.json(rows.map(r => ({
-      client_id: r.client_id, name: r.name, website: r.website,
-      redirect_uris: JSON.parse(r.redirect_uris || '[]'),
-      scopes: (r.allowed_scopes || '').split(' ').filter(Boolean),
-      is_confidential: !!r.is_confidential, has_public_key: !!r.public_key, created_at: r.created_at
-    })));
+    const shared = db.prepare(
+      `SELECT c.*, u.username AS owner_username, col.role AS collab_role
+       FROM oauth_client_collaborators col
+       JOIN oauth_clients c ON c.client_id = col.client_id
+       LEFT JOIN users u ON u.id = c.owner_user_id
+       WHERE col.user_id = ? ORDER BY c.created_at DESC`
+    ).all(req.user.id);
+    res.json([
+      ...owned.map(r => serializeClient(r, 'owner')),
+      ...shared.map(r => serializeClient(r, r.collab_role || 'viewer'))
+    ]);
+  });
+
+  // Edit an app's settings. Owners and editors may edit; viewers may not.
+  app.patch('/api/oauth/clients/:clientId', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    if (role === 'viewer') return res.status(403).json({ error: 'You have view-only access to this app.' });
+
+    const { name, website, redirect_uris, scopes } = req.body || {};
+    if (!name || typeof name !== 'string' || name.length > 80) {
+      return res.status(400).json({ error: 'A valid app name is required (max 80 chars).' });
+    }
+    if (!Array.isArray(redirect_uris) || redirect_uris.length === 0 || redirect_uris.length > 10) {
+      return res.status(400).json({ error: 'Provide 1-10 redirect URIs.' });
+    }
+    for (const uri of redirect_uris) {
+      if (typeof uri !== 'string' || !validRedirectUri(uri)) {
+        return res.status(400).json({ error: `Invalid redirect URI: ${uri}. Use https, http://localhost, or a native app scheme like com.example.app://callback.` });
+      }
+    }
+    const requested = Array.isArray(scopes) && scopes.length ? scopes : ['identity'];
+    for (const s of requested) {
+      if (!SCOPES[s]) return res.status(400).json({ error: `Unknown scope: ${s}` });
+    }
+    if (website && (typeof website !== 'string' || website.length > 200)) {
+      return res.status(400).json({ error: 'Invalid website URL.' });
+    }
+
+    db.prepare(`UPDATE oauth_clients SET name = ?, website = ?, redirect_uris = ?, allowed_scopes = ? WHERE client_id = ?`)
+      .run(name.trim(), website?.trim() || null, JSON.stringify(redirect_uris), requested.join(' '), req.params.clientId);
+
+    const r = db.prepare(
+      `SELECT c.*, u.username AS owner_username FROM oauth_clients c
+       LEFT JOIN users u ON u.id = c.owner_user_id WHERE c.client_id = ?`
+    ).get(req.params.clientId);
+    res.json(serializeClient(r, role));
+  });
+
+  // --- collaborators (shared developer access) ----------------------------
+
+  // List collaborators on an app. Anyone with access can see the team.
+  app.get('/api/oauth/clients/:clientId/collaborators', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    const owner = db.prepare(
+      `SELECT u.id, u.username FROM oauth_clients c JOIN users u ON u.id = c.owner_user_id WHERE c.client_id = ?`
+    ).get(req.params.clientId);
+    const collabs = db.prepare(
+      `SELECT col.user_id, col.role, col.created_at, u.username
+       FROM oauth_client_collaborators col JOIN users u ON u.id = col.user_id
+       WHERE col.client_id = ? ORDER BY col.created_at ASC`
+    ).all(req.params.clientId);
+    res.json({
+      your_role: role,
+      owner: owner ? { user_id: owner.id, username: owner.username, role: 'owner' } : null,
+      collaborators: collabs.map(c => ({ user_id: c.user_id, username: c.username, role: c.role, created_at: c.created_at }))
+    });
+  });
+
+  // Remove a collaborator (owner), or let a collaborator remove themselves.
+  app.delete('/api/oauth/clients/:clientId/collaborators/:userId', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    const targetId = parseInt(req.params.userId, 10);
+    if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Invalid user.' });
+    if (role !== 'owner' && targetId !== req.user.id) {
+      return res.status(403).json({ error: 'Only the app owner can remove other collaborators.' });
+    }
+    db.prepare('DELETE FROM oauth_client_collaborators WHERE client_id = ? AND user_id = ?')
+      .run(req.params.clientId, targetId);
+    res.json({ success: true });
+  });
+
+  // --- invite links (share developer access by URL) -----------------------
+
+  const INVITE_TTL = 30 * 24 * 3600; // 30 days
+
+  // List active invite links for an app (owner only — they carry access).
+  app.get('/api/oauth/clients/:clientId/invites', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    if (role !== 'owner') return res.status(403).json({ error: 'Only the app owner can manage invite links.' });
+    const rows = db.prepare(
+      `SELECT token, role, created_at, expires_at FROM oauth_client_invites
+       WHERE client_id = ? AND revoked = 0 AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY created_at DESC`
+    ).all(req.params.clientId, now());
+    res.json(rows.map(r => ({ token: r.token, role: r.role, created_at: r.created_at, expires_at: r.expires_at })));
+  });
+
+  // Generate a new invite link carrying a role. Owner only.
+  app.post('/api/oauth/clients/:clientId/invites', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    if (role !== 'owner') return res.status(403).json({ error: 'Only the app owner can create invite links.' });
+    let { role: inviteRole } = req.body || {};
+    if (!['editor', 'viewer'].includes(inviteRole)) inviteRole = 'editor';
+    const token = randomToken(24);
+    const expiresAt = now() + INVITE_TTL;
+    db.prepare(
+      `INSERT INTO oauth_client_invites (token, client_id, role, created_by, expires_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(token, req.params.clientId, inviteRole, req.user.id, expiresAt);
+    res.json({ token, role: inviteRole, expires_at: expiresAt });
+  });
+
+  // Revoke an invite link. Owner only.
+  app.delete('/api/oauth/clients/:clientId/invites/:token', deps.authenticateToken, (req, res) => {
+    const role = clientRoleFor(req.params.clientId, req.user.id);
+    if (!role) return res.status(404).json({ error: 'Client not found' });
+    if (role !== 'owner') return res.status(403).json({ error: 'Only the app owner can revoke invite links.' });
+    db.prepare('UPDATE oauth_client_invites SET revoked = 1 WHERE token = ? AND client_id = ?')
+      .run(req.params.token, req.params.clientId);
+    res.json({ success: true });
+  });
+
+  // Preview an invite (any logged-in user): what app, who's inviting, what role.
+  // Drives the "join app as collaborator?" onboarding screen.
+  app.get('/api/oauth/invites/:token', deps.authenticateToken, (req, res) => {
+    const inv = db.prepare(
+      `SELECT i.*, c.name AS app_name, c.website AS app_website, c.owner_user_id, u.username AS owner_username
+       FROM oauth_client_invites i
+       JOIN oauth_clients c ON c.client_id = i.client_id
+       LEFT JOIN users u ON u.id = c.owner_user_id
+       WHERE i.token = ?`
+    ).get(req.params.token);
+    if (!inv || inv.revoked || (inv.expires_at && inv.expires_at <= now())) {
+      return res.status(404).json({ error: 'This invite link is invalid or has expired.' });
+    }
+    const isOwner = inv.owner_user_id === req.user.id;
+    const alreadyMember = !isOwner && !!db.prepare(
+      'SELECT 1 FROM oauth_client_collaborators WHERE client_id = ? AND user_id = ?'
+    ).get(inv.client_id, req.user.id);
+    res.json({
+      client_id: inv.client_id, app_name: inv.app_name, app_website: inv.app_website || null,
+      owner_username: inv.owner_username || null, role: inv.role,
+      is_owner: isOwner, already_member: alreadyMember
+    });
+  });
+
+  // Accept an invite — onboard the caller as a collaborator with its role.
+  app.post('/api/oauth/invites/:token/accept', deps.authenticateToken, (req, res) => {
+    const inv = db.prepare('SELECT * FROM oauth_client_invites WHERE token = ?').get(req.params.token);
+    if (!inv || inv.revoked || (inv.expires_at && inv.expires_at <= now())) {
+      return res.status(404).json({ error: 'This invite link is invalid or has expired.' });
+    }
+    const owner = db.prepare('SELECT owner_user_id, name FROM oauth_clients WHERE client_id = ?').get(inv.client_id);
+    if (!owner) return res.status(404).json({ error: 'This app no longer exists.' });
+    if (owner.owner_user_id === req.user.id) {
+      return res.status(400).json({ error: 'You own this app — you already have full access.' });
+    }
+    db.prepare(
+      `INSERT INTO oauth_client_collaborators (client_id, user_id, role, added_by)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (client_id, user_id) DO UPDATE SET role = excluded.role`
+    ).run(inv.client_id, req.user.id, inv.role, inv.created_by);
+    res.json({ success: true, client_id: inv.client_id, app_name: owner.name, role: inv.role });
   });
 
   // Rotate / set an app's public key (owner only).
@@ -316,9 +502,14 @@ function mountOAuth(app, deps) {
   });
 
   app.delete('/api/oauth/clients/:clientId', deps.authenticateToken, (req, res) => {
+    // Deleting an app is owner-only — collaborators can't remove someone else's app.
     const client = db.prepare('SELECT id FROM oauth_clients WHERE client_id = ? AND owner_user_id = ?')
       .get(req.params.clientId, req.user.id);
-    if (!client) return res.status(404).json({ error: 'Client not found' });
+    if (!client) {
+      const role = clientRoleFor(req.params.clientId, req.user.id);
+      if (role) return res.status(403).json({ error: 'Only the app owner can delete this app.' });
+      return res.status(404).json({ error: 'Client not found' });
+    }
     // Per-device wraps hang off this client's grants; clear them first (FK off).
     db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
       SELECT id FROM oauth_slate_grants WHERE client_id = ?)`).run(req.params.clientId);
@@ -326,6 +517,7 @@ function mountOAuth(app, deps) {
     db.prepare('DELETE FROM oauth_device_keys WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_tokens WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_codes WHERE client_id = ?').run(req.params.clientId);
+    db.prepare('DELETE FROM oauth_client_collaborators WHERE client_id = ?').run(req.params.clientId);
     db.prepare('DELETE FROM oauth_clients WHERE client_id = ?').run(req.params.clientId);
     res.json({ success: true });
   });
