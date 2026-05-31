@@ -924,9 +924,20 @@ function mountOAuth(app, deps) {
         dropId = Number(info.lastInsertRowid);
         // Grant gives the app immediate delegated read/write (wrapped to the app key).
         // owner_wrapped_key is filled when the user adopts (re-keys) the slate.
+        // UPSERT (not plain INSERT) as defense-in-depth: a freshly assigned MAX+1
+        // slate_number is strictly above every live slate, so any pre-existing grant
+        // for it is necessarily a stale orphan and is safe to overwrite. Matches the
+        // ON CONFLICT pattern used by the other grant-write endpoints.
         db.prepare(`INSERT INTO oauth_slate_grants
           (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
-          VALUES (?, ?, ?, ?, NULL, ?, ?, 'app', strftime('%s','now'), strftime('%s','now'))`).run(
+          VALUES (?, ?, ?, ?, NULL, ?, ?, 'app', strftime('%s','now'), strftime('%s','now'))
+          ON CONFLICT(client_id, user_id, slate_number) DO UPDATE SET
+            wrapped_key = excluded.wrapped_key,
+            owner_wrapped_key = NULL,
+            enc_content = excluded.enc_content,
+            enc_title = excluded.enc_title,
+            last_writer = 'app',
+            updated_at = strftime('%s','now')`).run(
           req.oauth.clientId, req.oauth.userId, slateNumber, wrapped_key_app, enc_content, enc_title || null
         );
       })();

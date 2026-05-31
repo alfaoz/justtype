@@ -645,10 +645,18 @@ try {
     );
     CREATE INDEX IF NOT EXISTS idx_slate_tombstones_user ON slate_tombstones(user_id, deleted_at);
 
-    CREATE TRIGGER IF NOT EXISTS trg_slate_tombstone AFTER DELETE ON slates
+    -- Drop + recreate so the body always matches this definition (CREATE TRIGGER
+    -- IF NOT EXISTS would keep a stale earlier version on an already-migrated db).
+    DROP TRIGGER IF EXISTS trg_slate_tombstone;
+    CREATE TRIGGER trg_slate_tombstone AFTER DELETE ON slates
     BEGIN
       INSERT INTO slate_tombstones (user_id, slate_number, deleted_at)
       VALUES (OLD.user_id, OLD.slate_number, strftime('%s', 'now'));
+      -- A slate's per-app delegation grants die with the slate. Clean them on EVERY
+      -- delete path (regular, oauth, account, admin) so slate_number reuse (MAX+1)
+      -- can't collide with a stale grant — that previously 500'd create-delegated.
+      DELETE FROM oauth_slate_grants
+        WHERE user_id = OLD.user_id AND slate_number = OLD.slate_number;
       -- If a still-pending create-already-delegated slate is deleted, mark its
       -- linked drop discarded so the creating app sees the outcome (it never adopted).
       -- wrapped_key / enc_content are NOT NULL, so clear the ciphertext to '' (not NULL).
@@ -660,6 +668,16 @@ try {
     END;
   `);
   console.log('✓ Slate tombstone (incremental-sync) table + trigger initialized');
+
+  // One-time cleanup: remove orphan grants left by the pre-trigger delete path
+  // (regular slate delete never cleaned oauth_slate_grants), so slate_number reuse
+  // stops colliding on the grant UNIQUE index. Idempotent — safe on every startup.
+  const orphanCleanup = db.prepare(`DELETE FROM oauth_slate_grants
+    WHERE NOT EXISTS (SELECT 1 FROM slates s
+      WHERE s.user_id = oauth_slate_grants.user_id AND s.slate_number = oauth_slate_grants.slate_number)`).run();
+  if (orphanCleanup.changes > 0) {
+    console.log(`✓ Database cleanup: removed ${orphanCleanup.changes} orphan oauth_slate_grants`);
+  }
 
   // Drop old empty announcement tables if they exist
   db.exec(`DROP TABLE IF EXISTS announcement_reads;`);
