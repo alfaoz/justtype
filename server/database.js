@@ -738,6 +738,14 @@ try {
     db.exec(`ALTER TABLE oauth_tokens ADD COLUMN device_id TEXT;`);
     console.log('✓ Database migrated: Added device_id column to oauth_tokens');
   }
+  // An authorization code carries the device registered during consent (when the app
+  // supplied its installation public key at /oauth/authorize), so the token minted on
+  // exchange can be stamped with it — enabling consent-time wrapping + instant reads.
+  const oauthCodeCols = db.pragma('table_info(oauth_codes)');
+  if (!oauthCodeCols.some(col => col.name === 'device_id')) {
+    db.exec(`ALTER TABLE oauth_codes ADD COLUMN device_id TEXT;`);
+    console.log('✓ Database migrated: Added device_id column to oauth_codes');
+  }
   // Sweep device wraps whose grant is already gone (idempotent; covers any delete
   // path that ran before this table existed). Same spirit as the grant orphan sweep.
   try {

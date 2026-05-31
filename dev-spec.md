@@ -49,7 +49,10 @@ Standard PKCE flow, S256 only. Public clients need no secret.
 1. Generate a PKCE `code_verifier` (random) and `code_challenge = base64url(sha256(verifier))`.
 2. Redirect the user to `GET /oauth/authorize` with query params:
    `response_type=code`, `client_id`, `redirect_uri`, `scope` (space-separated),
-   `state`, `code_challenge`, `code_challenge_method=S256`.
+   `state`, `code_challenge`, `code_challenge_method=S256`. If you want private-slate
+   access, also pass `device_public_key` (this install's base64-SPKI RSA-OAEP key, see
+   §6) and optionally `device_name` — this registers the install during consent so
+   reads work immediately and "allow full access" wraps your library before redirect.
 3. The user approves on a justtype consent screen; you receive `?code=...` (and your
    `state`) at your `redirect_uri`. Codes are single-use and expire in 60 seconds.
 4. Exchange the code at `POST /oauth/token`.
@@ -113,9 +116,11 @@ This is the **intended** shape of a justtype integration: end-to-end-encrypted b
 default (`read:private` + `create`), with full lifecycle control (`delete`,
 `publish`). The user approves it on **one** consent screen, and — because you
 requested `read:private` — that same screen offers a one-tap **"allow full access to
-all my private slates (current + future)"** toggle. Ticking it records the user's
-intent; their client wraps the library to your installation's key on its next sync
-(immediately if a justtype tab is open), once you have registered a device (see §6).
+all my private slates (current + future)"** toggle. If you passed your installation's
+`device_public_key` on `/oauth/authorize` (see §6), ticking it wraps the user's whole
+library to your key **during consent**, so it's readable the instant you exchange your
+code. (Without a device key at authorize, it records intent and the library wraps on
+the user's next sync once you register one.)
 
 Add `slates:write` **only** if you also need to create/edit *plaintext, published*
 slates directly (e.g. a blog-style publishing tool). An E2E-first client does not
@@ -342,8 +347,33 @@ used is discarded. See §7 for the full flow, timing, and what the user experien
 
 ### Setup — register a per-installation key
 There is **no shared app key**. Each installation of your app generates its **own**
-RSA-2048 keypair on first run, keeps the private key locally (e.g. the OS keychain),
-and registers the public half **after** the OAuth token exchange:
+RSA-2048 keypair on first run and keeps the private key locally (e.g. the OS
+keychain). The matching public key (base64 SPKI) is what slates get wrapped to.
+
+> Do **not** embed a private key in a distributed binary. It is extractable, and a
+> shared key would let one copy decrypt every user's slates. Generate per install.
+
+**Register it at authorization time (recommended).** Add `device_public_key` (and
+optionally `device_name`) to your `/oauth/authorize` request:
+
+```
+GET /oauth/authorize?response_type=code&client_id=…&redirect_uri=…
+      &scope=identity%20slates:read:private%20slates:create
+      &code_challenge=…&code_challenge_method=S256&state=…
+      &device_public_key=<base64 SPKI>&device_name=MyApp%20on%20MacBook
+```
+
+justtype registers the install as part of the approval and binds it to the token you
+get from the code exchange — so private reads work **immediately**, with nothing
+extra to send. Crucially, if the user also ticks **"allow full access"** on the
+consent screen, their browser wraps their **entire** private library to this key
+**during consent**, before redirecting back — so the moment you exchange your code,
+`GET /api/oauth/shared` already returns the whole library. (If the user's browser is
+locked at that instant, wrapping is deferred to their next unlock; the grant intent is
+recorded either way.)
+
+**Or register after the token exchange** (e.g. you didn't pass it at authorize, or
+you're adding another install / rotating a key):
 
 ```
 POST /api/oauth/devices            Authorization: Bearer <access_token>
@@ -351,31 +381,19 @@ POST /api/oauth/devices            Authorization: Bearer <access_token>
   -> { "device_id": "dev_…", "key_scheme": "rsa-oaep-sha256" }
 ```
 
-This binds the device to the calling token, so every later private read/write
-resolves your installation automatically from the bearer token — **you send nothing
-extra** on reads. Until you register, private endpoints return `409 needs_device`.
-Re-registering the same public key is idempotent (same `device_id`); a reinstall
-that kept its key keeps its access. List or remove installs via `GET`/`DELETE
-/api/oauth/devices`.
+Either path binds the device to your token, so every later private read/write resolves
+your installation automatically — **you send nothing extra** on reads. Until a device
+is registered, private endpoints return `409 needs_device`. Re-registering the same
+public key is idempotent (same `device_id`); a reinstall that kept its key keeps its
+access. List or remove installs via `GET`/`DELETE /api/oauth/devices`.
 
-> Do **not** embed a private key in a distributed binary. It is extractable, and a
-> shared key would let one copy decrypt every user's slates. Generate per install.
-
-There are two ways the user grants you slates; you just read whatever ends up wrapped
-to **your** device key:
-- **On the consent screen (one tap):** because you requested `slates:read:private`,
-  the authorize screen shows an **"allow full access to all my private slates
-  (current + future)"** toggle. Ticking it records intent; the user's client wraps
-  their library to your installation's key on its next sync — immediately if a
-  justtype tab is open (a push nudges it the moment you register a device),
-  otherwise the next time they unlock justtype. So shared slates may take a moment to
-  appear after authorization; poll `GET /api/oauth/shared` (a slate you can see but
-  that isn't wrapped to you yet shows up as `pending_device` on `GET /slates/:n`).
-- **Later, anytime:** in **justtype account → connected apps → manage slate access**,
-  the user can allow-all, or pick specific slates, or revoke.
-
-Either way, call `GET /api/oauth/shared` to see which slates **this installation** can
-read, and `GET /api/oauth/slates/:n` to read each.
+The user can also manage sharing later in **justtype account → connected apps → manage
+slate access** (allow-all, pick specific slates, or revoke). However a slate becomes
+shared, call `GET /api/oauth/shared` to see what **this installation** can read and
+`GET /api/oauth/slates/:n` to read each. A slate shared with your app but not yet
+wrapped to this install (e.g. you registered via `POST /devices` after the fact, or a
+sibling install) appears as `pending_device: true` on `GET /slates/:n` and fills in on
+the user's next sync — poll, don't treat it as an error.
 
 ### Read (Node)
 ```js

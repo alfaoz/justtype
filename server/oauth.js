@@ -335,7 +335,8 @@ function mountOAuth(app, deps) {
   app.get('/oauth/authorize', (req, res) => {
     sweepExpiredCodes();
     const { response_type, client_id, redirect_uri, scope, state,
-            code_challenge, code_challenge_method } = req.query;
+            code_challenge, code_challenge_method,
+            device_public_key, device_name } = req.query;
 
     const client = getClient(client_id);
     // Errors we CANNOT safely redirect (untrusted client/redirect) -> render page.
@@ -368,23 +369,38 @@ function mountOAuth(app, deps) {
       if (!client.allowed_scopes.includes(s)) return redirectError('invalid_scope', `scope not allowed for this client: ${s}`);
     }
 
+    // An app MAY supply its installation public key here so the device is registered
+    // at consent — enabling consent-time wrapping (share-all wraps the library to this
+    // key before the redirect) and instant reads. Only meaningful with private read.
+    let devicePk = null;
+    if (device_public_key && requested.includes('slates:read:private')) {
+      if (!validPublicKey(device_public_key)) {
+        return redirectError('invalid_request', 'device_public_key must be base64 SPKI (RSA-OAEP)');
+      }
+      if (device_name != null && (typeof device_name !== 'string' || device_name.length > 120)) {
+        return redirectError('invalid_request', 'device_name too long (max 120)');
+      }
+      devicePk = device_public_key;
+    }
+
     const user = getSessionUser(req);
     if (!user) {
       return res.send(renderPage('sign in to justtype', loginPageBody(client.name)));
     }
 
-    // Signed, short-lived consent ticket binds this approval to the user + request.
+    // Signed, short-lived consent ticket binds this approval to the user + request
+    // (including the device key, so /decide can register it as part of the approval).
     const ticket = jwt.sign({
       purpose: 'oauth_consent', uid: user.id, client_id,
       redirect_uri, scope: requested.join(' '), state: state || '',
-      code_challenge, code_challenge_method: 'S256'
+      code_challenge, code_challenge_method: 'S256',
+      device_pk: devicePk, device_name: devicePk ? (device_name || null) : null
     }, JWT_SECRET, { expiresIn: CONSENT_TTL });
 
-    // Offer the inline "share all private slates" opt-in only when it would work:
-    // the app requested private-read access and has a public key to wrap to.
-    // Offer "share all" whenever private read is requested. Per-installation device
-    // keys are registered after authorization, so there is nothing to wrap to yet;
-    // ticking it records intent and the user's client wraps on its next sync.
+    // Offer the inline "share all private slates" opt-in whenever private read is
+    // requested. If the app supplied a device key, ticking it wraps the whole library
+    // to that key during consent; otherwise it records intent and the user's client
+    // wraps once the app registers an install.
     const grantable = requested.includes('slates:read:private');
     res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable)));
   });
@@ -416,36 +432,90 @@ function mountOAuth(app, deps) {
       return res.redirect(u.toString());
     }
 
-    // Inline "allow full access": the user ticked share-all on the consent screen.
-    // Under per-installation device keys there is nothing to wrap at consent time
-    // (the app registers its device key only after token exchange), so we simply
-    // record the share-all INTENT — a verified approval. The user's justtype client
-    // wraps every private slate to the app's device key(s) on its next sync (or
-    // immediately, nudged by the SSE 'reconcile' ping when the app registers). No
-    // crypto and no React detour here; the code is minted directly below.
-    const wantsShareAll = req.body.share_all === '1';
     const scopeList = (t.scope || '').split(' ').filter(Boolean);
-    if (wantsShareAll && scopeList.includes('slates:read:private')) {
+    const wantsPrivate = scopeList.includes('slates:read:private');
+
+    // If the app supplied its installation key at /authorize, register it now as part
+    // of this approval. The resulting device_id is stamped onto the authorization code
+    // (and thus the token), so the app's reads resolve this install immediately.
+    let deviceId = null;
+    if (t.device_pk && wantsPrivate) {
+      deviceId = upsertDevice(t.client_id, user.id, t.device_pk, 'rsa-oaep-sha256', t.device_name);
+    }
+
+    // Inline "allow full access": the user ticked share-all on the consent screen.
+    // Record the intent (a verified approval) regardless.
+    const wantsShareAll = req.body.share_all === '1' && wantsPrivate;
+    if (wantsShareAll) {
       db.prepare(`INSERT INTO oauth_share_all (client_id, user_id) VALUES (?, ?)
         ON CONFLICT(client_id, user_id) DO NOTHING`).run(t.client_id, user.id);
     }
 
+    // When share-all is ticked AND we have a device key to wrap to, detour through a
+    // same-origin React page that wraps every private slate to that device key in the
+    // browser (with the user's master key), then finalizes — minting the code last so
+    // its 60s lifetime is unaffected by how long wrapping takes. The app therefore
+    // sees its shared library the instant it exchanges the code. (If the browser is
+    // locked, that page skips wrapping and still finalizes; intent is recorded, so the
+    // library fills in on next unlock.) Without a device key we cannot wrap at consent,
+    // so we mint the code directly and the client wraps once the app registers.
+    if (wantsShareAll && deviceId) {
+      const finalizeToken = jwt.sign({
+        purpose: 'oauth_finalize', uid: user.id, client_id: t.client_id,
+        redirect_uri: t.redirect_uri, scope: t.scope, state: t.state || '',
+        code_challenge: t.code_challenge, code_challenge_method: t.code_challenge_method,
+        device_id: deviceId
+      }, JWT_SECRET, { expiresIn: CONSENT_TTL });
+      const client = getClient(t.client_id);
+      const share = new URL('/authorize/share', isProduction ? 'https://justtype.io' : 'http://localhost:3003');
+      share.searchParams.set('t', finalizeToken);
+      share.searchParams.set('client_id', t.client_id);
+      share.searchParams.set('app', client ? client.name : 'the app');
+      return res.redirect(share.toString());
+    }
+
     const code = randomToken(32);
     db.prepare(`INSERT INTO oauth_codes
-      (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, device_id, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       code, t.client_id, user.id, t.redirect_uri, t.scope,
-      t.code_challenge, t.code_challenge_method, now() + CODE_TTL
+      t.code_challenge, t.code_challenge_method, deviceId, now() + CODE_TTL
     );
 
     u.searchParams.set('code', code);
     res.redirect(u.toString());
   });
 
-  // (The former /oauth/authorize/finalize + /authorize/share React detour existed
-  // only to do client-side slate wrapping during consent. With per-installation
-  // device keys there is nothing to wrap at consent time, so share-all is recorded
-  // as intent in /decide and the code is minted there directly — no detour.)
+  // Finalize an authorization that detoured through the React share step (consent-time
+  // wrapping). Verify the signed finalize token + the session, mint the one-time code
+  // NOW (carrying the device_id so the token gets stamped), and return the app redirect
+  // URL for the browser to follow. Minting here keeps the 60s code lifetime independent
+  // of how long client-side wrapping took.
+  app.post('/oauth/authorize/finalize', publicCors, express.json(), (req, res) => {
+    const { t: token } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'invalid_request' });
+    let t;
+    try {
+      t = jwt.verify(token, JWT_SECRET);
+      if (t.purpose !== 'oauth_finalize') throw new Error('bad purpose');
+    } catch {
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'authorization expired; start again from the app' });
+    }
+    const user = getSessionUser(req);
+    if (!user || user.id !== t.uid) return res.status(401).json({ error: 'session_expired' });
+
+    const code = randomToken(32);
+    db.prepare(`INSERT INTO oauth_codes
+      (code, client_id, user_id, redirect_uri, scope, code_challenge, code_challenge_method, device_id, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      code, t.client_id, user.id, t.redirect_uri, t.scope,
+      t.code_challenge, t.code_challenge_method, t.device_id || null, now() + CODE_TTL
+    );
+    const u = new URL(t.redirect_uri);
+    if (t.state) u.searchParams.set('state', t.state);
+    u.searchParams.set('code', code);
+    res.json({ redirect: u.toString() });
+  });
 
   // --- token endpoint -----------------------------------------------------
 
@@ -494,11 +564,13 @@ function mountOAuth(app, deps) {
       }
 
       const { accessToken, refreshToken } = issueTokens(client_id, record.user_id, record.scope);
+      // Carry the device registered at consent (if any) onto the token row, so the
+      // app's reads resolve its installation immediately — no separate POST /devices.
       db.prepare(`INSERT INTO oauth_tokens
-        (access_token_hash, refresh_token_hash, client_id, user_id, scope, access_expires_at, refresh_expires_at, last_used_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        (access_token_hash, refresh_token_hash, client_id, user_id, scope, device_id, access_expires_at, refresh_expires_at, last_used_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         sha256(accessToken), sha256(refreshToken), client_id, record.user_id,
-        record.scope, now() + ACCESS_TTL, now() + REFRESH_TTL, now()
+        record.scope, record.device_id || null, now() + ACCESS_TTL, now() + REFRESH_TTL, now()
       );
 
       return res.json({
@@ -622,33 +694,43 @@ function mountOAuth(app, deps) {
 
   const mintDeviceId = () => 'dev_' + randomToken(16);
 
-  // Register (or re-assert) this installation's public key for the current grant.
-  app.post('/api/oauth/devices', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
-    const { public_key, key_scheme, name } = req.body || {};
-    if (!validPublicKey(public_key)) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'public_key (base64 SPKI RSA-OAEP) required' });
-    }
-    if (key_scheme && key_scheme !== 'rsa-oaep-sha256') {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'unsupported key_scheme (only rsa-oaep-sha256)' });
-    }
-    if (name != null && (typeof name !== 'string' || name.length > 120)) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'name too long (max 120)' });
-    }
-    const { userId, clientId, tokenId } = req.oauth;
-    // Idempotent on the key itself: re-registering the same key returns the same
-    // device_id and un-revokes it (a reinstall that kept its key keeps its access).
+  // Validate a device public key + optional scheme/name. Returns an error string or null.
+  const validateDeviceInput = (public_key, key_scheme, name) => {
+    if (!validPublicKey(public_key)) return 'public_key (base64 SPKI RSA-OAEP) required';
+    if (key_scheme && key_scheme !== 'rsa-oaep-sha256') return 'unsupported key_scheme (only rsa-oaep-sha256)';
+    if (name != null && (typeof name !== 'string' || name.length > 120)) return 'name too long (max 120)';
+    return null;
+  };
+
+  // Upsert an installation key for (clientId, userId), returning its device_id.
+  // Idempotent on the key itself: the same public key reuses its device_id and is
+  // un-revoked (a reinstall that kept its key keeps its access). Shared by the token
+  // endpoint (POST /api/oauth/devices) and the consent flow (device registered at
+  // /oauth/authorize, before any token exists).
+  const upsertDevice = (clientId, userId, public_key, key_scheme, name) => {
     const existing = db.prepare('SELECT device_id FROM oauth_device_keys WHERE client_id = ? AND user_id = ? AND public_key = ?')
       .get(clientId, userId, public_key);
-    let deviceId;
     if (existing) {
-      deviceId = existing.device_id;
       db.prepare('UPDATE oauth_device_keys SET revoked = 0, last_seen_at = ?, name = COALESCE(?, name) WHERE device_id = ?')
-        .run(now(), name || null, deviceId);
-    } else {
-      deviceId = mintDeviceId();
-      db.prepare(`INSERT INTO oauth_device_keys (device_id, client_id, user_id, public_key, key_scheme, name, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(deviceId, clientId, userId, public_key, key_scheme || 'rsa-oaep-sha256', name || null, now());
+        .run(now(), name || null, existing.device_id);
+      return existing.device_id;
     }
+    const deviceId = mintDeviceId();
+    db.prepare(`INSERT INTO oauth_device_keys (device_id, client_id, user_id, public_key, key_scheme, name, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(deviceId, clientId, userId, public_key, key_scheme || 'rsa-oaep-sha256', name || null, now());
+    return deviceId;
+  };
+
+  // Register (or re-assert) this installation's public key for the current grant.
+  // Apps can also register at authorization time by passing device_public_key on
+  // /oauth/authorize (see §6) — this endpoint is the post-token equivalent and the
+  // way to add further installs / rotate keys.
+  app.post('/api/oauth/devices', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
+    const { public_key, key_scheme, name } = req.body || {};
+    const bad = validateDeviceInput(public_key, key_scheme, name);
+    if (bad) return res.status(400).json({ error: 'invalid_request', error_description: bad });
+    const { userId, clientId, tokenId } = req.oauth;
+    const deviceId = upsertDevice(clientId, userId, public_key, key_scheme, name);
     // Bind this device to the access-token row that registered it.
     db.prepare('UPDATE oauth_tokens SET device_id = ? WHERE id = ?').run(deviceId, tokenId);
     // Nudge any open justtype tab to wrap existing shared slates to this new key

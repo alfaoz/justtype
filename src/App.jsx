@@ -10,6 +10,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { CliPair } from './components/CliPair';
 import { Cli } from './components/Cli';
 import { DevPortal } from './components/DevPortal';
+import { AuthorizeShare } from './components/AuthorizeShare';
 import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
 import { Status } from './components/Status';
@@ -302,6 +303,8 @@ export default function App() {
         setView('cli-pair');
       } else if (path === '/cli') {
         setView('cli-info');
+      } else if (path === '/authorize/share') {
+        setView('authorize-share');
       } else if (path === '/dev') {
         setView('dev');
       } else if (path === '/feedback') {
@@ -873,6 +876,11 @@ export default function App() {
   // CLI Info
   if (view === 'cli-info') {
     return <Cli />;
+  }
+
+  // Consent-time share-all wrapping handoff (from /oauth/authorize/decide)
+  if (view === 'authorize-share') {
+    return <AuthorizeShare />;
   }
 
   if (view === 'dev') {

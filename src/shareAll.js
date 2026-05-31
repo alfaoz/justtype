@@ -121,11 +121,27 @@ export async function reconcileDeviceWraps(userId, { onProgress } = {}) {
       const deviceKeys = g.device_keys || [];
       if (deviceKeys.length === 0) continue;
       const allIds = deviceKeys.map((d) => d.device_id);
-      // slates already shared but missing a wrap for at least one current device.
-      const gaps = (g.shared || []).filter((s) => {
-        const have = new Set(s.device_ids || []);
-        return allIds.some((id) => !have.has(id));
-      }).map((s) => s.slate_number);
+      const coverage = new Map((g.shared || []).map((s) => [s.slate_number, new Set(s.device_ids || [])]));
+
+      // Determine which slates this app SHOULD have. For a share-all app that is the
+      // whole private library (so brand-new intent with no grants yet still wraps);
+      // otherwise only the slates already shared per-slate.
+      let candidateNumbers;
+      if (app.share_all) {
+        const listRes = await fetch(`${API_URL}/slates`, { credentials: 'include' });
+        if (!listRes.ok) continue;
+        const list = await listRes.json();
+        candidateNumbers = (Array.isArray(list) ? list : []).filter((m) => !m.is_published).map((m) => m.slate_number);
+      } else {
+        candidateNumbers = [...coverage.keys()];
+      }
+
+      // A slate needs (re)wrapping if it lacks a wrap for any current device, or has
+      // no grant yet at all (not in coverage).
+      const gaps = candidateNumbers.filter((n) => {
+        const have = coverage.get(n);
+        return !have || allIds.some((id) => !have.has(id));
+      });
       if (gaps.length === 0) continue;
       onProgress?.({ client_id: app.client_id, total: gaps.length });
       const concurrency = concurrencyFor(gaps.length);
