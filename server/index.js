@@ -1477,13 +1477,17 @@ app.get('/api/account/keypair', authenticateToken, (req, res) => {
 // unwraps wrapped_key with its RSA private key, decrypts, then adopts.
 app.get('/api/account/slate-drops', authenticateToken, (req, res) => {
   const rows = db.prepare(`SELECT d.id, d.client_id, d.wrapped_key, d.enc_content, d.enc_title, d.created_at,
+      d.is_inplace, d.adopted_slate_number,
       c.name AS app_name
     FROM oauth_slate_drops d LEFT JOIN oauth_clients c ON c.client_id = d.client_id
-    WHERE d.user_id = ? ORDER BY d.created_at ASC`).all(req.user.id);
+    WHERE d.user_id = ? AND d.status = 'pending' ORDER BY d.created_at ASC`).all(req.user.id);
   res.json(rows.map(r => ({
     id: r.id, client_id: r.client_id, app_name: r.app_name || r.client_id,
     wrapped_key: r.wrapped_key, enc_content: r.enc_content, enc_title: r.enc_title || null,
-    created_at: r.created_at
+    created_at: r.created_at,
+    // For "create already-delegated" drops the slate already exists (numbered) and
+    // must be adopted IN PLACE rather than inserted. null for ordinary drops.
+    adopt_slate_number: r.is_inplace ? r.adopted_slate_number : null
   })));
 });
 
@@ -1501,9 +1505,12 @@ app.post('/api/account/slate-drops/:id/adopt', authenticateToken, async (req, re
     return res.status(400).json({ error: 'encryptedTitle required' });
   }
   try {
-    const drop = db.prepare('SELECT * FROM oauth_slate_drops WHERE id = ? AND user_id = ?')
+    const drop = db.prepare("SELECT * FROM oauth_slate_drops WHERE id = ? AND user_id = ? AND status = 'pending'")
       .get(req.params.id, req.user.id);
     if (!drop) return res.status(404).json({ error: 'drop not found' });
+    // In-place drops (create already-delegated) own a pre-allocated slate row and
+    // must go through /adopt-in-place, which updates that row instead of inserting.
+    if (drop.is_inplace) return res.status(409).json({ error: 'use /adopt-in-place for this drop' });
 
     let encryptedBuffer;
     try {
@@ -1529,7 +1536,13 @@ app.post('/api/account/slate-drops/:id/adopt', authenticateToken, async (req, re
         req.user.id, nextNumber, encryptedTitle, b2FileId,
         wordCount || 0, charCount || 0, sizeBytes || encryptedBuffer.length, drop.client_id
       );
-      db.prepare('DELETE FROM oauth_slate_drops WHERE id = ?').run(drop.id);
+      // Keep the drop as a thin receipt (status + resulting slate_number) so the
+      // creating app can poll the outcome via GET /api/oauth/drops[/:id]. Null the
+      // blobs — we no longer need (or want to retain) the app-wrapped ciphertext.
+      db.prepare(`UPDATE oauth_slate_drops
+        SET status = 'adopted', adopted_slate_number = ?, adopted_at = strftime('%s','now'),
+            wrapped_key = '', enc_content = '', enc_title = NULL
+        WHERE id = ?`).run(nextNumber, drop.id);
     });
     adopt();
 
@@ -1544,10 +1557,101 @@ app.post('/api/account/slate-drops/:id/adopt', authenticateToken, async (req, re
   }
 });
 
-// Discard a drop without adopting it (e.g. user rejects an app's note).
+// Adopt an IN-PLACE drop (created via POST /api/oauth/slates/create-delegated):
+// the slate row already exists with a number, in adoption_pending state. The
+// client has decrypted the drop, re-encrypted the content under the master key,
+// and wrapped the (unchanged) content key to the master key (owner_wrapped_key)
+// for two-way sync. We fill the existing slate's canonical content, clear the
+// pending flag, refresh the grant's owner-wrapped key, and mark the drop adopted.
+// The app's grant (wrapped_key to its key + enc_content) is preserved, so it keeps
+// delegated access seamlessly.
+app.post('/api/account/slate-drops/:id/adopt-in-place', authenticateToken, async (req, res) => {
+  const { encryptedContent, encryptedTitle, owner_wrapped_key, wordCount, charCount, sizeBytes } = req.body || {};
+  const maxSize = 5 * 1024 * 1024;
+  if (typeof encryptedContent !== 'string' || !encryptedContent.trim()) {
+    return res.status(400).json({ error: 'encryptedContent required' });
+  }
+  if (typeof encryptedTitle !== 'string' || !encryptedTitle.trim()) {
+    return res.status(400).json({ error: 'encryptedTitle required' });
+  }
+  if (typeof owner_wrapped_key !== 'string' || !owner_wrapped_key.trim()) {
+    return res.status(400).json({ error: 'owner_wrapped_key required' });
+  }
+  try {
+    const drop = db.prepare("SELECT * FROM oauth_slate_drops WHERE id = ? AND user_id = ? AND status = 'pending' AND is_inplace = 1")
+      .get(req.params.id, req.user.id);
+    if (!drop) return res.status(404).json({ error: 'drop not found' });
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ? AND adoption_pending = 1')
+      .get(drop.adopted_slate_number, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'pending slate not found' });
+
+    let encryptedBuffer;
+    try {
+      encryptedBuffer = decodeBase64Strict(encryptedContent, { maxBytes: maxSize });
+    } catch (err) {
+      if (err && err.code === 'BASE64_TOO_LARGE') return res.status(413).json({ error: 'Content too large (max 5 MB).' });
+      return res.status(400).json({ error: 'Invalid encrypted content' });
+    }
+
+    const storageCheck = checkStorageLimit(req.user.id, encryptedBuffer.length);
+    if (!storageCheck.allowed) return res.status(413).json({ error: storageCheck.error });
+
+    const slateId = `${req.user.id}-${Date.now()}`;
+    const b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
+
+    const adopt = db.transaction(() => {
+      db.prepare(`UPDATE slates SET b2_file_id = ?, encrypted_title = ?, word_count = ?, char_count = ?,
+          size_bytes = ?, adoption_pending = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE slate_number = ? AND user_id = ?`).run(
+        b2FileId, encryptedTitle, wordCount || 0, charCount || 0,
+        sizeBytes || encryptedBuffer.length, slate.slate_number, req.user.id
+      );
+      // Refresh the grant so the app's edits sync back: the content key is now also
+      // wrapped to the master key. Canonical is authoritative now → last_writer='owner'.
+      db.prepare(`UPDATE oauth_slate_grants SET owner_wrapped_key = ?, last_writer = 'owner', updated_at = strftime('%s','now')
+        WHERE client_id = ? AND user_id = ? AND slate_number = ?`).run(
+        owner_wrapped_key, drop.client_id, req.user.id, slate.slate_number
+      );
+      db.prepare(`UPDATE oauth_slate_drops
+        SET status = 'adopted', adopted_at = strftime('%s','now'), wrapped_key = '', enc_content = '', enc_title = NULL
+        WHERE id = ?`).run(drop.id);
+    });
+    adopt();
+
+    updateUserStorage(req.user.id);
+    res.status(201).json({ success: true, slate_number: slate.slate_number, source_app: drop.client_id });
+  } catch (error) {
+    console.error('adopt-in-place error:', error);
+    if (error instanceof B2Error) {
+      return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({ error: error.userMessage, code: error.code });
+    }
+    res.status(500).json({ error: 'Failed to adopt drop' });
+  }
+});
+
+// Discard a drop without adopting it (e.g. user rejects an app's note). Soft-mark
+// it as discarded (null the blobs) instead of hard-deleting, so the creating app
+// can observe the outcome via GET /api/oauth/drops[/:id]. For an in-place
+// (create-already-delegated) drop, also remove the pending slate row + its grant,
+// since the user declined the note entirely.
 app.delete('/api/account/slate-drops/:id', authenticateToken, (req, res) => {
-  const r = db.prepare('DELETE FROM oauth_slate_drops WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
-  res.json({ success: true, removed: r.changes });
+  const drop = db.prepare("SELECT * FROM oauth_slate_drops WHERE id = ? AND user_id = ? AND status = 'pending'")
+    .get(req.params.id, req.user.id);
+  if (!drop) return res.json({ success: true, removed: 0 });
+  const discard = db.transaction(() => {
+    if (drop.is_inplace && drop.adopted_slate_number != null) {
+      db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?')
+        .run(req.user.id, drop.adopted_slate_number);
+      db.prepare('DELETE FROM slates WHERE user_id = ? AND slate_number = ? AND adoption_pending = 1')
+        .run(req.user.id, drop.adopted_slate_number);
+    }
+    db.prepare(`UPDATE oauth_slate_drops
+      SET status = 'discarded', discarded_at = strftime('%s','now'),
+          wrapped_key = '', enc_content = '', enc_title = NULL
+      WHERE id = ?`).run(drop.id);
+  });
+  discard();
+  res.json({ success: true, removed: 1 });
 });
 
 // SSE stream: clients with an open tab get an instant "drops" ping when an app
@@ -2443,7 +2547,7 @@ app.get('/api/slates', authenticateToken, (req, res) => {
     const slates = db.prepare(`
       SELECT s.id, s.slate_number, s.title, s.encrypted_title, s.encrypted_tags, s.pinned_at, s.is_published,
              s.share_id, s.word_count, s.char_count, s.created_at, s.updated_at, s.published_at,
-             s.source_app, c.name AS source_app_name
+             s.source_app, s.adoption_pending, c.name AS source_app_name
       FROM slates s
       LEFT JOIN oauth_clients c ON c.client_id = s.source_app
       WHERE s.user_id = ?
@@ -2454,6 +2558,9 @@ app.get('/api/slates', authenticateToken, (req, res) => {
       const base = (!slate.is_published && slate.encrypted_title) ? { ...slate, title: null } : slate;
       // Friendly provenance label for app-created (adopted) slates.
       base.source_app_name = slate.source_app ? (slate.source_app_name || slate.source_app) : null;
+      // adoption_pending: an app created this slate already-delegated; it has no
+      // canonical (master-key) content until the user's client adopts it in place.
+      base.adoption_pending = !!slate.adoption_pending;
       return base;
     });
 
@@ -2529,6 +2636,13 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // Pending (create-already-delegated) slate: no canonical content exists yet.
+    // The client must adopt it in place (decrypt the linked drop, re-key to the
+    // master key) before it can be opened. Return a flag instead of erroring on B2.
+    if (slate.adoption_pending) {
+      return res.json({ ...slate, adoption_pending: true, content: '', pending: true });
     }
 
     if (req.e2e) {
@@ -5427,9 +5541,33 @@ const serveIndexHtml = (res) => {
   res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 };
 
+// API surfaces must always answer JSON, never the SPA's index.html. Any unmatched
+// /api or /oauth request (wrong path or method) gets a JSON 404 here, before the
+// SPA catch-all below would otherwise serve HTML a programmatic client can't parse.
+app.all(/^\/(api|oauth)\b/, (req, res) => {
+  res.status(404).json({ error: 'not_found', error_description: 'no such endpoint' });
+});
+
 // Serve index.html for all non-API routes (SPA routing)
 app.get('*', (req, res) => {
   serveIndexHtml(res);
+});
+
+// Terminal JSON error handler: keeps every failure on /api + /oauth in the
+// { error, error_description } shape (e.g. malformed JSON bodies, oversized
+// payloads), instead of Express's default HTML error page.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const isApi = /^\/(api|oauth)\b/.test(req.path || '');
+  if (!isApi) return next(err);
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError)) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'malformed JSON body' });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'payload_too_large', error_description: 'request body too large' });
+  }
+  console.error('unhandled API error:', err);
+  res.status(err?.status || 500).json({ error: 'server_error' });
 });
 
 // ============ PERIODIC CLEANUP ============

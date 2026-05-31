@@ -56,6 +56,24 @@ function mountOAuth(app, deps) {
     String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  // Normalize any stored timestamp to ISO8601 UTC ("…Z"), so every timestamp the
+  // API returns is the same parseable format. Inputs vary by table: SQLite
+  // CURRENT_TIMESTAMP ("2026-05-24 09:55:16", UTC) on slates; unix seconds
+  // (strftime('%s')) on grants/drops. Returns null for null/empty/unparseable.
+  const toIso = (v) => {
+    if (v == null || v === '') return null;
+    // Unix seconds (number or all-digit string).
+    if (typeof v === 'number' || /^\d+$/.test(String(v))) {
+      const d = new Date(Number(v) * 1000);
+      return isNaN(d) ? null : d.toISOString();
+    }
+    const s = String(v);
+    // SQLite datetime "YYYY-MM-DD HH:MM:SS" is UTC but lacks the T/Z markers.
+    const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+    const d = new Date(normalized);
+    return isNaN(d) ? null : d.toISOString();
+  };
+
   // Permissive CORS for public OAuth endpoints so browser-based SPA clients work.
   // OAuth uses the Authorization header (not cookies), so reflecting the origin
   // without credentials is safe here.
@@ -631,8 +649,70 @@ function mountOAuth(app, deps) {
       title: s.is_published ? s.title : null,        // private titles are E2E-encrypted
       title_encrypted: !s.is_published && !!s.encrypted_title,
       word_count: s.word_count, char_count: s.char_count,
-      created_at: s.created_at, updated_at: s.updated_at, published_at: s.published_at
+      created_at: toIso(s.created_at), updated_at: toIso(s.updated_at), published_at: toIso(s.published_at)
     })));
+  });
+
+  // Map a slate row to the meta shape used by both /slates and /sync.
+  const metaRow = (s) => ({
+    slate_number: s.slate_number,
+    is_published: !!s.is_published,
+    share_id: s.share_id || null,
+    title: s.is_published ? s.title : null,
+    title_encrypted: !s.is_published && !!s.encrypted_title,
+    word_count: s.word_count, char_count: s.char_count,
+    created_at: toIso(s.created_at), updated_at: toIso(s.updated_at), published_at: toIso(s.published_at)
+  });
+
+  // Incremental sync: return slates changed since a cursor, plus tombstones for
+  // deletions, so a client propagates edits + deletes without re-listing every
+  // slate. ?since=<ISO8601> is a cursor previously returned as `cursor`; omit it
+  // for a full baseline (all current slates, no deletes). Results are capped and
+  // paged via `has_more` + the advancing `cursor`. NOTE: timestamps are
+  // second-resolution and the cursor is exclusive (>) — a client should treat
+  // `changed` as upserts (idempotent) and may briefly re-see a boundary row.
+  const SYNC_CAP = 500;
+  app.get('/api/oauth/sync', publicCors, authenticateOAuth('slates:read:meta'), (req, res) => {
+    const { since } = req.query;
+    if (since != null && isNaN(new Date(since))) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'since must be an ISO8601 timestamp' });
+    }
+    try {
+      const cols = `slate_number, is_published, share_id, word_count, char_count,
+        created_at, updated_at, published_at, title, encrypted_title`;
+      const changedRows = since
+        ? db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND updated_at > datetime(?)
+            ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, since, SYNC_CAP)
+        : db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ?
+            ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, SYNC_CAP);
+      const has_more = changedRows.length === SYNC_CAP;
+
+      // A full baseline (no cursor) has no prior client state, so there is nothing
+      // to reconcile deletes against — only incremental calls report tombstones.
+      const delRows = since
+        ? db.prepare(`SELECT slate_number, deleted_at FROM slate_tombstones
+            WHERE user_id = ? AND deleted_at > CAST(strftime('%s', ?) AS INTEGER)
+            ORDER BY deleted_at ASC LIMIT ?`).all(req.oauth.userId, since, SYNC_CAP)
+        : [];
+
+      // Cursor = the latest timestamp handed out, so the next call resumes after
+      // it. Monotonic across both streams (ISO strings sort chronologically).
+      const stamps = [];
+      if (changedRows.length) stamps.push(toIso(changedRows[changedRows.length - 1].updated_at));
+      if (delRows.length) stamps.push(toIso(delRows[delRows.length - 1].deleted_at));
+      if (since) stamps.push(new Date(since).toISOString());
+      const cursor = stamps.filter(Boolean).sort().pop() || new Date().toISOString();
+
+      res.json({
+        changed: changedRows.map(metaRow),
+        deleted: delRows.map(d => ({ slate_number: d.slate_number, deleted_at: toIso(d.deleted_at) })),
+        cursor,
+        has_more
+      });
+    } catch (e) {
+      console.error('oauth sync:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
   });
 
   // Published slates with full plaintext (already public content).
@@ -650,7 +730,7 @@ function mountOAuth(app, deps) {
         out.push({
           slate_number: s.slate_number, title: s.title, share_id: s.share_id,
           content, word_count: s.word_count, char_count: s.char_count,
-          created_at: s.created_at, updated_at: s.updated_at, published_at: s.published_at
+          created_at: toIso(s.created_at), updated_at: toIso(s.updated_at), published_at: toIso(s.published_at)
         });
       }
       res.json(out);
@@ -672,6 +752,11 @@ function mountOAuth(app, deps) {
   // updateUserStorage) passed into mountOAuth.
 
   const MAX_CONTENT = 5 * 1024 * 1024; // 5 MB
+
+  // Placeholder b2_file_id for a create-already-delegated slate that has no
+  // canonical (master-key) content yet. Replaced with a real B2 id when the
+  // user's client adopts it in place. b2_file_id is NOT NULL, hence a sentinel.
+  const PENDING_B2_SENTINEL = 'pending-adoption';
 
   // A very light size guard used consistently across write paths.
   const guardSize = (contentStr, res) => {
@@ -778,9 +863,80 @@ function mountOAuth(app, deps) {
       // unlock — no notifications. Best-effort.
       if (dropHub) { try { await dropHub.notifyDrop(db, req.oauth.userId); } catch {} }
 
-      res.status(201).json({ success: true, drop_id: info.lastInsertRowid, status: 'pending_adoption' });
+      res.status(201).json({ success: true, drop_id: Number(info.lastInsertRowid), status: 'pending_adoption' });
     } catch (e) {
       console.error('oauth slate drop:', e);
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // POST /api/oauth/slates/create-delegated — create a NEW private slate that is
+  // ALREADY editable by the calling app, without waiting for the user to adopt it.
+  // The app generates one fresh content key and wraps it to BOTH the user's public
+  // key (wrapped_key_user — so the user can adopt it in place later) and its own
+  // public key (wrapped_key_app — so it can read/edit now via the delegated
+  // endpoints). A real, numbered slate is created in adoption_pending state; the
+  // user's client re-keys it to their master key on next open. Requires BOTH
+  // slates:create and slates:read:private, and a registered app public key.
+  app.post('/api/oauth/slates/create-delegated', publicCors, authenticateOAuth('slates:create'), (req, res) => {
+    if (!scopeSatisfied(req.oauth.scopes, 'slates:read:private')) {
+      return res.status(403).json({ error: 'insufficient_scope', error_description: 'requires scope: slates:read:private' });
+    }
+    const { wrapped_key_user, wrapped_key_app, enc_content, enc_title, word_count, char_count } = req.body || {};
+    for (const [k, v] of [['wrapped_key_user', wrapped_key_user], ['wrapped_key_app', wrapped_key_app], ['enc_content', enc_content]]) {
+      if (!v || typeof v !== 'string') {
+        return res.status(400).json({ error: 'invalid_request', error_description: `${k} (base64 string) required` });
+      }
+    }
+    for (const v of [wrapped_key_user, wrapped_key_app, enc_content, enc_title]) {
+      if (v != null && (typeof v !== 'string' || v.length > MAX_GRANT_BLOB)) {
+        return res.status(413).json({ error: 'blob too large' });
+      }
+    }
+    try {
+      const client = db.prepare('SELECT public_key FROM oauth_clients WHERE client_id = ?').get(req.oauth.clientId);
+      if (!client || !client.public_key) {
+        return res.status(400).json({ error: 'client_has_no_public_key', error_description: 'register a public key for your app to receive delegated access' });
+      }
+      const user = db.prepare('SELECT public_key FROM users WHERE id = ?').get(req.oauth.userId);
+      if (!user || !user.public_key) {
+        return res.status(409).json({ error: 'keypair_unavailable', error_description: 'the user has not published an encryption key yet; retry after they next open justtype' });
+      }
+
+      const wc = Number.isFinite(word_count) ? word_count : 0;
+      const cc = Number.isFinite(char_count) ? char_count : 0;
+      let slateNumber, dropId;
+      db.transaction(() => {
+        slateNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.oauth.userId).next;
+        // Pending E2E slate: no canonical (master-key) content yet — b2_file_id is a
+        // sentinel until the user's client adopts it in place.
+        db.prepare(`INSERT INTO slates
+          (user_id, slate_number, title, b2_file_id, word_count, char_count, size_bytes, encryption_version, source_app, adoption_pending)
+          VALUES (?, ?, '', ?, ?, ?, 0, 1, ?, 1)`).run(
+          req.oauth.userId, slateNumber, PENDING_B2_SENTINEL, wc, cc, req.oauth.clientId
+        );
+        // Linked drop carries the user-wrappable payload used to adopt in place.
+        const info = db.prepare(`INSERT INTO oauth_slate_drops
+          (client_id, user_id, wrapped_key, enc_content, enc_title, status, is_inplace, adopted_slate_number)
+          VALUES (?, ?, ?, ?, ?, 'pending', 1, ?)`).run(
+          req.oauth.clientId, req.oauth.userId, wrapped_key_user, enc_content, enc_title || null, slateNumber
+        );
+        dropId = Number(info.lastInsertRowid);
+        // Grant gives the app immediate delegated read/write (wrapped to the app key).
+        // owner_wrapped_key is filled when the user adopts (re-keys) the slate.
+        db.prepare(`INSERT INTO oauth_slate_grants
+          (client_id, user_id, slate_number, wrapped_key, owner_wrapped_key, enc_content, enc_title, last_writer, created_at, updated_at)
+          VALUES (?, ?, ?, ?, NULL, ?, ?, 'app', strftime('%s','now'), strftime('%s','now'))`).run(
+          req.oauth.clientId, req.oauth.userId, slateNumber, wrapped_key_app, enc_content, enc_title || null
+        );
+      })();
+
+      // Nudge any open client to adopt now (SSE/push). Best-effort, fire-and-forget.
+      if (dropHub) { try { Promise.resolve(dropHub.notifyDrop(db, req.oauth.userId)).catch(() => {}); } catch {} }
+
+      res.status(201).json({ success: true, slate_number: slateNumber, drop_id: dropId, status: 'pending_adoption' });
+    } catch (e) {
+      console.error('oauth create-delegated:', e);
       res.status(500).json({ error: 'server_error' });
     }
   });
@@ -799,12 +955,15 @@ function mountOAuth(app, deps) {
   app.get('/api/oauth/dropbox', publicCors, authenticateOAuth('slates:create'), (req, res) => {
     const { userId, clientId } = req.oauth;
     const user = db.prepare('SELECT public_key FROM users WHERE id = ?').get(userId);
+    // Counts come from the drop rows' status column (drops are now kept as thin
+    // receipts after adopt/discard, not deleted), so pending/delivered stay
+    // consistent with GET /api/oauth/drops.
     const pendingRow = db.prepare(
-      'SELECT COUNT(*) AS n, MAX(created_at) AS last FROM oauth_slate_drops WHERE client_id = ? AND user_id = ?'
+      "SELECT COUNT(*) AS n, MAX(created_at) AS last FROM oauth_slate_drops WHERE client_id = ? AND user_id = ? AND status = 'pending'"
     ).get(clientId, userId);
     const deliveredRow = db.prepare(
-      'SELECT COUNT(*) AS n, MAX(updated_at) AS last FROM slates WHERE user_id = ? AND source_app = ?'
-    ).get(userId, clientId);
+      "SELECT COUNT(*) AS n, MAX(adopted_at) AS last FROM oauth_slate_drops WHERE client_id = ? AND user_id = ? AND status = 'adopted'"
+    ).get(clientId, userId);
     const pending = pendingRow?.n || 0;
     res.json({
       keypair_ready: !!(user && user.public_key),
@@ -812,10 +971,46 @@ function mountOAuth(app, deps) {
       key_scheme: 'rsa-oaep-sha256',
       pending,
       delivered: deliveredRow?.n || 0,
-      last_drop_at: pendingRow?.last || null,
-      last_delivered_at: deliveredRow?.last || null,
+      last_drop_at: toIso(pendingRow?.last),
+      last_delivered_at: toIso(deliveredRow?.last),
       synced: pending === 0
     });
+  });
+
+  // Per-drop status, so an app learns when a note it pushed went live (and the
+  // resulting slate_number) instead of content-hash guessing. Scoped to this app
+  // + user; reveals no slate content. A drop row survives adoption/discard as a
+  // thin receipt (its blobs are nulled), so this stays answerable afterwards.
+  const dropReceipt = (r) => ({
+    drop_id: r.id,
+    status: r.status || 'pending',
+    slate_number: r.adopted_slate_number ?? null,
+    created_at: toIso(r.created_at),
+    adopted_at: toIso(r.adopted_at),
+    discarded_at: toIso(r.discarded_at)
+  });
+
+  app.get('/api/oauth/drops/:id', publicCors, authenticateOAuth('slates:create'), (req, res) => {
+    const row = db.prepare(
+      'SELECT id, status, adopted_slate_number, created_at, adopted_at, discarded_at FROM oauth_slate_drops WHERE id = ? AND client_id = ? AND user_id = ?'
+    ).get(req.params.id, req.oauth.clientId, req.oauth.userId);
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    res.json(dropReceipt(row));
+  });
+
+  // List this app's drops for the user, with status + resulting slate_number.
+  // Optional ?status=pending|adopted|discarded filter. No slate content.
+  app.get('/api/oauth/drops', publicCors, authenticateOAuth('slates:create'), (req, res) => {
+    const { status } = req.query;
+    if (status && !['pending', 'adopted', 'discarded'].includes(status)) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'status must be pending, adopted, or discarded' });
+    }
+    const rows = status
+      ? db.prepare("SELECT id, status, adopted_slate_number, created_at, adopted_at, discarded_at FROM oauth_slate_drops WHERE client_id = ? AND user_id = ? AND status = ? ORDER BY created_at DESC")
+          .all(req.oauth.clientId, req.oauth.userId, status)
+      : db.prepare("SELECT id, status, adopted_slate_number, created_at, adopted_at, discarded_at FROM oauth_slate_drops WHERE client_id = ? AND user_id = ? ORDER BY created_at DESC")
+          .all(req.oauth.clientId, req.oauth.userId);
+    res.json(rows.map(dropReceipt));
   });
 
   // PUT /api/oauth/slates/:n — update the content/title of a published slate.
@@ -912,6 +1107,18 @@ function mountOAuth(app, deps) {
           .run(word_count ?? null, char_count ?? null, req.params.n, req.oauth.userId);
       }
 
+      // If the slate is still pending adoption (created via create-delegated), mirror
+      // the new ciphertext into the linked drop so the user adopts the freshest
+      // content. The content key is unchanged, so the user's wrapped_key (to their
+      // key) still decrypts the new enc_content — only the AES blob changes.
+      const slateRow = db.prepare('SELECT adoption_pending FROM slates WHERE slate_number = ? AND user_id = ?')
+        .get(req.params.n, req.oauth.userId);
+      if (slateRow && slateRow.adoption_pending) {
+        db.prepare(`UPDATE oauth_slate_drops SET enc_content = ?, enc_title = ?
+          WHERE client_id = ? AND user_id = ? AND adopted_slate_number = ? AND is_inplace = 1 AND status = 'pending'`).run(
+          enc_content, enc_title || null, req.oauth.clientId, req.oauth.userId, req.params.n);
+      }
+
       res.json({ success: true });
     } catch (e) {
       console.error('oauth patch delegated:', e);
@@ -995,18 +1202,83 @@ function mountOAuth(app, deps) {
   // List the private slates the user has delegated to THIS app (readable ones).
   app.get('/api/oauth/shared', publicCors, authenticateOAuth('slates:read:private'), (req, res) => {
     const rows = db.prepare(`SELECT g.slate_number, g.updated_at AS shared_at,
+        g.wrapped_key, g.enc_title,
         s.word_count, s.char_count, s.created_at, s.updated_at
       FROM oauth_slate_grants g JOIN slates s
         ON s.slate_number = g.slate_number AND s.user_id = g.user_id
       WHERE g.client_id = ? AND g.user_id = ? ORDER BY g.updated_at DESC`)
       .all(req.oauth.clientId, req.oauth.userId);
+    // wrapped_key + enc_title are included so a client can render the list with
+    // real titles (unwrap the content key once, decrypt each enc_title) without
+    // fetching every slate one by one. enc_content is omitted — use POST
+    // /api/oauth/slates/batch for bodies.
     res.json(rows.map(r => ({
       slate_number: r.slate_number,
-      shared_at: r.shared_at,
+      shared_at: toIso(r.shared_at),
+      key_scheme: 'rsa-oaep-sha256',
+      content_scheme: 'aes-256-gcm',
+      wrapped_key: r.wrapped_key,
+      enc_title: r.enc_title || null,
       word_count: r.word_count, char_count: r.char_count,
-      created_at: r.created_at, updated_at: r.updated_at
+      created_at: toIso(r.created_at), updated_at: toIso(r.updated_at)
     })));
   });
+
+  // Shared read-view builder for one slate, used by both GET /slates/:n and the
+  // batch read. Returns the response object (does not send). `grant` is the
+  // calling app's delegation row for this slate (or null). includeEncrypted=false
+  // omits the (potentially large) not-shared ciphertext blob — batch reads skip it
+  // since an app cannot decrypt it anyway; the single GET keeps it for parity.
+  const buildSlateView = async (slate, grant, { includeEncrypted = false } = {}) => {
+    const base = {
+      slate_number: slate.slate_number,
+      is_published: !!slate.is_published,
+      share_id: slate.share_id || null,
+      title: slate.is_published ? slate.title : null,
+      word_count: slate.word_count, char_count: slate.char_count,
+      created_at: toIso(slate.created_at), updated_at: toIso(slate.updated_at)
+    };
+
+    if (grant) {
+      // Delegated: the user re-wrapped this slate to your public key.
+      // enc_content decrypts (with the unwrapped content key) to JSON { content, uploadedAt }.
+      // enc_title decrypts to the raw title string (null if untitled).
+      return {
+        ...base,
+        delegated: true,
+        key_scheme: 'rsa-oaep-sha256',
+        content_scheme: 'aes-256-gcm',
+        wrapped_key: grant.wrapped_key,
+        enc_content: grant.enc_content,
+        enc_title: grant.enc_title || null,
+        shared_at: toIso(grant.updated_at)
+      };
+    }
+
+    // Published slates are world-public plaintext anyway — return readable
+    // content + title here too, so reads are uniform: one shape, content comes
+    // back for anything the app may see (no branching on slate type).
+    if (slate.is_published) {
+      let content = null;
+      try { content = await b2Storage.getSlate(slate.b2_public_file_id || slate.b2_file_id, null); } catch { content = null; }
+      return { ...base, delegated: false, published: true, title: slate.title, content };
+    }
+
+    // Private + not delegated: owner-encrypted, unreadable by the app.
+    const out = {
+      ...base,
+      delegated: false,
+      title_encrypted: !slate.is_published && !!slate.encrypted_title,
+      encrypted: true,
+      note: 'this slate has not been shared with your app. ask the user to delegate it; otherwise it stays end-to-end encrypted and unreadable.'
+    };
+    if (includeEncrypted) {
+      let raw = null;
+      try { const buf = await b2Storage.downloadRawFile(slate.b2_file_id); raw = buf.toString('base64'); } catch { raw = null; }
+      out.encrypted_content = raw;
+    }
+    return out;
+  };
 
   // Single private slate. If the user delegated this slate to the calling app,
   // return the app-readable re-wrapped blob (decryptable with the app's private
@@ -1017,61 +1289,56 @@ function mountOAuth(app, deps) {
       const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?')
         .get(req.params.n, req.oauth.userId);
       if (!slate) return res.status(404).json({ error: 'not_found' });
-
       const grant = db.prepare(
         'SELECT wrapped_key, enc_content, enc_title, updated_at FROM oauth_slate_grants WHERE client_id = ? AND user_id = ? AND slate_number = ?'
       ).get(req.oauth.clientId, req.oauth.userId, slate.slate_number);
-
-      const base = {
-        slate_number: slate.slate_number,
-        is_published: !!slate.is_published,
-        share_id: slate.share_id || null,
-        title: slate.is_published ? slate.title : null,
-        word_count: slate.word_count, char_count: slate.char_count,
-        created_at: slate.created_at, updated_at: slate.updated_at
-      };
-
-      if (grant) {
-        // Delegated: the user re-wrapped this slate to your public key.
-        // enc_content decrypts (with the unwrapped content key) to JSON { content, uploadedAt }.
-        // enc_title decrypts to the raw title string (null if untitled).
-        return res.json({
-          ...base,
-          delegated: true,
-          key_scheme: 'rsa-oaep-sha256',
-          content_scheme: 'aes-256-gcm',
-          wrapped_key: grant.wrapped_key,
-          enc_content: grant.enc_content,
-          enc_title: grant.enc_title || null,
-          shared_at: grant.updated_at
-        });
-      }
-
-      // Published slates are world-public plaintext anyway — return readable
-      // content + title here too, so reads are uniform: one endpoint, content
-      // comes back for anything the app may see (no branching on slate type).
-      if (slate.is_published) {
-        let content = null;
-        try { content = await b2Storage.getSlate(slate.b2_public_file_id || slate.b2_file_id, null); } catch { content = null; }
-        return res.json({ ...base, delegated: false, published: true, title: slate.title, content });
-      }
-
-      // Private + not delegated: owner-encrypted ciphertext only (unreadable by the app).
-      let raw = null;
-      try {
-        const buf = await b2Storage.downloadRawFile(slate.b2_file_id);
-        raw = buf.toString('base64');
-      } catch { raw = null; }
-
-      res.json({
-        ...base,
-        delegated: false,
-        title_encrypted: !slate.is_published && !!slate.encrypted_title,
-        encrypted: true,
-        encrypted_content: raw,
-        note: 'this slate has not been shared with your app. ask the user to delegate it; otherwise it stays end-to-end encrypted and unreadable.'
-      });
+      res.json(await buildSlateView(slate, grant, { includeEncrypted: true }));
     } catch (e) {
+      res.status(500).json({ error: 'server_error' });
+    }
+  });
+
+  // Batch read: resolve many slates in one request so clients stop firing N
+  // sequential GETs. Same per-slate shape as GET /slates/:n (delegated blob /
+  // published plaintext / not-shared flag), minus the big ciphertext blob.
+  // Published bodies are fetched from B2 with bounded concurrency.
+  app.post('/api/oauth/slates/batch', publicCors, authenticateOAuth('slates:read:private'), async (req, res) => {
+    const nums = req.body?.slate_numbers;
+    if (!Array.isArray(nums) || nums.length === 0) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'slate_numbers (non-empty array) required' });
+    }
+    if (nums.length > 100) {
+      return res.status(413).json({ error: 'too_many', error_description: 'max 100 slate_numbers per batch' });
+    }
+    try {
+      const wanted = [...new Set(nums.map(Number).filter(n => Number.isInteger(n)))];
+      if (wanted.length === 0) return res.json({ slates: [], missing: [] });
+      const slates = db.prepare(
+        `SELECT * FROM slates WHERE user_id = ? AND slate_number IN (${wanted.map(() => '?').join(',')})`
+      ).all(req.oauth.userId, ...wanted);
+      const found = new Map(slates.map(s => [s.slate_number, s]));
+      const missing = wanted.filter(n => !found.has(n));
+      const grants = db.prepare(
+        `SELECT slate_number, wrapped_key, enc_content, enc_title, updated_at FROM oauth_slate_grants
+         WHERE client_id = ? AND user_id = ? AND slate_number IN (${wanted.map(() => '?').join(',')})`
+      ).all(req.oauth.clientId, req.oauth.userId, ...wanted);
+      const grantBy = new Map(grants.map(g => [g.slate_number, g]));
+
+      // Bounded concurrency so a big batch of published slates doesn't open 100
+      // simultaneous B2 reads. Mirrors the share-all concurrency approach.
+      const out = [];
+      const queue = [...slates];
+      const worker = async () => {
+        while (queue.length) {
+          const slate = queue.shift();
+          out.push(await buildSlateView(slate, grantBy.get(slate.slate_number) || null, { includeEncrypted: false }));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(10, slates.length) }, worker));
+      out.sort((a, b) => a.slate_number - b.slate_number);
+      res.json({ slates: out, missing });
+    } catch (e) {
+      console.error('oauth batch read:', e);
       res.status(500).json({ error: 'server_error' });
     }
   });
@@ -1319,6 +1586,8 @@ function mountOAuth(app, deps) {
       const t = now();
       db.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').run(t);
       db.prepare('DELETE FROM oauth_tokens WHERE refresh_expires_at < ? AND access_expires_at < ?').run(t, t);
+      // Tombstone retention: ~90 days. Clients offline longer must full re-list.
+      db.prepare('DELETE FROM slate_tombstones WHERE deleted_at < ?').run(t - 90 * 24 * 3600);
     } catch {}
   }, 60 * 60 * 1000).unref?.();
 

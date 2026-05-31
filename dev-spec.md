@@ -32,9 +32,10 @@ slates, and opaque ciphertext for private slates not shared with you.
 Apps can also **create** brand-new private slates for a user without ever holding
 the user's master key — the "drop box" (see §7). Each user publishes an RSA-OAEP
 public key; an app encrypts a new slate to it and drops it in. The user's client
-decrypts it on next unlock and adopts it as a normal private slate. This is the
-**only** way an app authors end-to-end-encrypted content; `slates:write` only
-produces plaintext slates.
+decrypts it on next unlock and adopts it as a normal private slate. A richer variant,
+`create-delegated` (§9), creates the slate **already editable by the app** — useful
+when you need to keep editing what you just created. Both author end-to-end-encrypted
+content; `slates:write`, by contrast, only ever produces plaintext slates.
 
 ---
 
@@ -131,17 +132,24 @@ Request `email` only if you actually need the address — fewer scopes, more tru
 | GET | `/api/oauth/userinfo` | identity | `{ id, username, email?, email_verified?, public_key? }` (public_key present with `slates:create`) |
 | GET | `/api/oauth/users/me/public-key` | slates:create | the user's RSA-OAEP public key to wrap a drop to (`null` if not generated yet) |
 | POST | `/api/oauth/slates/drop` | slates:create | create a new private (E2E) slate for the user (§7) |
+| POST | `/api/oauth/slates/create-delegated` | slates:create + slates:read:private | create a new private slate **already editable by your app** (§9) |
 | GET | `/api/oauth/dropbox` | slates:create | drop-box sync status: keypair readiness + pending/delivered counts (§7) |
+| GET | `/api/oauth/drops` | slates:create | list your drops + adoption status; `?status=pending\|adopted\|discarded` (§7) |
+| GET | `/api/oauth/drops/:id` | slates:create | one drop's status + the resulting `slate_number` once adopted (§7) |
 | GET | `/api/oauth/slates` | slates:read:meta | slate list + counts |
+| GET | `/api/oauth/sync` | slates:read:meta | incremental sync: `?since=<ISO>` → changed + deleted (tombstones) + cursor (§8) |
 | GET | `/api/oauth/slates/published` | slates:read:public | all published slates with full text |
 | GET | `/api/oauth/slates/:n` | slates:read:private | published→plaintext, delegated→decryptable, else ciphertext |
-| GET | `/api/oauth/shared` | slates:read:private | slates delegated to your app |
+| POST | `/api/oauth/slates/batch` | slates:read:private | read many slates at once: `{ slate_numbers }` (max 100) |
+| GET | `/api/oauth/shared` | slates:read:private | slates delegated to your app, **with `wrapped_key` + `enc_title`** (render titles without N fetches) |
 | POST | `/api/oauth/slates` | slates:write | create a slate (published by default) |
 | PUT | `/api/oauth/slates/:n` | slates:write | update a plaintext slate |
 | PATCH | `/api/oauth/slates/:n/delegated` | slates:read:private | write back a delegated private slate |
 | PATCH | `/api/oauth/slates/:n/publish` | slates:publish | publish/unpublish |
 | DELETE | `/api/oauth/slates/:n` | slates:delete | delete |
 | GET | `/api/oauth/scopes` | — | scope catalogue |
+
+**Conventions (apply to every endpoint):** all timestamps are **ISO8601 UTC** (`2026-05-31T09:55:16.000Z`); all ids (`drop_id`, `slate_number`) are **integers**; every error is **JSON** `{ error, error_description }` — never HTML, including 404s, malformed bodies, rate limits, and upstream errors.
 
 ### Response shapes (real field names)
 
@@ -158,8 +166,30 @@ GET /api/oauth/users/me/public-key         (scope slates:create)
 
 POST /api/oauth/slates/drop                 (scope slates:create)
   request:  { wrapped_key, enc_content, enc_title? }
-  success:  { success: true, drop_id, status: "pending_adoption" }
+  success:  { success: true, drop_id, status: "pending_adoption" }   // drop_id is an integer
   409:      { error: "keypair_unavailable" }   // user has no published key yet; retry later
+
+POST /api/oauth/slates/create-delegated     (scope slates:create + slates:read:private)
+  request:  { wrapped_key_user, wrapped_key_app, enc_content, enc_title?,
+              word_count?, char_count? }   // one content key, wrapped to BOTH the user's and your key
+  success:  { success: true, slate_number, drop_id, status: "pending_adoption" }
+  409:      { error: "keypair_unavailable" }   // see §9
+
+GET /api/oauth/drops[/:id]                   (scope slates:create)
+  /:id ->  { drop_id, status, slate_number|null, created_at, adopted_at, discarded_at }
+  list ->  [ { ...same... } ]   // optional ?status=pending|adopted|discarded
+  // status is "pending" | "adopted" | "discarded"; slate_number is set once the user adopts.
+
+GET /api/oauth/sync                          (scope slates:read:meta)
+  ?since=<ISO8601>  ->  { changed: [ <meta rows, same shape as GET /slates> ],
+                          deleted: [ { slate_number, deleted_at } ],
+                          cursor, has_more }
+  // omit `since` for a full baseline (all current slates, no deletes). Page while has_more,
+  // passing the returned `cursor` back as the next `since`.
+
+POST /api/oauth/slates/batch                 (scope slates:read:private)
+  request:  { slate_numbers: [..] }          // max 100
+  success:  { slates: [ <same per-slate shape as GET /slates/:n> ], missing: [..] }
 
 GET /api/oauth/slates                      (scope slates:read:meta)
   [ { slate_number, is_published, share_id, title|null, title_encrypted,
@@ -180,21 +210,34 @@ GET /api/oauth/slates/:n  — private, not shared with you
   { slate_number, delegated: false, encrypted: true, encrypted_content, note }
 
 GET /api/oauth/shared                      (scope slates:read:private)
-  [ { slate_number, shared_at, word_count, char_count, created_at, updated_at } ]
-  // the field is slate_number
+  [ { slate_number, shared_at, key_scheme, content_scheme,
+      wrapped_key, enc_title, word_count, char_count, created_at, updated_at } ]
+  // wrapped_key + enc_title let you render real titles without fetching each slate:
+  // unwrap wrapped_key once (your RSA key), then AES-decrypt each enc_title. enc_content
+  // is NOT included here — use POST /api/oauth/slates/batch for bodies.
 
 PATCH /api/oauth/slates/:n/delegated  ->  { success: true }
 POST  /oauth/revoke                   ->  { success: true }   // body { token }, JSON or form; always 200
 ```
 
+All `created_at` / `updated_at` / `published_at` / `shared_at` / `last_drop_at` /
+`last_delivered_at` / `adopted_at` / `discarded_at` fields are ISO8601 UTC strings (or `null`).
+
 ### Errors
-- `400 invalid_request` / `invalid_grant` — bad/expired code, PKCE mismatch, missing params.
+Every error is JSON `{ error, error_description }` — never an HTML page. This holds for
+404s (unknown endpoint/method), malformed request bodies, rate limiting, and upstream
+failures alike, so you can `JSON.parse` an error response unconditionally.
+
+- `400 invalid_request` / `invalid_grant` — bad/expired code, PKCE mismatch, missing params, or a malformed JSON body.
 - `401 invalid_client` — wrong client_id/secret. `401 invalid_token` — missing/expired/revoked bearer token.
 - `403 insufficient_scope` — token lacks the required scope (`error_description` names it).
 - `403` on a delegated slate — the user has not shared that slate with you.
-- `409 keypair_unavailable` on `POST /api/oauth/slates/drop` — the user has not
-  generated an encryption keypair yet (they will on next unlock). Retry later.
+- `404 not_found` — no such slate, drop, or endpoint.
+- `409 keypair_unavailable` on `POST /api/oauth/slates/drop` (or `/create-delegated`) — the
+  user has not generated an encryption keypair yet (they will on next unlock). Retry later.
 - `413` — content over 5 MB, or a grant/drop blob over 8 MB per field.
+- `429 rate_limited` — too many requests. Honour the **`Retry-After`** response header
+  (seconds) and back off. The body is JSON like any other error.
 - A GCM "unable to authenticate data" error on decrypt is a **client-side** condition,
   not a server error — see §5.4.
 
@@ -513,14 +556,33 @@ GET /api/oauth/dropbox            (scope slates:create)
     key_scheme: "rsa-oaep-sha256",
     pending: 2,                          // your drops not yet adopted by the user
     delivered: 5,                        // your drops the user has adopted (kept)
-    last_drop_at: 1717000000,            // unix secs of your latest pending drop, or null
-    last_delivered_at: "2026-05-30T...", // ISO time the user last adopted one, or null
+    last_drop_at: "2026-05-30T...Z",     // ISO8601 of your latest pending drop, or null
+    last_delivered_at: "2026-05-30T...Z",// ISO8601 the user last adopted one, or null
     synced: false                        // true when pending == 0
   }
 ```
 
 Typical uses: gate creation on `keypair_ready` (avoid a `409`); show "2 notes waiting
 for you to open justtype" from `pending`; flip your UI to "all synced" when `synced`.
+
+### Per-drop status — `GET /api/oauth/drops` and `GET /api/oauth/drops/:id`
+`dropbox` gives aggregate counts; these give per-drop outcomes, so you learn exactly
+**when a note you pushed went live and which `slate_number` it became** — no
+content-hash guessing.
+
+```
+GET /api/oauth/drops/:id          (scope slates:create)
+  { drop_id, status, slate_number | null, created_at, adopted_at, discarded_at }
+
+GET /api/oauth/drops              (scope slates:create)   ?status=pending|adopted|discarded
+  [ { drop_id, status, slate_number, created_at, adopted_at, discarded_at }, ... ]
+```
+
+`status` is `pending` (waiting for the user), `adopted` (the user kept it — `slate_number`
+is now set), or `discarded` (the user rejected it). A drop row persists after
+adoption/discard as a thin receipt — its encrypted blobs are dropped, but you can keep
+polling its status. Poll `GET /api/oauth/drops/:id` with the `drop_id` you got from the
+drop response to drive a "synced / waiting" UI per note.
 
 ### What the user sees, and what happens to the note long-term
 - Adopted slates are **tagged with your app's name** ("from <app>") in the user's slate
@@ -539,7 +601,90 @@ users approve with the timing and permanence in mind.
 
 ---
 
-## 8. Native apps (iOS/Android/desktop)
+## 8. Incremental sync — `GET /api/oauth/sync`
+
+Instead of re-listing every slate to find what changed, sync against a cursor. You get
+slates modified since the cursor, **plus tombstones for deletions**, so edits and
+deletes both propagate without a full pull.
+
+```
+GET /api/oauth/sync                          (scope slates:read:meta)
+  ?since=<ISO8601>   // omit for a full baseline (all current slates, no deletes)
+  ->
+  {
+    changed: [ { slate_number, is_published, share_id, title|null, title_encrypted,
+                 word_count, char_count, created_at, updated_at, published_at }, ... ],
+    deleted: [ { slate_number, deleted_at }, ... ],
+    cursor:  "2026-05-31T09:55:16.000Z",   // pass this back as the next ?since
+    has_more: false                        // true when a page was capped — call again with cursor
+  }
+```
+
+Flow:
+1. First run with **no `since`** → a full baseline (`changed` = all current slates,
+   `deleted` = `[]`). Store the returned `cursor`.
+2. Later, call `?since=<cursor>`. Treat every `changed` entry as an upsert and every
+   `deleted` entry as a removal. Save the new `cursor`.
+3. While `has_more` is `true`, immediately call again with the new `cursor` to drain the
+   next page before sleeping.
+
+Notes:
+- `changed` rows are the same shape as `GET /api/oauth/slates`; for a private slate the
+  title stays encrypted (`title_encrypted: true`) — fetch bodies/titles via §6 / batch as
+  needed.
+- Timestamps are **second-resolution** and the cursor is **exclusive** (`>`). Because
+  `changed` is an idempotent upsert, briefly re-seeing a boundary row across calls is
+  harmless — just apply it again.
+- Tombstones are retained ~90 days. A client offline longer than that must drop its
+  cursor and take a fresh full baseline (step 1).
+
+---
+
+## 9. Create already-delegated — `POST /api/oauth/slates/create-delegated`
+
+An ordinary drop (§7) is **write-once**: you cannot read or edit it back until the user
+adopts it. `create-delegated` removes that wait — it creates a **new private slate that
+is already a real, numbered slate your app can read and edit immediately**, while still
+being end-to-end encrypted and owned by the user once they open justtype.
+
+How it works: you generate **one** fresh content key and wrap it to **both** keys —
+`wrapped_key_user` (to the user's public key, so they can adopt it later) and
+`wrapped_key_app` (to your own registered public key, so you can read/edit it now). The
+server creates the slate in a *pending-adoption* state and immediately delegates it to
+you; the user's client re-keys it to their master key on next open (in place — the slate
+keeps its number), after which two-way sync (§5.5) works normally.
+
+Requires **both** `slates:create` and `slates:read:private`, and a registered app public
+key. Same blob format and algorithms as everywhere else (§5.1–5.2).
+
+```
+POST /api/oauth/slates/create-delegated      (scope slates:create + slates:read:private)
+  request:  { wrapped_key_user, wrapped_key_app, enc_content, enc_title?,
+              word_count?, char_count? }
+  success:  { success: true, slate_number, drop_id, status: "pending_adoption" }
+  409:      { error: "keypair_unavailable" }     // user has no published key yet; retry later
+```
+
+Steps:
+1. Generate a fresh 32-byte content key.
+2. `enc_content` = AES-256-GCM of `{ "content": "...", "uploadedAt": "<ISO>" }`;
+   `enc_title` = AES-256-GCM of the raw title (optional) — both under the content key.
+3. `wrapped_key_user` = content key RSA-OAEP-SHA256-wrapped to the **user's** public key
+   (`GET /api/oauth/users/me/public-key`).
+4. `wrapped_key_app` = the **same** content key wrapped to **your app's** public key.
+5. `POST` it. You immediately get a `slate_number` you can `GET /api/oauth/slates/:n`
+   (returns it as a delegated slate) and `PATCH .../delegated` to edit.
+
+While the slate is still pending adoption, your delegated edits are mirrored into the
+pending payload automatically (the content key is unchanged, so the user's wrap stays
+valid) — so the user adopts whatever you last wrote. Track adoption via `GET
+/api/oauth/drops/:id` (§7): once `status` is `adopted`, the user owns it and ordinary
+two-way sync continues. If the user **discards** it before adopting, the pending slate is
+removed and the drop shows `status: "discarded"`.
+
+---
+
+## 10. Native apps (iOS/Android/desktop)
 
 - Use a private-use redirect scheme (`com.example.app://callback`) or a claimed
   HTTPS universal/app link. Both are accepted; register the exact URI at `/dev`.
@@ -550,7 +695,7 @@ users approve with the timing and permanence in mind.
 
 ---
 
-## 9. Integration checklist (end to end)
+## 11. Integration checklist (end to end)
 
 A full justtype client, in order. Each step links to the section that specifies it.
 

@@ -289,14 +289,17 @@ export async function importUserPrivateKey(pkcs8Bytes) {
 
 // Decrypt an app-created drop. wrapped_key is the content key RSA-OAEP-wrapped to
 // the user's public key; unwrap it with the user's private CryptoKey, then decrypt
-// the content + title blobs. Returns { content, title } (title null if absent).
+// the content + title blobs. Returns { content, title, contentKey } (title null if
+// absent). contentKey is the raw 32-byte content key — needed when adopting a
+// create-already-delegated slate in place, so it can be re-wrapped to the master
+// key (owner_wrapped_key) for two-way sync with the creating app.
 export async function decryptDrop(drop, userPrivateKey) {
   const wrappedBytes = base64ToBuf(drop.wrapped_key);
   const contentKeyBuf = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, userPrivateKey, wrappedBytes);
   const contentKey = new Uint8Array(contentKeyBuf);
   const content = drop.enc_content ? await decryptContent(drop.enc_content, contentKey) : '';
   const title = drop.enc_title ? await decryptTitle(drop.enc_title, contentKey) : null;
-  return { content, title };
+  return { content, title, contentKey };
 }
 
 function pemEncode(bytes, label) {

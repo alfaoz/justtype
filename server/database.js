@@ -591,6 +591,76 @@ try {
   `);
   console.log('✓ Slate-drop (app-create) tables initialized');
 
+  // Adoption receipts: a drop row is no longer hard-deleted on adopt/discard.
+  // It becomes a thin receipt (blobs nulled) so the creating app can poll the
+  // outcome (GET /api/oauth/drops[/:id]) and learn the resulting slate_number
+  // instead of content-hash guessing. status: 'pending' | 'adopted' | 'discarded'.
+  const dropCols = db.pragma('table_info(oauth_slate_drops)');
+  if (!dropCols.some(col => col.name === 'status')) {
+    db.exec(`ALTER TABLE oauth_slate_drops ADD COLUMN status TEXT DEFAULT 'pending';`);
+    console.log('✓ Database migrated: Added status column to oauth_slate_drops');
+  }
+  if (!dropCols.some(col => col.name === 'adopted_slate_number')) {
+    db.exec(`ALTER TABLE oauth_slate_drops ADD COLUMN adopted_slate_number INTEGER;`);
+    console.log('✓ Database migrated: Added adopted_slate_number column to oauth_slate_drops');
+  }
+  if (!dropCols.some(col => col.name === 'adopted_at')) {
+    db.exec(`ALTER TABLE oauth_slate_drops ADD COLUMN adopted_at INTEGER;`);
+    console.log('✓ Database migrated: Added adopted_at column to oauth_slate_drops');
+  }
+  if (!dropCols.some(col => col.name === 'discarded_at')) {
+    db.exec(`ALTER TABLE oauth_slate_drops ADD COLUMN discarded_at INTEGER;`);
+    console.log('✓ Database migrated: Added discarded_at column to oauth_slate_drops');
+  }
+  // is_inplace = 1 marks a "create already-delegated" drop: the slate row already
+  // exists (numbered, adoption_pending), so adopted_slate_number is set at create
+  // time and the user's client adopts it IN PLACE (updates the row) rather than
+  // inserting a new slate. 0 for ordinary drops.
+  if (!dropCols.some(col => col.name === 'is_inplace')) {
+    db.exec(`ALTER TABLE oauth_slate_drops ADD COLUMN is_inplace INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added is_inplace column to oauth_slate_drops');
+  }
+
+  // "create already-delegated": an app can create a real, numbered slate it can
+  // edit immediately. The slate exists in a pending-adoption state (its canonical
+  // master-key content does not exist yet) until the user's client adopts it in
+  // place on next open. adoption_pending = 1 marks that state; the user-wrappable
+  // payload lives in the linked oauth_slate_drops row (adopted_slate_number set).
+  const slateCols3 = db.pragma('table_info(slates)');
+  if (!slateCols3.some(col => col.name === 'adoption_pending')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN adoption_pending INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added adoption_pending column to slates');
+  }
+
+  // Tombstones for incremental sync (GET /api/oauth/sync). A trigger records every
+  // slate deletion regardless of which code path removed it, so third-party clients
+  // can propagate deletes without a full re-list. Retained ~90 days (swept by the
+  // OAuth periodic cleanup); clients offline longer must do a full re-list.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS slate_tombstones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      slate_number INTEGER NOT NULL,
+      deleted_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_slate_tombstones_user ON slate_tombstones(user_id, deleted_at);
+
+    CREATE TRIGGER IF NOT EXISTS trg_slate_tombstone AFTER DELETE ON slates
+    BEGIN
+      INSERT INTO slate_tombstones (user_id, slate_number, deleted_at)
+      VALUES (OLD.user_id, OLD.slate_number, strftime('%s', 'now'));
+      -- If a still-pending create-already-delegated slate is deleted, mark its
+      -- linked drop discarded so the creating app sees the outcome (it never adopted).
+      -- wrapped_key / enc_content are NOT NULL, so clear the ciphertext to '' (not NULL).
+      UPDATE oauth_slate_drops
+        SET status = 'discarded', discarded_at = strftime('%s', 'now'),
+            wrapped_key = '', enc_content = '', enc_title = NULL
+        WHERE is_inplace = 1 AND status = 'pending'
+          AND user_id = OLD.user_id AND adopted_slate_number = OLD.slate_number;
+    END;
+  `);
+  console.log('✓ Slate tombstone (incremental-sync) table + trigger initialized');
+
   // Drop old empty announcement tables if they exist
   db.exec(`DROP TABLE IF EXISTS announcement_reads;`);
   db.exec(`DROP TABLE IF EXISTS announcements;`);

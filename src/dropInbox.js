@@ -5,23 +5,40 @@
 // list open. All crypto is client-side; the server only moves opaque blobs.
 
 import { API_URL } from './config';
-import { encryptContent, encryptTitle, decryptDrop } from './crypto';
+import { encryptContent, encryptTitle, decryptDrop, wrapKey } from './crypto';
 import { getUserPrivateKey } from './userKeys';
 
 let sweeping = false;
 
 // Decrypt one drop with the user's private key, re-encrypt under the master key,
-// and adopt it server-side (which creates the slate and deletes the drop). The
-// content key the app used is discarded — the adopted slate is keyed to the
-// user's master key like every other slate. Returns true on success.
+// and adopt it server-side. Two flavours:
+//   - ordinary drop: the server creates a NEW slate and keeps the drop as a
+//     receipt. The content key the app used is discarded.
+//   - in-place drop (create-already-delegated, drop.adopt_slate_number set): the
+//     slate already exists, numbered, in a pending state. We re-key it to the
+//     master key in place AND re-wrap the (unchanged) content key to the master
+//     key (owner_wrapped_key) so the creating app's edits keep syncing back.
+// Returns true on success.
 async function adoptOne(drop, userPrivateKey, masterKey) {
-  const { content, title } = await decryptDrop(drop, userPrivateKey);
+  const { content, title, contentKey } = await decryptDrop(drop, userPrivateKey);
   const safeTitle = (title && title.trim()) || (content.split('\n')[0].trim() || 'untitled slate');
   const encryptedContent = await encryptContent(content, masterKey);
   const encryptedTitle = await encryptTitle(safeTitle, masterKey);
   const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
   const charCount = content.length;
   const sizeBytes = new TextEncoder().encode(content).length;
+
+  if (drop.adopt_slate_number != null) {
+    const owner_wrapped_key = await wrapKey(contentKey, masterKey);
+    const res = await fetch(`${API_URL}/account/slate-drops/${encodeURIComponent(drop.id)}/adopt-in-place`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ encryptedContent, encryptedTitle, owner_wrapped_key, wordCount, charCount, sizeBytes })
+    });
+    return res.ok;
+  }
+
   const res = await fetch(`${API_URL}/account/slate-drops/${encodeURIComponent(drop.id)}/adopt`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

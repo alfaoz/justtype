@@ -698,6 +698,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
                     {status.label}
                   </span>
+                  {slate.adoption_pending && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-text-secondary)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)] animate-pulse"
+                      title={strings.slates.status.syncingTitle}
+                    >
+                      {strings.slates.status.syncing}
+                    </span>
+                  )}
                   {slate.source_app_name && (
                     <span
                       className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
@@ -822,6 +830,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
                   <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
                     {status.label}
                   </span>
+                  {slate.adoption_pending && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-text-secondary)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)] animate-pulse"
+                      title={strings.slates.status.syncingTitle}
+                    >
+                      {strings.slates.status.syncing}
+                    </span>
+                  )}
                   {slate.source_app_name && (
                     <span
                       className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
