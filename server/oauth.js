@@ -13,6 +13,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const { resolveUserTheme } = require('./themeTokens');
 
 // Scopes offered to third-party apps, with human descriptions for the consent screen.
 const SCOPES = {
@@ -131,79 +132,125 @@ function mountOAuth(app, deps) {
     try { db.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').run(now()); } catch {}
   };
 
-  const renderPage = (title, bodyHtml) => `<!DOCTYPE html>
+  // Default theme for pages shown to users we can't resolve (logged-out errors).
+  const DEFAULT_THEME = resolveUserTheme('dark', null);
+
+  // Resolve the signed-in user's saved theme so the consent page matches justtype.
+  const themeForUser = (userId) => {
+    try {
+      const row = db.prepare('SELECT theme, custom_themes FROM users WHERE id = ?').get(userId);
+      return resolveUserTheme(row?.theme, row?.custom_themes);
+    } catch {
+      return DEFAULT_THEME;
+    }
+  };
+
+  // Shared page chrome. Renders in the given theme (colors + JetBrains Mono / the
+  // theme's font, loaded from Google Fonts just like the app does at runtime).
+  // `wide` swaps the narrow card for the full two-pane consent layout.
+  const renderPage = (title, bodyHtml, theme = DEFAULT_THEME, wide = false) => {
+    const c = theme.colors;
+    const fontLink = theme.fontUrl ? `<link rel="stylesheet" href="${escapeHtml(theme.fontUrl)}">` : '';
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  ${fontLink}
   <style>
+    :root {
+      --bg:${c.bg}; --bg2:${c.bgSecondary}; --bg3:${c.bgTertiary};
+      --text:${c.text}; --muted:${c.textMuted}; --dim:${c.textDim};
+      --border:${c.border}; --border2:${c.borderLight};
+      --accent:${c.accent}; --green:${c.green}; --red:${c.red}; --blue:${c.blue};
+      --font:${theme.uiFamily};
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #0a0a0a; color: #fff;
-           min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; }
-    .card { width: 100%; max-width: 420px; background: #111; border: 1px solid #222;
-            border-radius: 12px; padding: 2rem; }
-    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
-    .sub { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; line-height: 1.5; }
-    .app { font-weight: 600; color: #fff; }
-    ul.scopes { list-style: none; margin: 1.25rem 0; }
-    ul.scopes li { display: flex; gap: 0.6rem; padding: 0.6rem 0; border-top: 1px solid #1c1c1c;
-                   color: #ccc; font-size: 0.9rem; line-height: 1.4; }
-    ul.scopes li:last-child { border-bottom: 1px solid #1c1c1c; }
-    .check { color: #4ade80; flex-shrink: 0; }
-    .note { background: #161616; border: 1px solid #262626; border-radius: 8px; padding: 0.75rem;
-            color: #9a9a9a; font-size: 0.8rem; margin: 1rem 0; line-height: 1.5; }
-    form { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; }
-    input { background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 0.7rem 0.9rem;
-            border-radius: 8px; font-size: 0.95rem; }
-    input:focus { outline: none; border-color: #555; }
-    .row { display: flex; gap: 0.75rem; }
-    button { flex: 1; padding: 0.7rem 1rem; border-radius: 8px; font-size: 0.95rem; cursor: pointer;
-             border: none; font-weight: 500; }
-    .primary { background: #fff; color: #000; }
-    .primary:hover { background: #eee; }
-    .ghost { background: transparent; color: #aaa; border: 1px solid #333; }
-    .ghost:hover { color: #fff; border-color: #555; }
-    .who { color: #666; font-size: 0.8rem; margin-top: 1rem; text-align: center; }
-    label.shareall { display: flex; gap: 0.6rem; align-items: flex-start; background: #161616;
-            border: 1px solid #262626; border-radius: 8px; padding: 0.75rem; color: #b5b5b5;
-            font-size: 0.82rem; line-height: 1.5; cursor: pointer; }
-    label.shareall input { width: 1rem; height: 1rem; margin-top: 0.15rem; flex-shrink: 0; accent-color: #fff; }
-    label.shareall strong { color: #eaeaea; font-weight: 600; }
-    .error { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; display: none; }
-    a { color: #888; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text);
+           min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; -webkit-font-smoothing: antialiased; }
+    a { color: var(--blue); text-decoration: none; } a:hover { text-decoration: underline; }
+    h1 { font-size: 1.3rem; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 0.5rem; }
+    .sub { color: var(--muted); font-size: 0.9rem; line-height: 1.55; }
+    .card { width: 100%; max-width: 460px; background: var(--bg2); border: 1px solid var(--border);
+            border-radius: 14px; padding: 2rem; }
+
+    /* two-pane consent */
+    .consent { width: 100%; max-width: 880px; background: var(--bg2); border: 1px solid var(--border);
+               border-radius: 16px; overflow: hidden; display: grid; grid-template-columns: minmax(260px, 320px) 1fr; }
+    .pane-left { padding: 2rem; border-right: 1px solid var(--border2); display: flex; flex-direction: column; gap: 1.1rem; }
+    .pane-right { padding: 2rem; min-width: 0; }
+    @media (max-width: 640px) {
+      .consent { grid-template-columns: 1fr; }
+      .pane-left { border-right: none; border-bottom: 1px solid var(--border2); }
+    }
+    .eyebrow { font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin-bottom: 0.9rem; }
+    .appname { font-size: 1.5rem; font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; word-break: break-word; }
+    .appsite { font-size: 0.82rem; margin-top: 0.35rem; display: inline-block; }
+    .lead { color: var(--muted); font-size: 0.92rem; line-height: 1.55; margin-top: 0.8rem; }
+    .spacer { flex: 1; min-height: 0.5rem; }
+    ul.perm { list-style: none; }
+    ul.perm li { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.72rem 0;
+                 border-bottom: 1px solid var(--border2); font-size: 0.9rem; line-height: 1.45; color: var(--text); }
+    ul.perm li:first-child { padding-top: 0; }
+    ul.perm li:last-child { border-bottom: none; }
+    .check { color: var(--green); flex-shrink: 0; margin-top: 0.05rem; }
+    .note { background: var(--bg3); border: 1px solid var(--border2); border-radius: 10px; padding: 0.8rem 0.9rem;
+            color: var(--muted); font-size: 0.8rem; line-height: 1.55; margin-top: 1.1rem; }
+    .shareall { display: flex; gap: 0.6rem; align-items: flex-start; background: var(--bg3); border: 1px solid var(--border2);
+                border-radius: 10px; padding: 0.8rem; color: var(--muted); font-size: 0.82rem; line-height: 1.5; cursor: pointer; }
+    .shareall input { width: 1rem; height: 1rem; margin-top: 0.15rem; flex-shrink: 0; accent-color: var(--accent); }
+    .shareall strong { color: var(--text); font-weight: 600; }
+    .actions { display: flex; flex-direction: column; gap: 0.6rem; }
+    button { width: 100%; padding: 0.75rem 1rem; border-radius: 10px; font-size: 0.92rem; font-family: inherit;
+             cursor: pointer; border: none; font-weight: 500; transition: opacity 0.15s, border-color 0.15s, color 0.15s; }
+    .primary { background: var(--accent); color: var(--bg2); }
+    .primary:hover { opacity: 0.88; }
+    .ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .ghost:hover { color: var(--text); border-color: var(--muted); }
+    .who { color: var(--dim); font-size: 0.8rem; }
   </style>
 </head>
-<body><div class="card">${bodyHtml}</div></body>
+<body>${wide ? bodyHtml : `<div class="card">${bodyHtml}</div>`}</body>
 </html>`;
+  };
 
   const consentPageBody = (user, client, scopeList, ticket, grantable) => {
     const items = scopeList.map(s =>
       `<li><span class="check">✓</span><span>${escapeHtml(SCOPES[s])}</span></li>`).join('');
     const site = client.website
-      ? `<div class="sub" style="margin-top:-1rem"><a href="${escapeHtml(client.website)}" target="_blank" rel="noopener">${escapeHtml(client.website)}</a></div>` : '';
-    const privacyNote = scopeList.includes('slates:read:private')
-      ? `<div class="note">your private slates stay end-to-end encrypted. approving this does <strong>not</strong> hand them over — afterwards you choose, in your justtype account, exactly which private slates to share with this app, and you can stop sharing anytime. justtype never shares your password or master key.</div>` : '';
+      ? `<a class="appsite" href="${escapeHtml(client.website)}" target="_blank" rel="noopener">${escapeHtml(client.website)}</a>` : '';
     // Disclose how app-created drops actually arrive — they are not instant and
     // they outlive the app once you open justtype.
     const createNote = scopeList.includes('slates:create')
-      ? `<div class="note">new slates this app creates are <strong>end-to-end encrypted to you</strong> — justtype and the app's server never see their text. they appear in your account the next time you open justtype (instantly if it is open, otherwise once you next unlock — only your device can decrypt them). once they appear they are yours and stay even if you later remove this app.</div>` : '';
+      ? `<div class="note">new slates this app creates are <strong>end-to-end encrypted to you</strong> — justtype and the app's server never see their text. they appear in your account the next time you open justtype (instantly if it is open, otherwise once you next unlock). once they appear they are yours and stay even if you later remove this app.</div>` : '';
+    const shareall = grantable
+      ? `<label class="shareall"><input type="checkbox" name="share_all" value="1"><span>also let <strong>${escapeHtml(client.name)}</strong> read &amp; write <strong>all</strong> my private slates (current + future). change this anytime in your account.</span></label>` : '';
     return `
-      <h1>authorize ${escapeHtml(client.name)}</h1>
-      <p class="sub"><span class="app">${escapeHtml(client.name)}</span> wants permission to:</p>
-      ${site}
-      <ul class="scopes">${items}</ul>
-      ${privacyNote}
-      ${createNote}
-      <form method="POST" action="/oauth/authorize/decide">
+      <form class="consent" method="POST" action="/oauth/authorize/decide">
         <input type="hidden" name="ticket" value="${escapeHtml(ticket)}">
-        ${grantable ? `<label class="shareall"><input type="checkbox" name="share_all" value="1"><span>also let <strong>${escapeHtml(client.name)}</strong> read &amp; write <strong>all</strong> my private slates (current + future). you can change this anytime in your account.</span></label>` : ''}
-        <div class="row">
-          <button type="submit" name="decision" value="deny" class="ghost">cancel</button>
-          <button type="submit" name="decision" value="approve" class="primary">authorize</button>
+        <div class="pane-left">
+          <div>
+            <div class="eyebrow">authorize</div>
+            <div class="appname">${escapeHtml(client.name)}</div>
+            ${site}
+            <p class="lead">wants access to your justtype account.</p>
+          </div>
+          <div class="spacer"></div>
+          ${shareall}
+          <div class="actions">
+            <button type="submit" name="decision" value="approve" class="primary">authorize</button>
+            <button type="submit" name="decision" value="deny" class="ghost">cancel</button>
+          </div>
+          <div class="who">signed in as @${escapeHtml(user.username)}</div>
         </div>
-      </form>
-      <div class="who">signed in as @${escapeHtml(user.username)}</div>`;
+        <div class="pane-right">
+          <div class="eyebrow">permissions</div>
+          <ul class="perm">${items}</ul>
+          ${createNote}
+        </div>
+      </form>`;
   };
 
   // --- client registration (self-serve, requires a logged-in user) --------
@@ -578,7 +625,8 @@ function mountOAuth(app, deps) {
     // to that key during consent; otherwise it records intent and the user's client
     // wraps once the app registers an install.
     const grantable = requested.includes('slates:read:private');
-    res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable)));
+    const theme = themeForUser(user.id);
+    res.send(renderPage(`authorize ${client.name}`, consentPageBody(user, client, requested, ticket, grantable), theme, true));
   });
 
   // After a logged-out user signs in / signs up through the SPA auth modal (the
@@ -623,7 +671,22 @@ function mountOAuth(app, deps) {
 
     if (decision !== 'approve') {
       u.searchParams.set('error', 'access_denied');
-      return res.redirect(u.toString());
+      const denyUrl = u.toString();
+      // Web apps get the spec-compliant 302 back to their redirect_uri. Native
+      // schemes (com.example.app://…) can't be reached by a 302 in a browser —
+      // that's the "cancel does nothing" case — so render a themed page that fires
+      // the deep link and gives the user clear feedback instead of a blank screen.
+      const isWeb = u.protocol === 'http:' || u.protocol === 'https:';
+      if (isWeb) return res.redirect(denyUrl);
+      const client = getClient(t.client_id);
+      const appName = escapeHtml(client?.name || 'the app');
+      const theme = themeForUser(user.id);
+      return res.send(renderPage('access declined',
+        `<h1>access declined</h1>
+         <p class="sub">you didn't connect <strong>${appName}</strong> to your justtype account. you can close this window and head back to the app.</p>
+         <p class="sub" style="margin-top:1.1rem"><a href="${escapeHtml(denyUrl)}">return to ${appName} →</a></p>
+         <script>setTimeout(function(){location.href=${JSON.stringify(denyUrl)};},400);</script>`,
+        theme));
     }
 
     const scopeList = (t.scope || '').split(' ').filter(Boolean);

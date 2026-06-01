@@ -451,10 +451,12 @@ app.use(helmet({
 //    /decide endpoint redirects to the app's redirect_uri (any https host),
 //    so 'self' blocks every successful authorization. Security comes from the
 //    server-side redirect_uri allowlist, not from CSP here.
+// 3. Google Fonts (fonts.googleapis.com stylesheet + fonts.gstatic.com files) so
+//    the consent page renders in the user's justtype theme font, like the app.
 app.use('/oauth', (req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; form-action *; frame-ancestors 'none'; base-uri 'self';"
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; form-action *; frame-ancestors 'none'; base-uri 'self';"
   );
   next();
 });
