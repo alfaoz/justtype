@@ -133,32 +133,23 @@ body {
   box-sizing: border-box;
   display: inline;
 }
+/* No dot ornament on remote carets — a clean bar, like the local caret.
+   !important beats y-codemirror.next's runtime-injected base theme. */
 .cm-ySelectionCaretDot {
-  border-radius: 50%;
-  position: absolute;
-  width: 0.4em;
-  height: 0.4em;
-  top: -0.2em;
-  left: -0.2em;
-  background-color: inherit;
-  transition: transform 0.3s ease-in-out;
-  box-sizing: border-box;
-}
-.cm-ySelectionCaret:hover > .cm-ySelectionCaretDot {
-  transform: scale(0);
+  display: none !important;
 }
 .cm-ySelectionInfo {
   position: absolute;
   top: -1.3em;
   left: -1px;
   font-size: 0.7em;
-  font-family: var(--theme-font-code, var(--theme-font-writer, monospace));
-  font-style: normal;
-  font-weight: normal;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-style: normal !important;
+  font-weight: 500 !important;
   line-height: normal;
   user-select: none;
-  color: #fff;
-  padding: 1px 4px;
+  color: #111 !important;
+  padding: 1px 5px;
   border-radius: 3px;
   z-index: 101;
   transition: opacity 0.3s ease-in-out;

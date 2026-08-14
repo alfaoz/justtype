@@ -47,8 +47,8 @@ export function WhatsNew() {
         .wn-type-b { animation: wnTypeB 9s steps(19, end) infinite; }
         @keyframes wnTypeA { 0%, 8% { width: 0; } 34% { width: 17ch; } 94% { width: 17ch; } 100% { width: 0; } }
         @keyframes wnTypeB { 0%, 40% { width: 0; } 68% { width: 19ch; } 94% { width: 19ch; } 100% { width: 0; } }
-        .wn-caret { position: relative; display: inline-block; width: 2px; height: 1.25em; margin-left: 1px; vertical-align: text-bottom; animation: wnBlink 1.1s step-end infinite; }
-        @keyframes wnBlink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0; } }
+        /* Steady bars, matching the real remote carets (they don't blink) */
+        .wn-caret { position: relative; display: inline-block; width: 2px; height: 1.25em; margin-left: 1px; vertical-align: text-bottom; }
         .wn-caret::after { content: attr(data-user); position: absolute; bottom: calc(100% + 4px); left: -2px; padding: 1px 5px; border-radius: 3px; font-size: 0.6rem; line-height: 1.4; color: #111; background: inherit; white-space: nowrap; }
 
         .wn-card { opacity: 0; transform: translateY(16px); transition: opacity 0.55s ease, transform 0.55s ease; }
