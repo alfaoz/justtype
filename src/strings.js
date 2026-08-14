@@ -1327,7 +1327,6 @@ take care!
       userB: 'beta'
     },
     demos: {
-      collab: { before: 'the plan needs', after: 'more coffee' },
       history: {
         rows: ['14:02 · by alfa', '13:41 · by beta', '13:12 · by alfa'],
         previews: ['draft three, final', 'draft two, tighter', 'draft one, rough']
