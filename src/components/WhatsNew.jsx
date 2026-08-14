@@ -35,12 +35,12 @@ export function WhatsNew() {
   // One looping demo per feature, in the same order as s.features:
   // collab, version history, unpublish, markdown, new justtype.
   const visuals = [
-    // 01 · collab: two live carets mid-sentence + presence
+    // 01 · collab: two people finish one sentence, on loop
     <div className="wn-frame" key="collab">
       <div className="wn-line">
-        <span>{d.collab.before}&nbsp;</span>
+        <span className="wn-type wn-cd-a">{d.collab.before}</span>
         <span className="wn-caret" data-user={s.demo.userA} style={{ background: '#4a9eff' }} />
-        <span>&nbsp;{d.collab.after}</span>
+        <span className="wn-type wn-cd-b">&nbsp;{d.collab.after}</span>
         <span className="wn-caret" data-user={s.demo.userB} style={{ background: '#3ecf8e' }} />
       </div>
       <div className="wn-presence">
@@ -134,6 +134,12 @@ export function WhatsNew() {
         .wn-caret[data-user]::after { content: attr(data-user); position: absolute; bottom: calc(100% + 4px); left: -2px; padding: 1px 5px; border-radius: 3px; font-size: 0.6rem; line-height: 1.4; color: #111; background: inherit; white-space: nowrap; }
 
         .wn-presence { margin-top: 0.9rem; font-size: 0.7rem; color: var(--theme-text-dim); display: flex; align-items: center; }
+
+        /* Collab card: alfa types the opening, beta finishes the sentence */
+        .wn-cd-a { animation: wnCdA 10s steps(14, end) infinite; }
+        .wn-cd-b { animation: wnCdB 10s steps(12, end) infinite; }
+        @keyframes wnCdA { 0%, 6% { width: 0; } 32% { width: 14ch; } 94% { width: 14ch; } 100% { width: 0; } }
+        @keyframes wnCdB { 0%, 40% { width: 0; } 66% { width: 12ch; } 94% { width: 12ch; } 100% { width: 0; } }
 
         /* Version history: highlight walks the checkpoints, preview follows */
         .wn-hist { display: flex; gap: 1.25rem; align-items: stretch; }
