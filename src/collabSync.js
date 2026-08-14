@@ -11,6 +11,8 @@
 //   {type:'awareness', payload, authorId}
 //   {type:'changed'}       canonical blob changed -> refetch
 //   {type:'removed'}       access revoked / collab disabled
+//   {type:'peer_left', authorId}  user's last socket left the room
+//   {type:'error', error, code?}  routed only when the server tagged a slateId
 //   {type:'reconnected'}   socket re-established (synthetic, local)
 // Returns an unsubscribe function; the socket closes when no rooms remain.
 

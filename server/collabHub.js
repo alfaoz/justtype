@@ -22,7 +22,8 @@
 //   s->c  {type:'awareness', slateId, payload, authorId}
 //   s->c  {type:'changed', slateId}    -> canonical blob changed, refetch
 //   s->c  {type:'removed', slateId}    -> membership revoked / collab disabled
-//   s->c  {type:'error', error, code?}
+//   s->c  {type:'peer_left', slateId, authorId} -> user's last socket left the room
+//   s->c  {type:'error', error, code?, slateId?}
 
 const WS_PATH = '/collab/ws';
 const MAX_FRAME_BYTES = 512 * 1024;      // hard cap on any inbound frame
@@ -63,7 +64,15 @@ function leaveRoom(slateId, ws) {
   const set = rooms.get(slateId);
   if (set) {
     set.delete(ws);
-    if (set.size === 0) rooms.delete(slateId);
+    if (set.size === 0) {
+      rooms.delete(slateId);
+    } else {
+      // Tell the room when a user's LAST socket leaves, so presence
+      // indicators drop immediately instead of waiting for heartbeat expiry.
+      let still = false;
+      for (const client of set) if (client.userId === ws.userId) { still = true; break; }
+      if (!still) broadcast(slateId, { type: 'peer_left', slateId, authorId: ws.userId });
+    }
   }
   ws.slateRooms.delete(slateId);
 }

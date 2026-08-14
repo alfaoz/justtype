@@ -204,6 +204,7 @@ const strings = {
       roleOwner: 'owner',
       statusPending: 'invited',
       remove: 'remove',
+      removeConfirm: 'sure?',
       needsSave: 'save this slate before sharing it',
       appShared: 'this slate is shared with an app — a slate cannot be app-shared and collaborative at once.',
       close: 'close'

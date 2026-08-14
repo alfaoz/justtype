@@ -28,12 +28,12 @@ export function usePresence({ slateId, docKey, username, enabled }) {
       return;
     }
     let cancelled = false;
-    const roster = new Map(); // username -> lastSeen
+    const roster = new Map(); // username -> { t: lastSeen, authorId }
 
     const publish = () => {
       if (cancelled) return;
       const list = [...roster.entries()]
-        .map(([u, t]) => ({ username: u, lastSeen: t }))
+        .map(([u, v]) => ({ username: u, lastSeen: v.t }))
         .sort((a, b) => a.username.localeCompare(b.username));
       setPeers(list);
     };
@@ -66,11 +66,18 @@ export function usePresence({ slateId, docKey, username, enabled }) {
             // listed everywhere within one round-trip, and known peers don't
             // trigger echo storms.
             const isNew = !roster.has(data.u);
-            roster.set(data.u, Date.now());
+            roster.set(data.u, { t: Date.now(), authorId: event.authorId });
             publish();
             if (isNew) announce();
           }
         } catch { /* not a presence blob or wrong key — ignore */ }
+      } else if (event.type === 'peer_left') {
+        // Their last socket left the room — drop them now, no expiry wait.
+        let changed = false;
+        for (const [u, v] of roster) {
+          if (v.authorId === event.authorId) { roster.delete(u); changed = true; }
+        }
+        if (changed) publish();
       } else if (event.type === 'joined' || event.type === 'reconnected') {
         announce();
       } else if (event.type === 'removed') {
@@ -83,8 +90,8 @@ export function usePresence({ slateId, docKey, username, enabled }) {
     const prune = setInterval(() => {
       const cutoff = Date.now() - EXPIRE_MS;
       let changed = false;
-      for (const [u, t] of roster) {
-        if (t < cutoff) { roster.delete(u); changed = true; }
+      for (const [u, v] of roster) {
+        if (v.t < cutoff) { roster.delete(u); changed = true; }
       }
       if (changed) publish();
     }, PRUNE_MS);

@@ -41,8 +41,11 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   // Two-step turn-off: first click arms "sure?", reverts after 3s untouched
   const [confirmDisable, setConfirmDisable] = useState(false);
   const confirmTimerRef = useRef(null);
+  // Same two-step for removing a member — armed per username
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const removeTimerRef = useRef(null);
 
-  useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
+  useEffect(() => () => { clearTimeout(confirmTimerRef.current); clearTimeout(removeTimerRef.current); }, []);
 
   const enabled = !!docKey;
 
@@ -112,6 +115,18 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleRemoveClick = (name) => {
+    if (confirmRemove !== name) {
+      clearTimeout(removeTimerRef.current);
+      setConfirmRemove(name);
+      removeTimerRef.current = setTimeout(() => setConfirmRemove(null), 3000);
+      return;
+    }
+    clearTimeout(removeTimerRef.current);
+    setConfirmRemove(null);
+    handleRemove(name);
   };
 
   const handleRemove = async (name) => {
@@ -220,11 +235,11 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                     </span>
                     {m.role !== 'owner' && (
                       <button
-                        onClick={() => handleRemove(m.username)}
+                        onClick={() => handleRemoveClick(m.username)}
                         disabled={busy}
-                        className="text-[var(--theme-text-dim)] hover:text-[var(--theme-red)] transition-colors text-xs disabled:opacity-50"
+                        className={`transition-colors text-xs disabled:opacity-50 ${confirmRemove === m.username ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
                       >
-                        {strings.collab.modal.remove}
+                        {confirmRemove === m.username ? strings.collab.modal.removeConfirm : strings.collab.modal.remove}
                       </button>
                     )}
                   </div>
