@@ -15,6 +15,8 @@ import { VerifyBadge } from './VerifyBadge';
 const TiptapEditor = React.lazy(() => import('./LivePreviewEditor'));
 // Collaborative editor (yjs + remote carets) — its own on-demand chunk
 const CollabEditorLazy = React.lazy(() => import('./CollabEditor'));
+// Version history browser (also carries yjs) — loaded only when opened
+const CollabHistoryLazy = React.lazy(() => import('./CollabHistoryModal'));
 
 // Live re-sync (push): re-wrap the just-saved plaintext to every app that should
 // hold a copy of this slate — apps with an explicit grant AND apps the user gave
@@ -117,6 +119,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [collabKeyGen, setCollabKeyGen] = useState(0);
   const [collabReloadKey, setCollabReloadKey] = useState(0);
   const [showCollabModal, setShowCollabModal] = useState(false);
+  const [showCollabHistory, setShowCollabHistory] = useState(false);
+  // Live handle into the collab editor ({ replaceText }) for history restores
+  const collabApiRef = useRef(null);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
   const [collabSlateDbId, setCollabSlateDbId] = useState(null);
   // Shared mode: this Writer shows a slate someone else owns — same surface,
@@ -1525,6 +1530,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               slateId={collabSlateDbId}
               docKey={collabDocKey}
               onRekeyed={handleCollabRekeyed}
+              apiRef={collabApiRef}
               username={localStorage.getItem('justtype-username')}
               mode={editorMode}
               initialContent={loadedContentRef.current}
@@ -2219,8 +2225,26 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             // undefined = key rotation, same slate; null = collab disabled
             setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
           }}
+          onOpenHistory={collabDocKey && collabSlateDbId ? () => {
+            setShowCollabModal(false);
+            setShowCollabHistory(true);
+          } : null}
           onClose={() => setShowCollabModal(false)}
         />
+      )}
+
+      {/* COLLAB VERSION HISTORY */}
+      {showCollabHistory && collabDocKey && collabSlateDbId && (
+        <React.Suspense fallback={null}>
+          <CollabHistoryLazy
+            slateId={collabSlateDbId}
+            docKey={collabDocKey}
+            onRestore={(text) => {
+              if (collabApiRef.current) collabApiRef.current.replaceText(text);
+            }}
+            onClose={() => setShowCollabHistory(false)}
+          />
+        </React.Suspense>
       )}
 
       {/* ABOUT MODAL */}

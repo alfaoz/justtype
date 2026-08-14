@@ -222,6 +222,18 @@ const strings = {
       appShared: 'this slate is shared with an app — a slate cannot be app-shared and collaborative at once.',
       close: 'close'
     },
+    history: {
+      button: 'history',
+      title: 'version history',
+      loading: 'loading checkpoints...',
+      empty: 'no checkpoints yet. they build up as you write together.',
+      pick: 'pick a checkpoint to preview it.',
+      loadingPreview: 'opening...',
+      emptyDoc: '(empty)',
+      by: (name) => `by ${name}`,
+      restore: 'restore this version',
+      restoreConfirm: 'sure?'
+    },
     join: {
       title: 'join a shared slate',
       checking: 'checking the link...',

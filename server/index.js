@@ -3152,14 +3152,19 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
     const collabDoc = slate.is_collab
       ? db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id)
       : null;
+    const collabFiles = new Set(
+      db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id = ?').all(slate.id).map((r) => r.b2_file_id)
+    );
+    if (collabDoc && collabDoc.snapshot_b2_file_id) collabFiles.add(collabDoc.snapshot_b2_file_id);
     db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
     if (slate.is_collab) collabHub.closeRoom(slate.id);
-    if (collabDoc && collabDoc.snapshot_b2_file_id) {
-      try { await b2Storage.deleteSlate(collabDoc.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+    for (const fileId of collabFiles) {
+      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
     }
 
     // Update user's total storage usage
@@ -3443,15 +3448,20 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     // Collab state: their memberships, and everything on slates they own —
     // members, update log, snapshot metadata + B2 snapshot files (before the
     // slates rows go away — no FK cascade)
-    const collabSnapshotFiles = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId);
-    for (const row of collabSnapshotFiles) {
-      if (row.snapshot_b2_file_id) {
-        try { await b2Storage.deleteSlate(row.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
-      }
+    const collabB2Files = new Set();
+    for (const row of db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
+      if (row.snapshot_b2_file_id) collabB2Files.add(row.snapshot_b2_file_id);
+    }
+    for (const row of db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
+      collabB2Files.add(row.b2_file_id);
+    }
+    for (const fileId of collabB2Files) {
+      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
     }
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
@@ -5226,15 +5236,20 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
     // Collab state: their memberships, and everything on slates they own —
     // members, update log, snapshot metadata + B2 snapshot files (before the
     // slates rows go away — no FK cascade)
-    const collabSnapshotFiles = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId);
-    for (const row of collabSnapshotFiles) {
-      if (row.snapshot_b2_file_id) {
-        try { await b2Storage.deleteSlate(row.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
-      }
+    const collabB2Files = new Set();
+    for (const row of db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
+      if (row.snapshot_b2_file_id) collabB2Files.add(row.snapshot_b2_file_id);
+    }
+    for (const row of db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
+      collabB2Files.add(row.b2_file_id);
+    }
+    for (const fileId of collabB2Files) {
+      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
     }
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)

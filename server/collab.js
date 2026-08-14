@@ -31,6 +31,17 @@ function mountCollab(app, deps) {
   const MAX_CONTENT_BYTES = 5 * 1024 * 1024;
   const MAX_MEMBERS = 10;
   const LINK_TTL_SECONDS = 7 * 24 * 3600;
+  const MAX_CHECKPOINTS = 20;
+
+  // Is this B2 file still referenced (current snapshot or a checkpoint)?
+  // Snapshot and checkpoint rows can share one file, so deletes check first.
+  const checkpointFileReferenced = (slateId, fileId) => {
+    if (db.prepare('SELECT 1 FROM collab_docs WHERE slate_id = ? AND snapshot_b2_file_id = ?').get(slateId, fileId)) return true;
+    return !!db.prepare('SELECT 1 FROM collab_checkpoints WHERE slate_id = ? AND b2_file_id = ?').get(slateId, fileId);
+  };
+
+  const listCheckpointFiles = (slateId) =>
+    db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id = ?').all(slateId).map((r) => r.b2_file_id);
 
   const hashToken = (token) => nodeCrypto.createHash('sha256').update(String(token)).digest('hex');
   const getLinkBySlate = db.prepare('SELECT * FROM collab_link_invites WHERE slate_id = ?');
@@ -160,6 +171,8 @@ function mountCollab(app, deps) {
       const newFileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}`, blob);
       const oldFileId = slate.b2_file_id;
       const docRow = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id);
+      const deadFiles = new Set(listCheckpointFiles(slate.id));
+      if (docRow && docRow.snapshot_b2_file_id) deadFiles.add(docRow.snapshot_b2_file_id);
 
       db.transaction(() => {
         db.prepare(`
@@ -170,14 +183,15 @@ function mountCollab(app, deps) {
         db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
       })();
 
       if (collabHub) collabHub.closeRoom(slate.id);
       if (oldFileId && oldFileId !== newFileId) {
         try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
       }
-      if (docRow && docRow.snapshot_b2_file_id) {
-        try { await b2Storage.deleteSlate(docRow.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+      for (const fileId of deadFiles) {
+        try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
       }
       res.json({ success: true });
     } catch (error) {
@@ -402,6 +416,8 @@ function mountCollab(app, deps) {
       const newFileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}`, blob);
       const oldFileId = slate.b2_file_id;
       const docRow = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id);
+      const deadFiles = new Set(listCheckpointFiles(slate.id));
+      if (docRow && docRow.snapshot_b2_file_id) deadFiles.add(docRow.snapshot_b2_file_id);
       const rows = db.prepare(`
         SELECT m.id, m.user_id, m.role, u.username FROM collab_members m
         JOIN users u ON u.id = m.user_id WHERE m.slate_id = ?
@@ -436,6 +452,7 @@ function mountCollab(app, deps) {
         db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
       })();
 
       const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slate.id).e;
@@ -446,8 +463,8 @@ function mountCollab(app, deps) {
       if (oldFileId && oldFileId !== newFileId) {
         try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
       }
-      if (docRow && docRow.snapshot_b2_file_id) {
-        try { await b2Storage.deleteSlate(docRow.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+      for (const fileId of deadFiles) {
+        try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
       }
       res.json({ success: true, epoch });
     } catch (error) {
@@ -676,6 +693,8 @@ function mountCollab(app, deps) {
       if (!blob) return;
 
       const newFileId = await b2Storage.uploadRawSlate(`collab-snap-${slateId}-${Date.now()}`, blob);
+      const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slateId).e;
+      let prunedCheckpoints = [];
       db.transaction(() => {
         db.prepare(`
           INSERT INTO collab_docs (slate_id, snapshot_version, snapshot_b2_file_id, updated_at)
@@ -686,15 +705,69 @@ function mountCollab(app, deps) {
             updated_at = strftime('%s','now')
         `).run(slateId, coveredVersion, newFileId);
         db.prepare('DELETE FROM collab_updates WHERE slate_id = ? AND version <= ?').run(slateId, coveredVersion);
+        // Every snapshot is also a retained history checkpoint (same file),
+        // capped per slate; the oldest fall off.
+        db.prepare(`
+          INSERT INTO collab_checkpoints (slate_id, epoch, version, b2_file_id, author_id)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(slate_id, epoch, version) DO NOTHING
+        `).run(slateId, epoch, coveredVersion, newFileId, req.user.id);
+        prunedCheckpoints = db.prepare(`
+          SELECT id, b2_file_id FROM collab_checkpoints WHERE slate_id = ?
+          ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?
+        `).all(slateId, MAX_CHECKPOINTS);
+        for (const cp of prunedCheckpoints) {
+          db.prepare('DELETE FROM collab_checkpoints WHERE id = ?').run(cp.id);
+        }
       })();
 
-      if (existing && existing.snapshot_b2_file_id && existing.snapshot_b2_file_id !== newFileId) {
+      if (existing && existing.snapshot_b2_file_id && existing.snapshot_b2_file_id !== newFileId
+          && !checkpointFileReferenced(slateId, existing.snapshot_b2_file_id)) {
         try { await b2Storage.deleteSlate(existing.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete old snapshot B2 file:', err); }
+      }
+      for (const cp of prunedCheckpoints) {
+        if (cp.b2_file_id !== newFileId && !checkpointFileReferenced(slateId, cp.b2_file_id)) {
+          try { await b2Storage.deleteSlate(cp.b2_file_id); } catch (err) { console.warn('Failed to delete pruned checkpoint B2 file:', err); }
+        }
       }
       res.json({ success: true, snapshotVersion: coveredVersion });
     } catch (error) {
       console.error('Collab snapshot store error:', error);
       b2ErrorResponse(res, error, 'Failed to store snapshot');
+    }
+  });
+
+  // --- Version history: retained checkpoints, listed and fetched by any
+  // accepted member. Only current-epoch checkpoints are usable (older ones
+  // are ciphertext under a rotated-away key and get dropped at rotation). ---
+
+  app.get('/api/collab/slates/:slateId/checkpoints', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
+    try {
+      if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(req.params.slateId).e;
+      const checkpoints = db.prepare(`
+        SELECT c.id, c.version, c.created_at, u.username AS author
+        FROM collab_checkpoints c LEFT JOIN users u ON u.id = c.author_id
+        WHERE c.slate_id = ? AND c.epoch = ?
+        ORDER BY c.created_at DESC, c.id DESC
+      `).all(req.params.slateId, epoch);
+      res.json({ checkpoints });
+    } catch (error) {
+      console.error('Collab checkpoints list error:', error);
+      res.status(500).json({ error: 'Failed to list checkpoints' });
+    }
+  });
+
+  app.get('/api/collab/slates/:slateId/checkpoints/:id', authenticateToken, createRateLimitMiddleware('collabFetch'), async (req, res) => {
+    try {
+      if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const cp = db.prepare('SELECT * FROM collab_checkpoints WHERE id = ? AND slate_id = ?').get(req.params.id, req.params.slateId);
+      if (!cp) return res.status(404).json({ error: 'Checkpoint not found' });
+      const rawData = await b2Storage.downloadRawFile(cp.b2_file_id);
+      res.json({ id: cp.id, version: cp.version, created_at: cp.created_at, payload: rawData.toString('base64') });
+    } catch (error) {
+      console.error('Collab checkpoint fetch error:', error);
+      b2ErrorResponse(res, error, 'Failed to fetch checkpoint');
     }
   });
 }

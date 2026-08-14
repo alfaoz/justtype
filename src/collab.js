@@ -221,6 +221,19 @@ export function leaveSharedSlate(slateId) {
   return api(`/collab/slates/${slateId}/leave`, { body: {} });
 }
 
+// --- Version history: retained encrypted checkpoints of the whole doc.
+// Payloads are Y.Doc states under the doc key; rebuilding text from them is
+// the history modal's job (it owns the yjs dependency). ---
+
+export function fetchCheckpoints(slateId) {
+  return api(`/collab/slates/${slateId}/checkpoints`);
+}
+
+export async function fetchCheckpointState(slateId, checkpointId, docKey) {
+  const data = await api(`/collab/slates/${slateId}/checkpoints/${checkpointId}`);
+  return unwrapKey(data.payload, docKey); // raw Y.Doc update bytes
+}
+
 // Resolve my copy of a shared slate's doc key. Normal path: AES-unwrap
 // wrapped_key with my master key. After a rotation my row holds only an
 // RSA-wrapped copy (invite_wrapped_key): unwrap it with my drop-box private

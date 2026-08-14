@@ -1048,6 +1048,24 @@ try {
     );
   `);
   console.log('✓ Collab link invites table initialized');
+
+  // Version history: retained encrypted checkpoints (full doc states in B2,
+  // client-encrypted under the doc key). Written alongside relay snapshots,
+  // capped per slate, dropped on rotation (old-epoch ciphertext is dead).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collab_checkpoints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slate_id INTEGER NOT NULL,
+      epoch INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL,
+      b2_file_id TEXT NOT NULL,
+      author_id INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (slate_id, epoch, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_collab_checkpoints_slate ON collab_checkpoints(slate_id, created_at);
+  `);
+  console.log('✓ Collab checkpoints table initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

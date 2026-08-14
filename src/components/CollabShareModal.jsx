@@ -16,7 +16,7 @@ import { withViewTransition } from '../viewTransition';
 // path encrypts with the right key.
 // memberView: a collaborator (not the owner) opened this — show who's in
 // the group and offer leave; inviting/removing/turning off stay owner-only.
-export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose, memberView = false, sharedSlateId = null, onLeave }) {
+export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose, memberView = false, sharedSlateId = null, onLeave, onOpenHistory = null }) {
   const close = () => withViewTransition(onClose);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const leaveTimerRef = useRef(null);
@@ -252,6 +252,14 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               >
                 {confirmLeave ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
               </button>
+              {onOpenHistory && (
+                <button
+                  onClick={onOpenHistory}
+                  className="text-xs text-[var(--theme-text-dim)] hover:text-white transition-colors"
+                >
+                  {strings.collab.history.button}
+                </button>
+              )}
               <div className="flex-1" />
               <button
                 onClick={close}
@@ -394,6 +402,15 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               >
                 {busy ? strings.collab.modal.disabling : (confirmDisable ? strings.collab.modal.disableConfirm : strings.collab.modal.disableButton)}
               </button>
+              {onOpenHistory && (
+                <button
+                  onClick={onOpenHistory}
+                  disabled={busy}
+                  className="text-xs text-[var(--theme-text-dim)] hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {strings.collab.history.button}
+                </button>
+              )}
               <div className="flex-1" />
               <button
                 onClick={close}

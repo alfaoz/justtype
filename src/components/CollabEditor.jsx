@@ -31,6 +31,9 @@ import { API_URL } from '../config';
 const REMOTE = 'collab-remote';
 const SEED_CLIENT_ID = 0x5eed;
 const SNAPSHOT_EVERY = 64;
+// Also snapshot on a clock during active sessions, so version history gets
+// checkpoints at a human cadence even when the log grows slowly.
+const CHECKPOINT_MS = 5 * 60 * 1000;
 
 // Caret colors per user, picked by username hash: [solid, translucent]
 const CURSOR_COLORS = [
@@ -53,9 +56,12 @@ const bytesToBase64 = (bytes) => {
 };
 const base64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
+// apiRef (optional): receives { replaceText } once the session is live, so
+// the history modal can restore an earlier state as a normal collaborative
+// edit (broadcast like any keystroke, undoable, nothing rewritten).
 export default function CollabEditor({
   slateId, docKey, username, mode, initialContent,
-  onChange, puntoClass = '', autofocus = false, onReady, onRemoved, onError, onRekeyed
+  onChange, puntoClass = '', autofocus = false, onReady, onRemoved, onError, onRekeyed, apiRef
 }) {
   const containerRef = useRef(null);
   const [session, setSession] = useState(null); // { ytext, awareness, undoManager }
@@ -130,6 +136,17 @@ export default function CollabEditor({
       becameReady = true;
       setSession({ ytext, awareness, undoManager });
       setReady(true);
+      if (apiRef) {
+        apiRef.current = {
+          replaceText: (text) => {
+            if (cancelled || stale) return;
+            ydoc.transact(() => {
+              ytext.delete(0, ytext.length);
+              ytext.insert(0, String(text ?? ''));
+            });
+          }
+        };
+      }
       if (onReadyRef.current) onReadyRef.current();
     };
 
@@ -216,8 +233,13 @@ export default function CollabEditor({
     // Compact the log once it grows: post the full encrypted doc state, the
     // server prunes what it covers. Any member may do this; the server keeps
     // whichever snapshot covers the most versions.
+    let lastSnapshotAt = Date.now();
     const maybeSnapshot = async () => {
-      if (snapshotInFlight || appliedVersion - snapshotVersion < SNAPSHOT_EVERY) return;
+      if (snapshotInFlight || stale) return;
+      const versionsSince = appliedVersion - snapshotVersion;
+      const due = versionsSince >= SNAPSHOT_EVERY
+        || (versionsSince > 0 && Date.now() - lastSnapshotAt > CHECKPOINT_MS);
+      if (!due) return;
       snapshotInFlight = true;
       const coveredVersion = appliedVersion;
       try {
@@ -228,7 +250,7 @@ export default function CollabEditor({
           credentials: 'include',
           body: JSON.stringify({ payload, version: coveredVersion })
         });
-        if (res.ok || res.status === 409) snapshotVersion = coveredVersion;
+        if (res.ok || res.status === 409) { snapshotVersion = coveredVersion; lastSnapshotAt = Date.now(); }
       } catch (e) {
         console.warn('snapshot post failed', e);
       } finally {
@@ -326,6 +348,7 @@ export default function CollabEditor({
     return () => {
       cancelled = true;
       clearRetry();
+      if (apiRef) apiRef.current = null;
       unsubscribe();
       awareness.off('update', awarenessHandler);
       awareness.destroy();
