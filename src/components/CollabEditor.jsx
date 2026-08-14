@@ -55,7 +55,7 @@ const base64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
 export default function CollabEditor({
   slateId, docKey, username, mode, initialContent,
-  onChange, puntoClass = '', autofocus = false, onReady, onRemoved, onError
+  onChange, puntoClass = '', autofocus = false, onReady, onRemoved, onError, onRekeyed
 }) {
   const containerRef = useRef(null);
   const [session, setSession] = useState(null); // { ytext, awareness, undoManager }
@@ -68,6 +68,7 @@ export default function CollabEditor({
   const onReadyRef = useRef(onReady); onReadyRef.current = onReady;
   const onRemovedRef = useRef(onRemoved); onRemovedRef.current = onRemoved;
   const onErrorRef = useRef(onError); onErrorRef.current = onError;
+  const onRekeyedRef = useRef(onRekeyed); onRekeyedRef.current = onRekeyed;
   const usernameRef = useRef(username); usernameRef.current = username;
 
   // --- Document session: Y.Doc + encrypted relay, keyed by slate ---
@@ -91,7 +92,19 @@ export default function CollabEditor({
     let snapshotVersion = 0;
     let snapshotInFlight = false;
     let seq = 1;
+    let epoch = 0;      // key-rotation counter, from the joined frame
+    let stale = false;  // our doc key was rotated away — stop writing
     const sendQueue = [];
+
+    // The doc key rotated: everything we hold is under the dead key. Freeze
+    // this session and hand off — the parent re-resolves the key and remounts.
+    const goStale = () => {
+      if (stale) return;
+      stale = true;
+      sendQueue.length = 0;
+      clearRetry();
+      if (onRekeyedRef.current) onRekeyedRef.current();
+    };
 
     // The bootstrap `joined` frame can be lost (this component lazy-loads and
     // may subscribe after the room's first join round-trip already happened,
@@ -123,16 +136,17 @@ export default function CollabEditor({
     const flushQueue = () => {
       while (sendQueue.length) {
         const payload = sendQueue[0];
-        if (!sendCollabUpdate(slateId, payload, seq++)) return;
+        if (!sendCollabUpdate(slateId, payload, seq++, epoch)) return;
         sendQueue.shift();
       }
     };
 
     const sendUpdate = async (update) => {
+      if (stale) return;
       try {
         const payload = await wrapKey(update, key);
-        if (cancelled) return;
-        if (!sendCollabUpdate(slateId, payload, seq++)) sendQueue.push(payload);
+        if (cancelled || stale) return;
+        if (!sendCollabUpdate(slateId, payload, seq++, epoch)) sendQueue.push(payload);
       } catch (e) {
         console.error('collab update send failed', e);
       }
@@ -227,6 +241,7 @@ export default function CollabEditor({
       switch (event.type) {
         case 'joined': {
           if (becameReady) {
+            if ((event.epoch ?? 0) !== epoch) { goStale(); break; }
             // Rejoin while live: push what we wrote offline, pull what we missed.
             flushQueue();
             if (event.version > appliedVersion) fetchCollabUpdates(slateId, appliedVersion);
@@ -234,6 +249,7 @@ export default function CollabEditor({
           }
           if (loading) break;
           loading = true;
+          epoch = event.epoch ?? 0;
           try {
             if (event.version === 0 && event.snapshotVersion === 0) {
               if (!seeded) { seeded = true; seed(); }
@@ -282,7 +298,15 @@ export default function CollabEditor({
           if (onRemovedRef.current) onRemovedRef.current();
           break;
         }
+        case 'rekeyed': {
+          goStale();
+          break;
+        }
         case 'error': {
+          if (event.code === 'STALE_EPOCH') {
+            goStale();
+            break;
+          }
           // Fatal pre-bootstrap errors (revoked membership, caps) would
           // otherwise leave the loading note up until the retries exhaust.
           if (!becameReady && (event.code === 'NOT_MEMBER' || event.code === 'ROOM_LIMIT' || event.code === 'CONN_LIMIT')) {

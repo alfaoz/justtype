@@ -134,10 +134,11 @@ export function requestCollabJoin(slateId) {
 }
 
 // Fire an encrypted update into the slate's room. seq is echoed back on the
-// sender's own copy so callers can match acks. Returns false if the socket
-// isn't open (caller decides whether to queue or drop).
-export function sendCollabUpdate(slateId, payload, seq) {
-  return sendRaw({ type: 'update', slateId: Number(slateId), payload, seq });
+// sender's own copy so callers can match acks; epoch is the key-rotation
+// counter from the joined frame (the server rejects stale epochs). Returns
+// false if the socket isn't open (caller decides whether to queue or drop).
+export function sendCollabUpdate(slateId, payload, seq, epoch) {
+  return sendRaw({ type: 'update', slateId: Number(slateId), payload, seq, epoch });
 }
 
 // Request updates after `since` (reply arrives as a {type:'updates'} event).

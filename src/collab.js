@@ -9,7 +9,7 @@
 import { API_URL } from './config';
 import {
   generateSlateKey, wrapKey, unwrapKey, encryptContent, decryptContent,
-  encryptTitle, decryptTitle, decryptTags, importAppPublicKey, wrapKeyToAppKey, unwrapKeyRsa
+  encryptTitle, decryptTitle, encryptTags, decryptTags, importAppPublicKey, wrapKeyToAppKey, unwrapKeyRsa
 } from './crypto';
 import { getSlateKey } from './keyStore';
 import { getUserPrivateKey } from './userKeys';
@@ -95,6 +95,88 @@ export function fetchMembersAsMember(slateId) {
   return api(`/collab/slates/${slateId}/members`);
 }
 
+// --- Invite links. The URL is /join/<token>#k=<doc key, base64url>: the
+// token authenticates against the server (stored hashed there), the key
+// rides the fragment and never leaves the browser. ---
+
+const keyToFragment = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export const fragmentToKey = (s) =>
+  Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+
+export async function createInviteLink(slateNumber, docKey) {
+  const { token, expires_at } = await api(`/slates/${encodeURIComponent(slateNumber)}/collab/links`, { body: {} });
+  return { url: `${window.location.origin}/join/${token}#k=${keyToFragment(docKey)}`, expiresAt: expires_at };
+}
+
+export function revokeInviteLink(slateNumber) {
+  return api(`/slates/${encodeURIComponent(slateNumber)}/collab/links`, { method: 'DELETE' });
+}
+
+// Resolve a link for the join page; the title decrypts with the fragment key.
+export async function resolveInviteLink(token, fragmentKey) {
+  const data = await api(`/collab/links/${encodeURIComponent(token)}`);
+  let title = null;
+  if (data.encrypted_title && fragmentKey) {
+    try { title = await decryptTitle(data.encrypted_title, fragmentKey); } catch { /* stale key in link */ }
+  }
+  return { slateId: data.slate_id, owner: data.owner_username, alreadyMember: data.already_member, title };
+}
+
+// Join with the fragment key: wrap it to my master key and hand that in.
+export async function joinViaLink(token, fragmentKey, userId) {
+  const masterKey = await requireMasterKey(userId);
+  const wrappedKey = await wrapKey(fragmentKey, masterKey);
+  const data = await api(`/collab/links/${encodeURIComponent(token)}/join`, { body: { wrappedKey } });
+  return { slateId: data.slate_id, alreadyMember: !!data.already_member };
+}
+
+// --- Key rotation: real revocation. Generate a fresh doc key, re-encrypt the
+// canonical content/title/tags under it, wrap to self, RSA-wrap to every
+// remaining member (they re-wrap to their own master key on next open), and
+// let the server drop the old-key log/snapshot and bump the epoch. ---
+export async function rotateDocKey(slateNumber, userId, content, title, oldDocKey) {
+  const masterKey = await requireMasterKey(userId);
+  const newKey = await generateSlateKey();
+
+  // Carry tags across the rotation where they decrypt (doc-key tags for
+  // sure; master-key tags predate sharing and stay owner-readable anyway).
+  let encryptedTags = null;
+  try {
+    const slateRow = await api(`/slates/${encodeURIComponent(slateNumber)}`);
+    if (slateRow && slateRow.encrypted_tags) {
+      let tags = null;
+      if (oldDocKey) { try { tags = await decryptTags(slateRow.encrypted_tags, oldDocKey); } catch { /* try master */ } }
+      if (!tags) { try { tags = await decryptTags(slateRow.encrypted_tags, masterKey); } catch { /* unreadable */ } }
+      if (tags && tags.length) encryptedTags = await encryptTags(tags, newKey);
+    }
+  } catch (e) {
+    console.warn('tag carry-over failed during rotation', e);
+  }
+
+  const { members } = await fetchMembers(slateNumber);
+  const rewrapped = [];
+  for (const m of members || []) {
+    if (m.role === 'owner') continue;
+    const { public_key } = await api(`/users/${encodeURIComponent(m.username)}/public-key`);
+    const pub = await importAppPublicKey(public_key);
+    rewrapped.push({ username: m.username, inviteWrappedKey: await wrapKeyToAppKey(newKey, pub) });
+  }
+
+  await api(`/slates/${encodeURIComponent(slateNumber)}/collab/rotate`, {
+    body: {
+      ownerWrappedKey: await wrapKey(newKey, masterKey),
+      encryptedContent: await encryptContent(content || '', newKey),
+      encryptedTitle: await encryptTitle(title || 'untitled', newKey),
+      encryptedTags,
+      wordCount: countWords(content),
+      charCount: (content || '').length,
+      members: rewrapped
+    }
+  });
+  return newKey;
+}
+
 // Pending invites addressed to me, with titles decrypted where possible. Each
 // entry carries the unwrapped doc key so accepting doesn't refetch.
 export async function fetchInvites(userId) {
@@ -139,6 +221,23 @@ export function leaveSharedSlate(slateId) {
   return api(`/collab/slates/${slateId}/leave`, { body: {} });
 }
 
+// Resolve my copy of a shared slate's doc key. Normal path: AES-unwrap
+// wrapped_key with my master key. After a rotation my row holds only an
+// RSA-wrapped copy (invite_wrapped_key): unwrap it with my drop-box private
+// key, then persist a master-key-wrapped copy back so the next open is cheap.
+async function resolveMemberDocKey(row, slateId, userId, masterKey) {
+  if (row.wrapped_key) return unwrapKey(row.wrapped_key, masterKey);
+  if (!row.invite_wrapped_key) throw new Error('no key material for this slate');
+  const priv = await getUserPrivateKey(userId, masterKey);
+  const docKey = await unwrapKeyRsa(row.invite_wrapped_key, priv);
+  try {
+    await api(`/collab/slates/${slateId}/rewrap`, { body: { wrappedKey: await wrapKey(docKey, masterKey) } });
+  } catch (e) {
+    console.warn('rewrap persist failed (will retry next open)', e);
+  }
+  return docKey;
+}
+
 // Accepted shared slates (not mine), titles decrypted where possible.
 export async function fetchSharedSlates(userId) {
   const { shared } = await api('/collab/slates');
@@ -148,9 +247,9 @@ export async function fetchSharedSlates(userId) {
   for (const s of shared) {
     let title = null;
     let tags = [];
-    if (masterKey && s.wrapped_key) {
+    if (masterKey && (s.wrapped_key || s.invite_wrapped_key)) {
       try {
-        const docKey = await unwrapKey(s.wrapped_key, masterKey);
+        const docKey = await resolveMemberDocKey(s, s.slate_id, userId, masterKey);
         if (s.encrypted_title) title = await decryptTitle(s.encrypted_title, docKey);
         // Tags encrypted before sharing was turned on are under the owner's
         // master key and stay theirs; doc-key tags decrypt for everyone.
@@ -169,11 +268,11 @@ export async function fetchSharedSlates(userId) {
   return out;
 }
 
-// Full shared slate for the read view: unwrap my doc key copy, decrypt.
+// Full shared slate for the read view: resolve my doc key copy, decrypt.
 export async function fetchSharedSlate(slateId, userId) {
   const data = await api(`/collab/slates/${slateId}`);
   const masterKey = await requireMasterKey(userId);
-  const docKey = await unwrapKey(data.wrapped_key, masterKey);
+  const docKey = await resolveMemberDocKey(data, slateId, userId, masterKey);
   const content = data.encryptedContent ? await decryptContent(data.encryptedContent, docKey) : '';
   let title = null;
   if (data.encrypted_title) {

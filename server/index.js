@@ -3155,6 +3155,7 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
     db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
     if (slate.is_collab) collabHub.closeRoom(slate.id);
     if (collabDoc && collabDoc.snapshot_b2_file_id) {
@@ -3450,6 +3451,7 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     }
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
@@ -5232,6 +5234,7 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
     }
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)

@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { strings } from '../strings';
-import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember, fetchMembersAsMember, leaveSharedSlate } from '../collab';
+import {
+  enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember,
+  fetchMembersAsMember, leaveSharedSlate, createInviteLink, revokeInviteLink, rotateDocKey
+} from '../collab';
 import { withViewTransition } from '../viewTransition';
 
 // Owner-side sharing UI for a slate. All key material is generated and wrapped
@@ -44,8 +47,21 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   // Same two-step for removing a member — armed per username
   const [confirmRemove, setConfirmRemove] = useState(null);
   const removeTimerRef = useRef(null);
+  // Invite link: metadata from the server, plus the full URL when we just
+  // made one (the fragment key exists only client-side, so the URL is
+  // only ever shown right after creation).
+  const [linkInfo, setLinkInfo] = useState(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [confirmRevokeLink, setConfirmRevokeLink] = useState(false);
+  const revokeTimerRef = useRef(null);
+  const [rotating, setRotating] = useState(false);
 
-  useEffect(() => () => { clearTimeout(confirmTimerRef.current); clearTimeout(removeTimerRef.current); }, []);
+  useEffect(() => () => {
+    clearTimeout(confirmTimerRef.current);
+    clearTimeout(removeTimerRef.current);
+    clearTimeout(revokeTimerRef.current);
+  }, []);
 
   const enabled = !!docKey;
 
@@ -53,6 +69,7 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
     try {
       const data = memberView ? await fetchMembersAsMember(sharedSlateId) : await fetchMembers(slateNumber);
       setMembers(data.members || []);
+      if (!memberView) setLinkInfo(data.link || null);
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
     }
@@ -117,6 +134,22 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
     }
   };
 
+  // Rotation is what makes removal and link revocation real: the old key
+  // stops working everywhere. The new key flows back to the Writer so the
+  // live editor rebuilds under it.
+  const doRotate = async () => {
+    setRotating(true);
+    try {
+      const { content, title } = getCurrent();
+      const newKey = await rotateDocKey(slateNumber, userId, content, title, docKey);
+      onDocKeyChange(newKey, undefined);
+      setLinkUrl('');
+      setLinkInfo(null);
+    } finally {
+      setRotating(false);
+    }
+  };
+
   const handleRemoveClick = (name) => {
     if (confirmRemove !== name) {
       clearTimeout(removeTimerRef.current);
@@ -130,9 +163,57 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   };
 
   const handleRemove = async (name) => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setNotice('');
     try {
       await removeMember(slateNumber, name);
+      await doRotate();
+      setNotice(strings.collab.modal.removedRotated);
+      await loadMembers();
+    } catch (e) {
+      setError(String(e.message || '').toLowerCase());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreateLink = async () => {
+    setBusy(true); setError(''); setNotice(''); setLinkCopied(false);
+    try {
+      const { url } = await createInviteLink(slateNumber, docKey);
+      setLinkUrl(url);
+      await loadMembers();
+    } catch (e) {
+      setError(String(e.message || '').toLowerCase());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(linkUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch { /* clipboard unavailable — the url stays selectable */ }
+  };
+
+  const handleRevokeLinkClick = () => {
+    if (!confirmRevokeLink) {
+      setConfirmRevokeLink(true);
+      revokeTimerRef.current = setTimeout(() => setConfirmRevokeLink(false), 3000);
+      return;
+    }
+    clearTimeout(revokeTimerRef.current);
+    setConfirmRevokeLink(false);
+    handleRevokeLink();
+  };
+
+  const handleRevokeLink = async () => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await revokeInviteLink(slateNumber);
+      await doRotate();
+      setNotice(strings.collab.modal.revokedRotated);
       await loadMembers();
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
@@ -245,6 +326,63 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Invite link: the URL exists only right after creation (its
+                fragment carries the doc key, which the server never holds) */}
+            <div className="mb-6">
+              <p className="text-xs text-[var(--theme-text-dim)] mb-2">{strings.collab.modal.link.title}</p>
+              {linkUrl ? (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    readOnly
+                    value={linkUrl}
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 min-w-0 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-3 py-2 text-[var(--theme-text-muted)] text-xs focus:outline-none"
+                  />
+                  <button
+                    onClick={copyLink}
+                    className="bg-white text-black px-3 py-2 rounded hover:bg-[#e5e5e5] transition-all text-xs font-medium"
+                  >
+                    {linkCopied ? strings.collab.modal.link.copied : strings.collab.modal.link.copy}
+                  </button>
+                  <button
+                    onClick={handleRevokeLinkClick}
+                    disabled={busy}
+                    className={`transition-colors text-xs disabled:opacity-50 ${confirmRevokeLink ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
+                  >
+                    {confirmRevokeLink ? strings.collab.modal.link.revokeConfirm : strings.collab.modal.link.revoke}
+                  </button>
+                </div>
+              ) : linkInfo ? (
+                <div className="flex gap-3 items-center text-xs">
+                  <span className="text-[var(--theme-text-muted)]">{strings.collab.modal.link.active}</span>
+                  <button
+                    onClick={handleCreateLink}
+                    disabled={busy}
+                    className="text-[var(--theme-text-dim)] hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    {strings.collab.modal.link.copyNew}
+                  </button>
+                  <button
+                    onClick={handleRevokeLinkClick}
+                    disabled={busy}
+                    className={`transition-colors disabled:opacity-50 ${confirmRevokeLink ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
+                  >
+                    {confirmRevokeLink ? strings.collab.modal.link.revokeConfirm : strings.collab.modal.link.revoke}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handleCreateLink}
+                  disabled={busy}
+                  className="text-xs text-[var(--theme-text-dim)] hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {strings.collab.modal.link.create}
+                </button>
+              )}
+              <p className="text-xs text-[var(--theme-text-dim)] opacity-70 mt-2">{strings.collab.modal.link.hint}</p>
             </div>
 
             <div className="flex gap-3 items-center">

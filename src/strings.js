@@ -205,9 +205,39 @@ const strings = {
       statusPending: 'invited',
       remove: 'remove',
       removeConfirm: 'sure?',
+      removedRotated: 'removed. the slate key was rotated.',
+      revokedRotated: 'link revoked. the slate key was rotated.',
+      link: {
+        title: 'invite link',
+        create: 'create invite link',
+        copy: 'copy',
+        copied: 'copied',
+        active: 'a link is active.',
+        copyNew: 'get new link',
+        revoke: 'revoke',
+        revokeConfirm: 'sure?',
+        hint: 'anyone with the link can join. revoking it rotates the slate key, locking the old link out.'
+      },
       needsSave: 'save this slate before sharing it',
       appShared: 'this slate is shared with an app — a slate cannot be app-shared and collaborative at once.',
       close: 'close'
+    },
+    join: {
+      title: 'join a shared slate',
+      checking: 'checking the link...',
+      by: (owner) => `shared by ${owner}`,
+      untitled: 'untitled slate',
+      explainer: 'you were invited to write on this slate. it stays end-to-end encrypted; the key came with your link and never touches the server.',
+      alreadyMember: 'you already have access to this slate.',
+      join: 'join',
+      joining: 'joining...',
+      open: 'open',
+      decline: 'not now',
+      invalid: 'this link is no longer valid. ask for a fresh one.',
+      missingKey: 'this link is incomplete (its key part is missing). ask for a fresh one.',
+      loginFirst: 'log in to join this slate.',
+      login: 'log in',
+      back: 'back'
     },
     invites: {
       title: 'invites',
@@ -1276,30 +1306,18 @@ take care!
   whatsNew: {
     pageTitle: "what's new",
     versionTag: 'v4',
-    heroTitle: 'write together.',
-    heroSub: 'justtype v4 brings real-time collaboration to your slates, end-to-end encrypted like everything else here.',
+    heroTitle: 'write together. better than ever.',
+    heroSub: 'justtype v4 brings real-time collaboration to your slates, and markdown formatting when you want it to.',
     demo: {
       lineA: 'ideas flow better',
       lineB: "when they're shared",
       userA: 'alfa',
-      userB: 'mert'
+      userB: 'beta'
     },
     features: [
       {
         title: 'collab slates',
-        body: 'turn any slate collaborative and write in the same document at the same time. every keystroke syncs live between everyone in the group.'
-      },
-      {
-        title: 'end-to-end encrypted, still',
-        body: 'each collab slate gets its own key that only members hold. the server stores ciphertext it cannot read.'
-      },
-      {
-        title: 'live carets & presence',
-        body: "see who's in the slate and where they're writing. hover a caret to see whose it is."
-      },
-      {
-        title: 'invites, where you are',
-        body: 'invite people by username or with a link. invites land in your updates and on your slates page.'
+        body: 'turn any slate collaborative and write in the same document at the same time, while remaining fully end-to-end encrypted.'
       },
       {
         title: 'version history',
@@ -1307,11 +1325,15 @@ take care!
       },
       {
         title: 'unpublish, completely',
-        body: 'take a published slate all the way back. the public link dies and the slate returns to being fully private.'
+        body: "take a published slate all the way back. long overdue, but it's here!"
       },
       {
-        title: 'sweat the details',
-        body: 'smoother modals, inline sure? confirms, a footer that scrolls when space runs out, custom toasts.'
+        title: 'rich formatting with markdown',
+        body: 'we all know it, we all love it. markdown is here when you need it.'
+      },
+      {
+        title: 'a new justtype',
+        body: 'a new default identity, a new font, a new justtype.'
       }
     ],
     backLink: 'back to writing'

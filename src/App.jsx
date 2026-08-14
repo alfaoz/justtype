@@ -15,6 +15,7 @@ import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
 import { Status } from './components/Status';
 import { WhatsNew } from './components/WhatsNew';
+import { CollabJoin } from './components/CollabJoin';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
 import { PinSetupModal } from './components/PinSetupModal';
 import { API_URL } from './config';
@@ -379,6 +380,8 @@ export default function App() {
         setView('status');
       } else if (path === '/whats-new') {
         setView('whats-new');
+      } else if (path.startsWith('/join/')) {
+        setView('collab-join');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -926,7 +929,7 @@ export default function App() {
     return (
       <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
           html, body, #root {
             height: 100%;
             overflow: hidden;
@@ -991,11 +994,26 @@ export default function App() {
     return <WhatsNew />;
   }
 
+  // Collab invite link landing (the key rides the URL fragment, parsed there)
+  if (view === 'collab-join') {
+    return (
+      <>
+        <CollabJoin token={token} userId={userId} onLogin={() => setShowAuthModal(true)} />
+        {showAuthModal && (
+          <AuthModal
+            onClose={() => setShowAuthModal(false)}
+            onAuth={handleAuth}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
         html, body, #root {
           height: 100%;
           overflow: hidden;

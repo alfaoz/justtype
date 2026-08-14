@@ -1028,6 +1028,26 @@ try {
     );
   `);
   console.log('✓ Collab updates/docs tables initialized');
+
+  // Invite links + key rotation. A link's token is stored hashed; the doc key
+  // itself travels only in the link's URL fragment, which never reaches the
+  // server. collab_epoch counts doc-key rotations — the ws hub stamps it on
+  // joins and rejects updates encrypted under a rotated-away key.
+  if (!slateColsCollab.some(col => col.name === 'collab_epoch')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN collab_epoch INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added collab_epoch column to slates');
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collab_link_invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slate_id INTEGER NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_by INTEGER NOT NULL,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      expires_at INTEGER NOT NULL
+    );
+  `);
+  console.log('✓ Collab link invites table initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

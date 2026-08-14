@@ -184,7 +184,7 @@ export function PublicViewer() {
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
         html, body { background-color: var(--theme-bg); margin: 0; padding: 0; }
         body { font-family: var(--theme-font-ui, 'IBM Plex Mono', monospace); }
         ::-webkit-scrollbar { width: 8px; }

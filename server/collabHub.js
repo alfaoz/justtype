@@ -12,9 +12,10 @@
 //
 // Frame protocol (JSON text frames, payloads base64):
 //   c->s  {type:'join',  slateId}
-//   s->c  {type:'joined', slateId, version, snapshotVersion}
+//   s->c  {type:'joined', slateId, version, snapshotVersion, epoch}
 //   c->s  {type:'leave', slateId}
-//   c->s  {type:'update', slateId, payload, seq?}     -> logged + broadcast
+//   c->s  {type:'update', slateId, payload, epoch, seq?} -> logged + broadcast
+//   s->c  {type:'rekeyed', slateId}   -> doc key rotated, re-resolve + rebuild
 //   s->c  {type:'update', slateId, version, payload, authorId, seq?}
 //   c->s  {type:'fetch', slateId, since}               -> catch-up
 //   s->c  {type:'updates', slateId, updates:[{version,payload}], more}
@@ -141,6 +142,14 @@ function snapshotVersion(slateId) {
   return row ? row.snapshot_version : 0;
 }
 
+// Doc-key rotation counter (slates.collab_epoch). Updates encrypted under a
+// rotated-away key would poison the fresh log, so writers must present the
+// current epoch.
+function keyEpoch(slateId) {
+  const row = deps.db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slateId);
+  return row ? row.e : 0;
+}
+
 function userSocketCount(userId) {
   let n = 0;
   for (const client of wss.clients) if (client.userId === userId) n++;
@@ -165,12 +174,12 @@ function handleMessage(ws, raw) {
   switch (msg.type) {
     case 'join': {
       if (ws.slateRooms.has(slateId)) {
-        return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId) });
+        return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId), epoch: keyEpoch(slateId) });
       }
       if (ws.slateRooms.size >= MAX_ROOMS_PER_SOCKET) return sendError(ws, 'too many open slates', 'ROOM_LIMIT', slateId);
       if (!membership(slateId, ws.userId)) return sendError(ws, 'not a member', 'NOT_MEMBER', slateId);
       joinRoom(slateId, ws);
-      return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId) });
+      return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId), epoch: keyEpoch(slateId) });
     }
     case 'leave':
       return leaveRoom(slateId, ws);
@@ -178,6 +187,9 @@ function handleMessage(ws, raw) {
       if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
       if (typeof msg.payload !== 'string' || !msg.payload || msg.payload.length > MAX_PAYLOAD_CHARS) {
         return sendError(ws, 'bad payload', undefined, slateId);
+      }
+      if (Number(msg.epoch) !== keyEpoch(slateId)) {
+        return sendError(ws, 'stale key epoch', 'STALE_EPOCH', slateId);
       }
       let version;
       try {
@@ -275,6 +287,12 @@ function notifySlateChanged(slateId) {
   if (wss) broadcast(slateId, { type: 'changed', slateId });
 }
 
+// The doc key rotated: every client must re-resolve its wrapped key and
+// rebuild its doc from the fresh canonical blob.
+function notifyRekeyed(slateId) {
+  if (wss) broadcast(slateId, { type: 'rekeyed', slateId });
+}
+
 // A member lost access: drop their live sockets from the room.
 function kickMember(slateId, userId) {
   const set = rooms.get(slateId);
@@ -297,4 +315,4 @@ function closeRoom(slateId) {
   }
 }
 
-module.exports = { attach, notifySlateChanged, kickMember, closeRoom };
+module.exports = { attach, notifySlateChanged, notifyRekeyed, kickMember, closeRoom };

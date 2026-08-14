@@ -112,6 +112,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // solo slates). Set on load from the owner's wrapped copy, or by the share
   // modal when sharing is turned on/off.
   const [collabDocKey, setCollabDocKey] = useState(null);
+  // Bumped whenever the doc key changes (enable, rotation, rekey) to remount
+  // the collab editor, and to re-run the shared load after a rotation.
+  const [collabKeyGen, setCollabKeyGen] = useState(0);
+  const [collabReloadKey, setCollabReloadKey] = useState(0);
   const [showCollabModal, setShowCollabModal] = useState(false);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
   const [collabSlateDbId, setCollabSlateDbId] = useState(null);
@@ -303,6 +307,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setSharedBy(data.owner);
         setSharedRemoved(false);
         setCollabDocKey(data.docKey);
+        setCollabKeyGen((g) => g + 1);
         setCollabSlateDbId(sharedSlateId);
         lastSavedContentRef.current = JSON.stringify({ content: data.content || '' });
         setHasUnsavedChanges(false);
@@ -317,7 +322,34 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
     })();
     return () => { cancelled = true; };
-  }, [sharedSlateId, token, userId]);
+  }, [sharedSlateId, token, userId, collabReloadKey]);
+
+  // The doc key rotated under us (owner removed someone or revoked a link).
+  // Re-resolve our wrapped copy and rebuild the editor from the fresh blob.
+  const handleCollabRekeyed = useCallback(() => {
+    if (isShared) {
+      setCollabReloadKey((k) => k + 1);
+      return;
+    }
+    if (!currentSlate) return;
+    (async () => {
+      try {
+        const masterKey = userId ? await getSlateKey(userId) : null;
+        const res = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, { credentials: 'include' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.collab_wrapped_key || !masterKey) return;
+        const newKey = await unwrapKey(data.collab_wrapped_key, masterKey);
+        const plain = data.encryptedContent ? await decryptContent(data.encryptedContent, newKey) : '';
+        loadedContentRef.current = plain;
+        setContent(plain);
+        lastSavedContentRef.current = JSON.stringify({ content: plain });
+        setCollabDocKey(newKey);
+        setCollabKeyGen((g) => g + 1);
+      } catch (e) {
+        console.warn('rekey resolve failed', e);
+      }
+    })();
+  }, [isShared, currentSlate, userId]);
 
   // Load current slate
   useEffect(() => {
@@ -1489,8 +1521,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             }
           >
             <CollabEditorLazy
+              key={`ce-${collabSlateDbId}-${collabKeyGen}`}
               slateId={collabSlateDbId}
               docKey={collabDocKey}
+              onRekeyed={handleCollabRekeyed}
               username={localStorage.getItem('justtype-username')}
               mode={editorMode}
               initialContent={loadedContentRef.current}
@@ -2181,7 +2215,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           onDocKeyChange={(key, slateDbId) => {
             loadedContentRef.current = content;
             setCollabDocKey(key);
-            setCollabSlateDbId(slateDbId ?? null);
+            setCollabKeyGen((g) => g + 1);
+            // undefined = key rotation, same slate; null = collab disabled
+            setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
           }}
           onClose={() => setShowCollabModal(false)}
         />

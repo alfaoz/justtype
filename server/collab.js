@@ -15,9 +15,12 @@
 // grant sync paths assume a single-writer owner-canonical slate. Enforced here
 // on enable and in oauth.js at grant-creation time.
 //
-// Revocation in v1 removes the member row; a removed member may still hold the
-// doc key they were given, so real revocation is doc-key rotation (planned with
-// invite links). Interim removal still stops all server-brokered access.
+// Revocation is doc-key rotation (see /collab/rotate): the owner re-keys the
+// slate, re-wraps for everyone who stays, and the epoch guard locks the old
+// key out of the relay. Invite links carry the doc key in the URL FRAGMENT —
+// the server stores only a hash of the link token and never sees the key.
+
+const nodeCrypto = require('crypto');
 
 function mountCollab(app, deps) {
   const {
@@ -27,6 +30,16 @@ function mountCollab(app, deps) {
 
   const MAX_CONTENT_BYTES = 5 * 1024 * 1024;
   const MAX_MEMBERS = 10;
+  const LINK_TTL_SECONDS = 7 * 24 * 3600;
+
+  const hashToken = (token) => nodeCrypto.createHash('sha256').update(String(token)).digest('hex');
+  const getLinkBySlate = db.prepare('SELECT * FROM collab_link_invites WHERE slate_id = ?');
+  const findValidLink = (token) => {
+    const row = db.prepare('SELECT * FROM collab_link_invites WHERE token_hash = ?').get(hashToken(token));
+    if (!row) return null;
+    if (row.expires_at < Math.floor(Date.now() / 1000)) return null;
+    return row;
+  };
 
   const getUser = db.prepare('SELECT id, username, e2e_migrated, public_key FROM users WHERE id = ?');
   const getUserByName = db.prepare('SELECT id, username, e2e_migrated, public_key FROM users WHERE username = ?');
@@ -156,6 +169,7 @@ function mountCollab(app, deps) {
         db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
         db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
       })();
 
       if (collabHub) collabHub.closeRoom(slate.id);
@@ -228,7 +242,12 @@ function mountCollab(app, deps) {
         FROM collab_members m JOIN users u ON u.id = m.user_id
         WHERE m.slate_id = ? ORDER BY m.role = 'owner' DESC, m.created_at
       `).all(slate.id);
-      res.json({ enabled: true, members });
+      const linkRow = getLinkBySlate.get(slate.id);
+      const now = Math.floor(Date.now() / 1000);
+      res.json({
+        enabled: true, members,
+        link: linkRow && linkRow.expires_at > now ? { created_at: linkRow.created_at, expires_at: linkRow.expires_at } : null
+      });
     } catch (error) {
       console.error('Collab members error:', error);
       res.status(500).json({ error: 'Failed to list members' });
@@ -251,6 +270,207 @@ function mountCollab(app, deps) {
     } catch (error) {
       console.error('Collab remove member error:', error);
       res.status(500).json({ error: 'Failed to remove member' });
+    }
+  });
+
+  // --- Invite links. The shareable URL is /join/<token>#k=<doc key>: the
+  // token is the server-side credential (stored hashed), the key rides the
+  // fragment and never reaches us. One active link per slate; creating a new
+  // one replaces it. ---
+
+  app.post('/api/slates/:id/collab/links', authenticateToken, createRateLimitMiddleware('collabInvite'), (req, res) => {
+    try {
+      const slate = getOwnSlate.get(req.params.id, req.user.id);
+      if (!slate) return res.status(404).json({ error: 'Slate not found' });
+      if (!slate.is_collab) return res.status(409).json({ error: 'Enable collaboration on this slate first' });
+      const token = nodeCrypto.randomBytes(24).toString('base64url');
+      const expiresAt = Math.floor(Date.now() / 1000) + LINK_TTL_SECONDS;
+      db.transaction(() => {
+        db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+        db.prepare('INSERT INTO collab_link_invites (slate_id, token_hash, created_by, expires_at) VALUES (?, ?, ?, ?)')
+          .run(slate.id, hashToken(token), req.user.id, expiresAt);
+      })();
+      res.json({ token, expires_at: expiresAt });
+    } catch (error) {
+      console.error('Collab link create error:', error);
+      res.status(500).json({ error: 'Failed to create link' });
+    }
+  });
+
+  app.delete('/api/slates/:id/collab/links', authenticateToken, createRateLimitMiddleware('collabRespond'), (req, res) => {
+    try {
+      const slate = getOwnSlate.get(req.params.id, req.user.id);
+      if (!slate) return res.status(404).json({ error: 'Slate not found' });
+      db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Collab link revoke error:', error);
+      res.status(500).json({ error: 'Failed to revoke link' });
+    }
+  });
+
+  // Resolve a link for the join page. Possession of the token is the
+  // credential; encrypted_title only decrypts with the fragment key anyway.
+  app.get('/api/collab/links/:token', authenticateToken, createRateLimitMiddleware('collabLookup'), (req, res) => {
+    try {
+      const link = findValidLink(req.params.token);
+      const slate = link ? db.prepare(`
+        SELECT s.id, s.is_collab, s.encrypted_title, u.username AS owner_username
+        FROM slates s JOIN users u ON u.id = s.user_id WHERE s.id = ?
+      `).get(link.slate_id) : null;
+      if (!slate || !slate.is_collab) return res.status(404).json({ error: 'This link is no longer valid', code: 'LINK_INVALID' });
+      const me = getMember.get(slate.id, req.user.id);
+      res.json({
+        slate_id: slate.id,
+        owner_username: slate.owner_username,
+        encrypted_title: slate.encrypted_title,
+        already_member: !!(me && me.status === 'accepted')
+      });
+    } catch (error) {
+      console.error('Collab link resolve error:', error);
+      res.status(500).json({ error: 'Failed to resolve link' });
+    }
+  });
+
+  // Join via link: the client read the doc key from the fragment and wrapped
+  // it to its own master key. A pending username-invite upgrades in place.
+  app.post('/api/collab/links/:token/join', authenticateToken, createRateLimitMiddleware('collabRespond'), (req, res) => {
+    const { wrappedKey } = req.body || {};
+    try {
+      const user = getUser.get(req.user.id);
+      if (!user || !user.e2e_migrated) {
+        return res.status(403).json({ error: 'Collaboration requires end-to-end encryption on your account', code: 'COLLAB_E2E_REQUIRED' });
+      }
+      const link = findValidLink(req.params.token);
+      const slate = link ? db.prepare('SELECT id, is_collab, user_id FROM slates WHERE id = ?').get(link.slate_id) : null;
+      if (!slate || !slate.is_collab) return res.status(404).json({ error: 'This link is no longer valid', code: 'LINK_INVALID' });
+      const existing = getMember.get(slate.id, req.user.id);
+      if (existing && existing.status === 'accepted') {
+        return res.json({ success: true, slate_id: slate.id, already_member: true });
+      }
+      if (typeof wrappedKey !== 'string' || !wrappedKey.trim()) {
+        return res.status(400).json({ error: 'Wrapped doc key required' });
+      }
+      if (existing) {
+        db.prepare(`
+          UPDATE collab_members SET status = 'accepted', wrapped_key = ?, invite_wrapped_key = NULL, accepted_at = strftime('%s','now')
+          WHERE id = ?
+        `).run(wrappedKey, existing.id);
+      } else {
+        if (countMembers.get(slate.id).n >= MAX_MEMBERS) {
+          return res.status(409).json({ error: `A slate can have at most ${MAX_MEMBERS} members` });
+        }
+        db.prepare(`
+          INSERT INTO collab_members (slate_id, user_id, role, status, wrapped_key, invited_by, accepted_at)
+          VALUES (?, ?, 'editor', 'accepted', ?, ?, strftime('%s','now'))
+        `).run(slate.id, req.user.id, wrappedKey, link.created_by);
+      }
+      res.json({ success: true, slate_id: slate.id });
+    } catch (error) {
+      console.error('Collab link join error:', error);
+      res.status(500).json({ error: 'Failed to join' });
+    }
+  });
+
+  // --- Key rotation: real revocation. The owner's client generated a fresh
+  // doc key, re-encrypted the canonical content/title/tags under it, wrapped
+  // it to itself and RSA-wrapped it to everyone who stays. The old log and
+  // snapshot are ciphertext under the dead key, so they are dropped and the
+  // epoch guard locks stale clients out of the relay. Members named in the
+  // body get their new key; member rows NOT named are removed. ---
+  app.post('/api/slates/:id/collab/rotate', authenticateToken, createRateLimitMiddleware('collabEnable'), async (req, res) => {
+    const { ownerWrappedKey, encryptedContent, encryptedTitle, encryptedTags, wordCount, charCount, members } = req.body || {};
+    try {
+      const slate = getOwnSlate.get(req.params.id, req.user.id);
+      if (!slate || !slate.is_collab) return res.status(404).json({ error: 'Slate not found' });
+      if (typeof ownerWrappedKey !== 'string' || !ownerWrappedKey.trim()) {
+        return res.status(400).json({ error: 'Wrapped doc key required' });
+      }
+      if (typeof encryptedTitle !== 'string' || !encryptedTitle.trim()) {
+        return res.status(400).json({ error: 'Encrypted title required', code: 'E2E_TITLE_REQUIRED' });
+      }
+      const blob = decodeBlob(res, encryptedContent);
+      if (!blob) return;
+
+      const memberKeys = new Map(); // username -> RSA-wrapped new key
+      for (const m of Array.isArray(members) ? members : []) {
+        if (m && typeof m.username === 'string' && typeof m.inviteWrappedKey === 'string' && m.inviteWrappedKey.trim()) {
+          memberKeys.set(m.username.toLowerCase(), m.inviteWrappedKey);
+        }
+      }
+
+      const newFileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}`, blob);
+      const oldFileId = slate.b2_file_id;
+      const docRow = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id);
+      const rows = db.prepare(`
+        SELECT m.id, m.user_id, m.role, u.username FROM collab_members m
+        JOIN users u ON u.id = m.user_id WHERE m.slate_id = ?
+      `).all(slate.id);
+      const dropped = [];
+
+      db.transaction(() => {
+        if (typeof encryptedTags === 'string' && encryptedTags.trim()) {
+          db.prepare(`
+            UPDATE slates SET b2_file_id = ?, encrypted_title = ?, encrypted_tags = ?, word_count = ?, char_count = ?, size_bytes = ?,
+              collab_epoch = COALESCE(collab_epoch, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          `).run(newFileId, encryptedTitle, encryptedTags, wordCount || slate.word_count || 0, charCount || slate.char_count || 0, blob.length, slate.id);
+        } else {
+          db.prepare(`
+            UPDATE slates SET b2_file_id = ?, encrypted_title = ?, word_count = ?, char_count = ?, size_bytes = ?,
+              collab_epoch = COALESCE(collab_epoch, 0) + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+          `).run(newFileId, encryptedTitle, wordCount || slate.word_count || 0, charCount || slate.char_count || 0, blob.length, slate.id);
+        }
+        for (const row of rows) {
+          if (row.role === 'owner') {
+            db.prepare('UPDATE collab_members SET wrapped_key = ?, invite_wrapped_key = NULL WHERE id = ?').run(ownerWrappedKey, row.id);
+          } else {
+            const k = memberKeys.get(row.username.toLowerCase());
+            if (k) {
+              db.prepare('UPDATE collab_members SET invite_wrapped_key = ?, wrapped_key = NULL WHERE id = ?').run(k, row.id);
+            } else {
+              db.prepare('DELETE FROM collab_members WHERE id = ?').run(row.id);
+              dropped.push(row.user_id);
+            }
+          }
+        }
+        db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+      })();
+
+      const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slate.id).e;
+      if (collabHub) {
+        for (const uid of dropped) collabHub.kickMember(slate.id, uid);
+        collabHub.notifyRekeyed(slate.id);
+      }
+      if (oldFileId && oldFileId !== newFileId) {
+        try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
+      }
+      if (docRow && docRow.snapshot_b2_file_id) {
+        try { await b2Storage.deleteSlate(docRow.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+      }
+      res.json({ success: true, epoch });
+    } catch (error) {
+      console.error('Collab rotate error:', error);
+      b2ErrorResponse(res, error, 'Failed to rotate the key');
+    }
+  });
+
+  // Persist a member's re-wrapped copy after a rotation: they RSA-unwrapped
+  // the new key and re-wrapped it to their master key.
+  app.post('/api/collab/slates/:slateId/rewrap', authenticateToken, createRateLimitMiddleware('collabRespond'), (req, res) => {
+    const { wrappedKey } = req.body || {};
+    try {
+      if (typeof wrappedKey !== 'string' || !wrappedKey.trim()) {
+        return res.status(400).json({ error: 'Wrapped doc key required' });
+      }
+      const member = getMember.get(req.params.slateId, req.user.id);
+      if (!member || member.status !== 'accepted') return res.status(404).json({ error: 'Slate not found' });
+      db.prepare('UPDATE collab_members SET wrapped_key = ?, invite_wrapped_key = NULL WHERE id = ?').run(wrappedKey, member.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Collab rewrap error:', error);
+      res.status(500).json({ error: 'Failed to store key' });
     }
   });
 
@@ -350,7 +570,7 @@ function mountCollab(app, deps) {
     try {
       const shared = db.prepare(`
         SELECT s.id AS slate_id, s.encrypted_title, s.encrypted_tags, s.editor_mode, s.updated_at,
-               s.word_count, s.char_count, m.wrapped_key, u.username AS owner_username
+               s.word_count, s.char_count, m.wrapped_key, m.invite_wrapped_key, u.username AS owner_username
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
         JOIN users u ON u.id = s.user_id
@@ -385,7 +605,9 @@ function mountCollab(app, deps) {
         word_count: slate.word_count,
         char_count: slate.char_count,
         role: member.role,
-        wrapped_key: member.wrapped_key
+        wrapped_key: member.wrapped_key,
+        invite_wrapped_key: member.invite_wrapped_key,
+        collab_epoch: slate.collab_epoch || 0
       });
     } catch (error) {
       console.error('Collab fetch slate error:', error);
