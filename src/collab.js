@@ -90,6 +90,11 @@ export function removeMember(slateNumber, username) {
   return api(`/slates/${encodeURIComponent(slateNumber)}/collab/members/${encodeURIComponent(username)}`, { method: 'DELETE' });
 }
 
+// Member's view of the group (keyed by slate id — members have no slate_number)
+export function fetchMembersAsMember(slateId) {
+  return api(`/collab/slates/${slateId}/members`);
+}
+
 // Pending invites addressed to me, with titles decrypted where possible. Each
 // entry carries the unwrapped doc key so accepting doesn't refetch.
 export async function fetchInvites(userId) {

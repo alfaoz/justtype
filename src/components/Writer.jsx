@@ -6,6 +6,7 @@ import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addC
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { CollabShareModal } from './CollabShareModal';
+import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
@@ -80,7 +81,7 @@ async function pullAppEdits(slateNumber, masterKey) {
   }
 }
 
-export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal }, ref) => {
+export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null }, ref) => {
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('ready');
@@ -114,9 +115,25 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showCollabModal, setShowCollabModal] = useState(false);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
   const [collabSlateDbId, setCollabSlateDbId] = useState(null);
+  // Shared mode: this Writer shows a slate someone else owns — same surface,
+  // no owner powers (no PUT saves, publish, or member management)
+  const isShared = !!sharedSlateId;
+  const [sharedBy, setSharedBy] = useState(null);
+  const [sharedRemoved, setSharedRemoved] = useState(false);
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
   const [confirmForget, setConfirmForget] = useState(false);
   const forgetTimerRef = useRef(null);
+  // The settings strip scrolls when the window is narrow, so its popovers
+  // (theme picker, share menu) anchor to the viewport instead of the strip —
+  // an overflow container would clip anything opening upward out of it.
+  const [popoverAnchor, setPopoverAnchor] = useState(null);
+  const anchorPopover = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPopoverAnchor({
+      left: Math.min(r.left, window.innerWidth - 190),
+      bottom: window.innerHeight - r.top + 8
+    });
+  };
   // Decrypted blob content at load time — seeds the Y.Doc on a collab doc's first open
   const loadedContentRef = useRef('');
   const collabPeers = usePresence({
@@ -156,7 +173,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Restore local draft on initial mount (only if no slate is being loaded)
   useEffect(() => {
     // Only restore if we're on a new slate (no currentSlate) and no content yet
-    if (!currentSlate && !content) {
+    if (!currentSlate && !sharedSlateId && !content) {
       // Restore the draft's editor mode preference too
       if (localStorage.getItem('justtype-draft-mode') === 'wysiwyg') {
         setEditorModeState('wysiwyg');
@@ -189,8 +206,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       return;
     }
 
-    // Only save draft for new slates (not when editing existing ones)
-    if (currentSlate) {
+    // Only save draft for new slates (not when editing existing ones,
+    // and never for a slate someone shared with us)
+    if (currentSlate || isShared) {
       return;
     }
 
@@ -220,8 +238,42 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     };
   }, [content, title, currentSlate]);
 
+  // Load a slate someone shared with us: same Writer surface, content comes
+  // through the collab read path and every edit syncs over the relay.
+  useEffect(() => {
+    if (!sharedSlateId || !token) return;
+    let cancelled = false;
+    setIsLoading(true);
+    (async () => {
+      try {
+        const data = await fetchSharedSlate(sharedSlateId, userId);
+        if (cancelled) return;
+        loadedContentRef.current = data.content || '';
+        setContent(data.content || '');
+        setTitle(data.title || 'untitled slate');
+        setEditorModeState(data.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain');
+        setSharedBy(data.owner);
+        setSharedRemoved(false);
+        setCollabDocKey(data.docKey);
+        setCollabSlateDbId(sharedSlateId);
+        lastSavedContentRef.current = JSON.stringify({ content: data.content || '' });
+        setHasUnsavedChanges(false);
+        setLoadingFadeOut(true);
+        setContentFadeKey(prev => prev + 1);
+        setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load shared slate:', err);
+        setStatus(String(err.message || 'failed to load').toLowerCase());
+        setIsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sharedSlateId, token, userId]);
+
   // Load current slate
   useEffect(() => {
+    if (isShared) return;
     if (currentSlate && token) {
       setIsLoading(true);
       loadSlate(currentSlate.slate_number);
@@ -664,6 +716,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // drafts the preference rides along in localStorage until first save.
   const setEditorMode = (mode) => {
     setEditorModeState(mode);
+    if (isShared) return; // view preference only — not ours to persist
     if (currentSlate && token) {
       fetch(`${API_URL}/slates/${currentSlate.slate_number}/metadata`, {
         method: 'PATCH',
@@ -801,6 +854,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
 
   const saveSlateSync = async () => {
+    if (isShared) return; // shared slates persist through the collab relay
     if (!title.trim() || !token || !currentSlate) return;
 
     setStatus('saving...');
@@ -892,6 +946,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   }));
 
   const saveSlate = async () => {
+    if (isShared) return null; // shared slates persist through the collab relay
     // Extract title from first line of content
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
@@ -1392,6 +1447,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               mode={editorMode}
               initialContent={loadedContentRef.current}
               onChange={setContent}
+              onRemoved={() => setSharedRemoved(true)}
               puntoClass={`punto-${punto}`}
             />
           </React.Suspense>
@@ -1427,7 +1483,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
-          <div className="flex items-center gap-6 min-h-[32px] relative" ref={settingsMenuRef}>
+          <div className="flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0" ref={settingsMenuRef}>
             {/* Three dots button - animates to horizontal line when open */}
             <button
               ref={threeDotsRef}
@@ -1454,24 +1510,30 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </svg>
             </button>
 
-            {/* Menu buttons - appear after animation, slide in from three dots position */}
+            {/* Menu buttons - appear after animation, slide in from three dots
+                position. Bounded to the space before the right controls: on
+                narrow windows the strip scrolls, fading out at the cutoff. */}
             {showMenuButton && (
               <div
-                className={`absolute left-12 flex items-center gap-2 transition-opacity duration-500 ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
+                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
                 style={{ zIndex: 150 }}
+                onScroll={() => {
+                  setShowThemePicker(false);
+                  setShowPublishMenu(false);
+                }}
               >
                 <div className="relative" data-theme-picker>
                   <button
-                    onClick={toggleTheme}
+                    onClick={(e) => { anchorPopover(e); toggleTheme(); }}
                     className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
                     style={{ color: 'var(--theme-accent)' }}
                   >
                     theme: {theme}
                   </button>
-                  {showThemePicker && (
+                  {showThemePicker && popoverAnchor && (
                     <div
-                      className="absolute bottom-full left-0 mb-2 rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
-                      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)' }}
+                      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
                       onMouseLeave={() => setPreviewTheme(null)}
                     >
                       {/* Built-in themes */}
@@ -1594,7 +1656,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 >
                   {strings.writer.editorMode.label(editorMode)}
                 </button>
-                {token && currentSlate && (
+                {token && (currentSlate || isShared) && (
                   <>
                     <span className="opacity-30">·</span>
                     <button
@@ -1606,19 +1668,22 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     </button>
                   </>
                 )}
-                {token && (
+                {token && !isShared && (
                   <>
                     <span className="opacity-30">·</span>
                     <div className="relative">
                       <button
-                        onClick={() => setShowPublishMenu(!showPublishMenu)}
+                        onClick={(e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); }}
                         className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
                         style={{ color: 'var(--theme-accent)' }}
                       >
                         share
                       </button>
-                      {showPublishMenu && (
-                        <div className="absolute bottom-full left-0 mb-2 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
+                      {showPublishMenu && popoverAnchor && (
+                        <div
+                          className="fixed bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                          style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
+                        >
                           {!shareUrl && !wasPublishedBeforeEdit && (
                             <button
                               onClick={handlePublish}
@@ -1740,6 +1805,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 )}
 
+                {/* Shared slate: who owns it, and whether we lost access */}
+                {isShared && sharedBy && !sharedRemoved && (
+                  <span className="text-sm text-[var(--theme-text-dim)]">
+                    {strings.collab.viewer.sharedBy(sharedBy)}
+                  </span>
+                )}
+                {isShared && sharedRemoved && (
+                  <span className="text-sm" style={{ color: 'var(--theme-red)' }}>
+                    {strings.collab.viewer.accessRemoved}
+                  </span>
+                )}
+
                 {/* Who else is in this collab slate right now */}
                 {collabPeers.length > 0 && (
                   <span
@@ -1757,6 +1834,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 onMouseEnter={handleSaveMenuEnter}
                 onMouseLeave={handleSaveMenuLeave}
                 onClick={() => {
+                  if (isShared) {
+                    // Shared slates sync live — the button is a direct export
+                    setShowExportMenu(true);
+                    return;
+                  }
                   if (!token) return;
                   if (!hasUnsavedChanges && currentSlate) {
                     // Already saved, just show status
@@ -1768,8 +1850,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 }}
                 className="hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
               >
-                <span>[{strings.writer.buttons.save}]</span>
-                {token && <span className="text-xs opacity-50">⌘S</span>}
+                <span>[{isShared ? 'export' : strings.writer.buttons.save}]</span>
+                {token && !isShared && <span className="text-xs opacity-50">⌘S</span>}
               </button>
               {showSaveMenu && (
                 <div
@@ -1876,8 +1958,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     {strings.writer.buttons.save}
                   </button>
 
-                  {/* Share section */}
-                  {token && (
+                  {/* Share section (owner only — shared slates publish via their owner) */}
+                  {token && !isShared && (
                     <div className="flex flex-col gap-2">
                       {/* Status indicator */}
                       {(shareUrl || wasPublishedBeforeEdit) && (
@@ -1970,7 +2052,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     <span>{strings.writer.editorMode.menuTitle}</span>
                     <span className="text-[var(--theme-text-dim)]">{strings.writer.editorMode.value(editorMode)}</span>
                   </button>
-                  {token && currentSlate && (
+                  {token && (currentSlate || isShared) && (
                     <button
                       onClick={() => {
                         setShowMobileMenu(false);
@@ -2014,12 +2096,19 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       )}
 
       {/* COLLAB SHARE MODAL */}
-      {showCollabModal && currentSlate && (
+      {showCollabModal && (currentSlate || isShared) && (
         <CollabShareModal
-          slateNumber={currentSlate.slate_number}
+          slateNumber={currentSlate ? currentSlate.slate_number : null}
           userId={userId}
           username={localStorage.getItem('justtype-username')}
           docKey={collabDocKey}
+          memberView={isShared}
+          sharedSlateId={sharedSlateId}
+          onLeave={() => {
+            setShowCollabModal(false);
+            window.history.pushState({}, '', '/slates');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
           getCurrent={() => ({
             content,
             title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')

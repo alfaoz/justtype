@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { strings } from '../strings';
-import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember } from '../collab';
+import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember, fetchMembersAsMember, leaveSharedSlate } from '../collab';
 import { withViewTransition } from '../viewTransition';
 
 // Owner-side sharing UI for a slate. All key material is generated and wrapped
@@ -11,8 +11,28 @@ import { withViewTransition } from '../viewTransition';
 // the live doc key (null when the slate isn't collaborative); onDocKeyChange
 // hands the new key (or null after disable) back to the Writer so its save
 // path encrypts with the right key.
-export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose }) {
+// memberView: a collaborator (not the owner) opened this — show who's in
+// the group and offer leave; inviting/removing/turning off stay owner-only.
+export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose, memberView = false, sharedSlateId = null, onLeave }) {
   const close = () => withViewTransition(onClose);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const leaveTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(leaveTimerRef.current), []);
+
+  const handleLeaveClick = async () => {
+    if (!confirmLeave) {
+      setConfirmLeave(true);
+      leaveTimerRef.current = setTimeout(() => setConfirmLeave(false), 3000);
+      return;
+    }
+    clearTimeout(leaveTimerRef.current);
+    try {
+      await leaveSharedSlate(sharedSlateId);
+      if (onLeave) onLeave();
+    } catch (e) {
+      setError(String(e.message || '').toLowerCase());
+    }
+  };
   const [members, setMembers] = useState([]);
   const [inviteName, setInviteName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,16 +48,16 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
 
   const loadMembers = useCallback(async () => {
     try {
-      const data = await fetchMembers(slateNumber);
+      const data = memberView ? await fetchMembersAsMember(sharedSlateId) : await fetchMembers(slateNumber);
       setMembers(data.members || []);
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
     }
-  }, [slateNumber]);
+  }, [slateNumber, memberView, sharedSlateId]);
 
   useEffect(() => {
-    if (enabled) loadMembers();
-  }, [enabled, loadMembers]);
+    if (enabled || memberView) loadMembers();
+  }, [enabled, memberView, loadMembers]);
 
   const handleEnable = async () => {
     setBusy(true); setError('');
@@ -111,7 +131,41 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
       <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg md:text-xl text-white mb-4">{strings.collab.modal.title}</h2>
 
-        {!enabled ? (
+        {memberView ? (
+          <>
+            <div className="mb-6">
+              <p className="text-xs text-[var(--theme-text-dim)] mb-2">{strings.collab.modal.membersTitle}</p>
+              <div className="flex flex-col gap-1">
+                {members.map((m) => (
+                  <div key={m.username} className="flex items-center justify-between text-sm py-1">
+                    <span className="text-[var(--theme-text-muted)]">
+                      {m.username}{m.username === username ? ` (${strings.collab.modal.you})` : ''}
+                      <span className="text-[var(--theme-text-dim)] ml-2">
+                        {m.role === 'owner' ? strings.collab.modal.roleOwner : (m.status === 'pending' ? strings.collab.modal.statusPending : '')}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {error && <p className="text-sm mb-3" style={{ color: 'var(--theme-red)' }}>{error}</p>}
+            <div className="flex gap-3 items-center">
+              <button
+                onClick={handleLeaveClick}
+                className={`transition-colors text-xs ${confirmLeave ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
+              >
+                {confirmLeave ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={close}
+                className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+              >
+                {strings.collab.modal.close}
+              </button>
+            </div>
+          </>
+        ) : !enabled ? (
           <>
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.collab.modal.explainer}</p>
             {error && <p className="text-sm mb-4" style={{ color: 'var(--theme-red)' }}>{error}</p>}

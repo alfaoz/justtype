@@ -72,6 +72,16 @@ body {
 .animate-toast-in { animation: toast-in 0.2s ease-out both; }
 .animate-toast-out { animation: toast-out 0.22s ease-in both; }
 
+/* Settings strip: scrolls when the window is too narrow for every control,
+   with a soft fade at the cutoff instead of colliding with the right side */
+.settings-strip {
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+}
+.settings-strip::-webkit-scrollbar { display: none; }
+.settings-strip > * { flex-shrink: 0; }
+
 /* Remote carets + selections (y-codemirror.next). Colors arrive inline from
    each user's awareness state; these rules handle geometry and the name tag
    that appears on caret hover. */

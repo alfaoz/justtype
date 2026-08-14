@@ -507,7 +507,30 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     const q = debouncedSearchQuery.trim().toLowerCase();
     const activeTag = tagFilter;
 
-    const filtered = slates.filter(slate => {
+    // Slates shared with me live in the same list as my own — normalized to
+    // the slate shape so sort/search/filter treat them identically.
+    const sharedAsSlates = sharedSlates.map(sh => ({
+      shared: true,
+      sharedSlateId: sh.slateId,
+      id: `shared-${sh.slateId}`,
+      slate_number: `shared-${sh.slateId}`,
+      title: sh.title,
+      tags: sh.tags || [],
+      word_count: sh.wordCount || 0,
+      char_count: sh.charCount || 0,
+      updated_at: sh.updatedAt,
+      created_at: sh.updatedAt,
+      is_published: 0,
+      published_at: null,
+      pinned_at: null,
+      is_collab: 1,
+      owner: sh.owner,
+      source_app: null,
+      source_app_name: null,
+      adoption_pending: 0,
+    }));
+
+    const filtered = [...slates, ...sharedAsSlates].filter(slate => {
       const tags = Array.isArray(slate.tags) ? slate.tags : [];
 
       if (appFilter && slate.source_app !== appFilter) {
@@ -561,7 +584,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, sortBy]);
+  }, [slates, sharedSlates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, sortBy]);
 
   // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
   useEffect(() => {
@@ -622,43 +645,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         )}
 
-        {/* Slates shared with me */}
-        {sharedSlates.length > 0 && (
-          <div className="mb-6">
-            <p className="text-xs text-[var(--theme-text-dim)] mb-2">{strings.collab.shared.title}</p>
-            <div className="flex flex-col gap-2">
-              {sharedSlates.map((s) => (
-                <div key={s.slateId} className="flex items-center justify-between gap-3 p-3 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded hover:border-[var(--theme-text-dim)] transition-colors">
-                  <button onClick={() => onOpenShared && onOpenShared(s.slateId)} className="min-w-0 text-left flex-1">
-                    <span className="text-sm text-[var(--theme-text)] truncate block">{s.title || strings.slates.untitled}</span>
-                    <span className="text-xs text-[var(--theme-text-dim)]">
-                      {strings.collab.shared.by(s.owner)} · {strings.slates.stats.wordsShort(s.wordCount || 0)}
-                      {s.tags && s.tags.length > 0 ? ` · ${s.tags.join(', ')}` : ''}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      clearTimeout(leaveTimerRef.current);
-                      if (leaveConfirmId === s.slateId) {
-                        handleLeaveShared(s.slateId);
-                      } else {
-                        setLeaveConfirmId(s.slateId);
-                        leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
-                      }
-                    }}
-                    disabled={collabBusyId === `leave-${s.slateId}`}
-                    className={`text-xs transition-colors flex-shrink-0 disabled:opacity-50 ${leaveConfirmId === s.slateId ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
-                  >
-                    {leaveConfirmId === s.slateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Search + Sort + Filters */}
-        {slates.length > 0 && (
+        {(slates.length > 0 || sharedSlates.length > 0) && (
           <div className="flex flex-col gap-3 mb-6">
             <div className="flex flex-col md:flex-row gap-3 md:items-center">
               {/* Search */}
@@ -736,7 +724,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             </div>
 
             {/* Filter by collab status (only when collaborative slates exist) */}
-            {slates.some(s => s.is_collab) && (
+            {(slates.some(s => s.is_collab) || sharedSlates.length > 0) && (
               <div className="flex items-center gap-2 text-sm flex-wrap">
                 <span className="text-[var(--theme-text-dim)]">{strings.collab.filter.label}</span>
                 {[
@@ -791,7 +779,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         )}
 
-      {slates.length === 0 ? (
+      {(slates.length === 0 && sharedSlates.length === 0) ? (
         <div className="text-center py-16">
           <p className="text-[#666] mb-4 text-sm md:text-base">{strings.slates.empty.message}</p>
           <button
@@ -814,16 +802,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             const visibleTags = tags.slice(0, 4);
             const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
 
-            const status = slate.is_published
-              ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-              : slate.published_at
-                ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
+            const status = slate.shared
+              ? { label: strings.collab.shared.by(slate.owner), className: 'text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+              : slate.is_published
+                ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                : slate.published_at
+                  ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                  : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
 
             return (
               <div
                 key={slate.slate_number}
-                onClick={() => onSelectSlate(slate)}
+                onClick={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
                 className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -853,6 +843,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
                     {openMenuId === slate.slate_number && (
                       <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        {slate.shared ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              clearTimeout(leaveTimerRef.current);
+                              if (leaveConfirmId === slate.sharedSlateId) {
+                                setOpenMenuId(null);
+                                handleLeaveShared(slate.sharedSlateId);
+                              } else {
+                                setLeaveConfirmId(slate.sharedSlateId);
+                                leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
+                              }
+                            }}
+                            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
+                          >
+                            {leaveConfirmId === slate.sharedSlateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
+                          </button>
+                        ) : (
+                          <>
                         <button
                           onClick={(e) => togglePin(slate, e)}
                           className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
@@ -880,6 +889,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                         >
                           {strings.slates.menu.delete}
                         </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -951,16 +962,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             const visibleTags = tags.slice(0, 3);
             const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
 
-            const status = slate.is_published
-              ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-              : slate.published_at
-                ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
+            const status = slate.shared
+              ? { label: strings.collab.shared.by(slate.owner), className: 'text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+              : slate.is_published
+                ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                : slate.published_at
+                  ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
+                  : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
 
             return (
               <div
                 key={slate.slate_number}
-                onClick={() => onSelectSlate(slate)}
+                onClick={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
                 className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group flex flex-col min-h-[132px]"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -990,6 +1003,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
                     {openMenuId === slate.slate_number && (
                       <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+                        {slate.shared ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              clearTimeout(leaveTimerRef.current);
+                              if (leaveConfirmId === slate.sharedSlateId) {
+                                setOpenMenuId(null);
+                                handleLeaveShared(slate.sharedSlateId);
+                              } else {
+                                setLeaveConfirmId(slate.sharedSlateId);
+                                leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
+                              }
+                            }}
+                            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
+                          >
+                            {leaveConfirmId === slate.sharedSlateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
+                          </button>
+                        ) : (
+                          <>
                         <button
                           onClick={(e) => togglePin(slate, e)}
                           className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
@@ -1017,6 +1049,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                         >
                           {strings.slates.menu.delete}
                         </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

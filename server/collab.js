@@ -200,6 +200,16 @@ function mountCollab(app, deps) {
         INSERT INTO collab_members (slate_id, user_id, role, status, invite_wrapped_key, invited_by)
         VALUES (?, ?, 'editor', 'pending', ?, ?)
       `).run(slate.id, target.id, inviteWrappedKey, req.user.id);
+      // Surface the invite in the invitee's updates dropdown (content-free:
+      // titles are encrypted; the accept/decline banner lives in /slates).
+      try {
+        db.prepare(`
+          INSERT INTO notifications (type, title, message, link, filter_user_ids)
+          VALUES ('automated', 'collab invite', ?, '/slates', ?)
+        `).run(`${req.user.username} invited you to work on a slate together`, String(target.id));
+      } catch (err) {
+        console.warn('Failed to create invite notification:', err);
+      }
       res.json({ success: true, username: target.username });
     } catch (error) {
       console.error('Collab invite error:', error);
@@ -313,6 +323,25 @@ function mountCollab(app, deps) {
     } catch (error) {
       console.error('Collab leave error:', error);
       res.status(500).json({ error: 'Failed to leave' });
+    }
+  });
+
+  // Member list from a member's perspective (keyed by slate id, since only
+  // the owner has a slate_number for it). Same ACL-transparency as the
+  // owner view: members see who else is in the group.
+  app.get('/api/collab/slates/:slateId/members', authenticateToken, (req, res) => {
+    try {
+      const me = getMember.get(req.params.slateId, req.user.id);
+      if (!me || me.status !== 'accepted') return res.status(404).json({ error: 'Slate not found' });
+      const members = db.prepare(`
+        SELECT u.username, m.role, m.status, m.created_at
+        FROM collab_members m JOIN users u ON u.id = m.user_id
+        WHERE m.slate_id = ? ORDER BY m.role = 'owner' DESC, m.created_at
+      `).all(req.params.slateId);
+      res.json({ enabled: true, members });
+    } catch (error) {
+      console.error('Collab member-view members error:', error);
+      res.status(500).json({ error: 'Failed to list members' });
     }
   });
 

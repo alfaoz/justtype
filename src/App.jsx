@@ -16,7 +16,6 @@ import { Verify } from './components/Verify';
 import { Status } from './components/Status';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
 import { PinSetupModal } from './components/PinSetupModal';
-import { SharedSlateViewer } from './components/SharedSlateViewer';
 import { API_URL } from './config';
 import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } from './crypto';
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
@@ -1219,16 +1218,17 @@ export default function App() {
           </div>
         )}
         {view === 'shared' && sharedSlateId && (
-          <div className="h-full animate-slide-down">
-            <SharedSlateViewer
-              slateId={sharedSlateId}
-              userId={userId}
-              onBack={() => {
-                setView('slates');
-                window.history.pushState({}, '', '/slates');
-              }}
-            />
-          </div>
+          <Writer
+            key={`shared-${sharedSlateId}`}
+            token={token}
+            userId={userId}
+            currentSlate={null}
+            onSlateChange={() => {}}
+            onLogin={() => setShowAuthModal(true)}
+            onZenModeChange={setZenMode}
+            onOpenAuthModal={() => setShowAuthModal(true)}
+            sharedSlateId={sharedSlateId}
+          />
         )}
         {view === 'account' && (
           <div className="h-full animate-slide-down">
