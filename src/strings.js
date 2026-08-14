@@ -189,7 +189,7 @@ const strings = {
     menuButton: 'collab',
     modal: {
       title: 'collab',
-      explainer: 'invite people by username. the slate stays end-to-end encrypted — the key travels wrapped, the server never sees your words.',
+      explainer: 'collaboratively work on the same slate. invite people by their username or share a link, while staying end-to-end encrypted.',
       enableButton: 'turn on sharing',
       enabling: 'turning on...',
       disableButton: 'turn off sharing',
