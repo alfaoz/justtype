@@ -7,10 +7,13 @@ import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptFo
 import { getSlateKey } from '../keyStore';
 import { CollabShareModal } from './CollabShareModal';
 import { usePresence } from '../presence';
+import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 
 // Rich (live preview) editor loads on demand so plain-mode writers never pay for it
 const TiptapEditor = React.lazy(() => import('./LivePreviewEditor'));
+// Collaborative editor (yjs + remote carets) — its own on-demand chunk
+const CollabEditorLazy = React.lazy(() => import('./CollabEditor'));
 
 // Live re-sync (push): re-wrap the just-saved plaintext to every app that should
 // hold a copy of this slate — apps with an explicit grant AND apps the user gave
@@ -116,6 +119,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showCollabModal, setShowCollabModal] = useState(false);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
   const [collabSlateDbId, setCollabSlateDbId] = useState(null);
+  // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
+  const [confirmForget, setConfirmForget] = useState(false);
+  const forgetTimerRef = useRef(null);
+  // Decrypted blob content at load time — seeds the Y.Doc on a collab doc's first open
+  const loadedContentRef = useRef('');
   const collabPeers = usePresence({
     slateId: collabSlateDbId,
     docKey: collabDocKey,
@@ -709,13 +717,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         let contentKey = slateKey;
         if (data.is_collab && data.collab_wrapped_key) {
           contentKey = await unwrapKey(data.collab_wrapped_key, slateKey);
+          slateContent = await decryptContent(data.encryptedContent, contentKey);
+          loadedContentRef.current = slateContent;
           setCollabDocKey(contentKey);
           setCollabSlateDbId(data.id);
         } else {
           setCollabDocKey(null);
           setCollabSlateDbId(null);
+          slateContent = await decryptContent(data.encryptedContent, contentKey);
         }
-        slateContent = await decryptContent(data.encryptedContent, contentKey);
         // Decrypt title if encrypted
         if (data.encrypted_title && !data.is_published) {
           try {
@@ -1064,11 +1074,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           publishBody.publicTitle = firstLine || 'untitled slate';
         }
       } else {
-        // Unpublishing — encrypt title for private storage
+        // Unpublishing — encrypt title for private storage (collab slates
+        // keep their titles under the shared doc key)
         if (slateKey) {
           const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
           const titleToEncrypt = firstLine || 'untitled slate';
-          publishBody.encryptedTitle = await encryptTitle(titleToEncrypt, slateKey);
+          publishBody.encryptedTitle = await encryptTitle(titleToEncrypt, collabDocKey || slateKey);
         }
       }
 
@@ -1116,6 +1127,42 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     } catch (err) {
       console.error('Publish failed:', err);
       setStatus('publish failed');
+      setTimeout(() => setStatus('ready'), 2000);
+    }
+  };
+
+  // Complete unpublish: kill the share link for good and drop every trace of
+  // having been public — the slate is plainly zero-knowledge private again.
+  const handleForgetPublic = async () => {
+    if (!currentSlate) return;
+    try {
+      const slateKey = userId ? await getSlateKey(userId) : null;
+      const body = { isPublished: false, forget: true };
+      const titleKey = collabDocKey || slateKey;
+      if (titleKey) {
+        const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
+        body.encryptedTitle = await encryptTitle(firstLine || 'untitled slate', titleKey);
+      }
+      const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}/publish`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body),
+      });
+      if (response.ok) {
+        setShareUrl(null);
+        setWasPublishedBeforeEdit(false);
+        setStatus(strings.writer.status.forgottenPublic);
+        setTimeout(() => setStatus('ready'), 2500);
+      } else {
+        const data = await response.json().catch(() => ({}));
+        setStatus(String(data.error || 'unpublish failed').toLowerCase());
+        setTimeout(() => setStatus('ready'), 3000);
+      }
+      setShowPublishMenu(false);
+    } catch (err) {
+      console.error('Complete unpublish failed:', err);
+      setStatus('unpublish failed');
       setTimeout(() => setStatus('ready'), 2000);
     }
   };
@@ -1334,7 +1381,27 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* WRITING AREA */}
       <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
-        {editorMode === 'wysiwyg' ? (
+        {collabDocKey && collabSlateDbId ? (
+          // Collaborative slate: one live CM6 surface for BOTH modes (remote
+          // carets need it); `editorMode` only toggles the live preview.
+          <React.Suspense
+            fallback={
+              <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
+                {strings.writer.editorMode.loading}
+              </div>
+            }
+          >
+            <CollabEditorLazy
+              slateId={collabSlateDbId}
+              docKey={collabDocKey}
+              username={localStorage.getItem('justtype-username')}
+              mode={editorMode}
+              initialContent={loadedContentRef.current}
+              onChange={setContent}
+              puntoClass={`punto-${punto}`}
+            />
+          </React.Suspense>
+        ) : editorMode === 'wysiwyg' ? (
           <React.Suspense
             fallback={
               <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
@@ -1593,6 +1660,24 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                               className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
                             >
                               update public version
+                            </button>
+                          )}
+                          {(shareUrl || wasPublishedBeforeEdit) && (
+                            <button
+                              onClick={() => {
+                                clearTimeout(forgetTimerRef.current);
+                                if (confirmForget) {
+                                  setConfirmForget(false);
+                                  handleForgetPublic();
+                                } else {
+                                  setConfirmForget(true);
+                                  forgetTimerRef.current = setTimeout(() => setConfirmForget(false), 3000);
+                                }
+                              }}
+                              title={strings.writer.publishMenu.forgetHint}
+                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+                            >
+                              {confirmForget ? strings.writer.publishMenu.forgetConfirm : strings.writer.publishMenu.forget}
                             </button>
                           )}
                         </div>
@@ -1946,6 +2031,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
           })}
           onDocKeyChange={(key, slateDbId) => {
+            loadedContentRef.current = content;
             setCollabDocKey(key);
             setCollabSlateDbId(slateDbId ?? null);
           }}
@@ -1955,7 +2041,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => setShowAboutModal(false)}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => withViewTransition(() => setShowAboutModal(false))}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
             <div className="space-y-4 text-sm text-[var(--theme-text-muted)]">
@@ -2034,7 +2120,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </p>
             </div>
             <button
-              onClick={() => setShowAboutModal(false)}
+              onClick={() => withViewTransition(() => setShowAboutModal(false))}
               className="mt-6 w-full border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
             >
               {strings.writer.about.close}
@@ -2045,10 +2131,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* PUBLISH MODAL */}
       {showPublishModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => {
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => {
           setShowPublishModal(false);
           setLinkCopied(false);
-        }}>
+        })}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">anyone with this link can view your slate:</p>
@@ -2074,10 +2160,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 </span>
               </button>
               <button
-                onClick={() => {
+                onClick={() => withViewTransition(() => {
                   setShowPublishModal(false);
                   setLinkCopied(false);
-                }}
+                })}
                 className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 okay
@@ -2089,7 +2175,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* DONATE MODAL */}
       {showDonateModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowDonateModal(false)}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => setShowDonateModal(false))}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">support justtype</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
@@ -2133,7 +2219,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 donate
               </button>
               <button
-                onClick={() => setShowDonateModal(false)}
+                onClick={() => withViewTransition(() => setShowDonateModal(false))}
                 className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 cancel
@@ -2145,7 +2231,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* Already Subscribed Modal */}
       {showAlreadySubscribedModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowAlreadySubscribedModal(false)}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => setShowAlreadySubscribedModal(false))}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.subscription.alreadySubscribed.title}</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">
@@ -2162,7 +2248,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 {strings.subscription.alreadySubscribed.manageButton}
               </button>
               <button
-                onClick={() => setShowAlreadySubscribedModal(false)}
+                onClick={() => withViewTransition(() => setShowAlreadySubscribedModal(false))}
                 className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 {strings.subscription.alreadySubscribed.closeButton}

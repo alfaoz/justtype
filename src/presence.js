@@ -43,7 +43,9 @@ export function usePresence({ slateId, docKey, username, enabled }) {
       const me = usernameRef.current;
       if (!key || !me) return;
       try {
-        const blob = new TextEncoder().encode(JSON.stringify({ u: me, t: Date.now() }));
+        // k:'p' marks a presence heartbeat — caret awareness blobs use k:'y'
+        // on this same relay channel (see CollabEditor).
+        const blob = new TextEncoder().encode(JSON.stringify({ k: 'p', u: me, t: Date.now() }));
         sendCollabAwareness(slateId, await wrapKey(blob, key));
       } catch (e) {
         console.warn('presence announce failed', e);
@@ -58,6 +60,7 @@ export function usePresence({ slateId, docKey, username, enabled }) {
         try {
           const bytes = await unwrapKey(event.payload, key);
           const data = JSON.parse(new TextDecoder().decode(bytes));
+          if (data && data.k && data.k !== 'p') return; // caret awareness blob — not ours
           if (data && data.u && data.u !== usernameRef.current) {
             // Answer-back only for peers we haven't seen — a fresh joiner gets
             // listed everywhere within one round-trip, and known peers don't

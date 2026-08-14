@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { strings } from '../strings';
 import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember } from '../collab';
+import { withViewTransition } from '../viewTransition';
 
 // Owner-side sharing UI for a slate. All key material is generated and wrapped
 // in the browser (see src/collab.js); this component only orchestrates.
@@ -11,6 +12,7 @@ import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember 
 // hands the new key (or null after disable) back to the Writer so its save
 // path encrypts with the right key.
 export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose }) {
+  const close = () => withViewTransition(onClose);
   const [members, setMembers] = useState([]);
   const [inviteName, setInviteName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -105,7 +107,7 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   };
 
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={close}>
       <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg md:text-xl text-white mb-4">{strings.collab.modal.title}</h2>
 
@@ -122,7 +124,7 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                 {busy ? strings.collab.modal.enabling : strings.collab.modal.enableButton}
               </button>
               <button
-                onClick={onClose}
+                onClick={close}
                 className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 {strings.collab.modal.close}
@@ -187,7 +189,7 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               </button>
               <div className="flex-1" />
               <button
-                onClick={onClose}
+                onClick={close}
                 className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 {strings.collab.modal.close}

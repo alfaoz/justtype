@@ -29,7 +29,7 @@ const strings = {
     },
     publicState: {
       current: 'public',
-      outdated: 'outdated · sync',
+      outdated: 'private draft · sync',
       outdatedHint: 'your public copy is stale — click to update it'
     },
     zenMode: {
@@ -92,7 +92,13 @@ const strings = {
       savedAsPrivate: 'saved as private',
       published: 'published',
       republished: 'republished',
-      draftRestored: 'draft restored'
+      draftRestored: 'draft restored',
+      forgottenPublic: 'unpublished — link disabled'
+    },
+    publishMenu: {
+      forget: 'unpublish completely',
+      forgetConfirm: 'sure?',
+      forgetHint: 'kills the public link for good and forgets this slate was ever public'
     },
     publishButton: {
       publish: 'publish',
@@ -231,8 +237,7 @@ const strings = {
       title: 'shared with you',
       by: (owner) => `by: ${owner}`,
       leave: 'leave',
-      leaveConfirm: 'sure?',
-      readOnlyNote: 'read-only for now — live editing is on its way'
+      leaveConfirm: 'sure?'
     },
     filter: {
       label: 'show:',

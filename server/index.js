@@ -3027,7 +3027,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 
 // Publish/unpublish slate
 app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
-  const { isPublished, publicContent, publicTitle, encryptedTitle } = req.body;
+  const { isPublished, publicContent, publicTitle, encryptedTitle, forget } = req.body;
 
   // For E2E users, private titles must be zero-knowledge. When unpublishing, require an encrypted title.
   if (req.e2e && isPublished === false && !encryptedTitle) {
@@ -3076,9 +3076,16 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       publicFileId = null;
     }
 
+    // Complete unpublish: forget the public history entirely — the share
+    // link dies for good (a future publish mints a fresh id) and no
+    // "was public" residue remains; the slate is plainly private again.
+    const forgetAll = !isPublished && !!forget;
+    if (forgetAll) shareId = null;
+
     // Only set published_at when publishing for the first time
     // Keep existing published_at when unpublishing (to track that it was published before)
-    const publishedAt = isPublished && !slate.published_at ? new Date().toISOString() : slate.published_at;
+    const publishedAt = forgetAll ? null
+      : (isPublished && !slate.published_at ? new Date().toISOString() : slate.published_at);
 
     // Handle title encryption state based on publish action
     let titleToStore = slate.title;

@@ -7,8 +7,10 @@ import { ShareSlates } from './ShareSlates';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
+import { useToast } from './Toast';
 
 export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, onUsernameUpdate, recoveryKeyPending, onRecoveryKeyShown, onRecoveryKeyAcknowledged }) {
+  const [showToast, toastNode] = useToast();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -490,12 +492,12 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         (onForceLogout || onLogout)();
       } else {
         const data = await response.json();
-        alert(data.error || strings.account.sessions.errors.logoutAllFailed);
+        showToast(data.error || strings.account.sessions.errors.logoutAllFailed);
         setLoggingOutAll(false);
       }
     } catch (err) {
       console.error('Failed to logout everywhere:', err);
-      alert(strings.account.sessions.errors.logoutAllFailed);
+      showToast(strings.account.sessions.errors.logoutAllFailed);
       setLoggingOutAll(false);
     }
   };
@@ -769,7 +771,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         setEmailStep('input');
         setNewEmail('');
         setVerificationCode('');
-        alert(strings.account.emailChange.success.changed);
+        showToast(strings.account.emailChange.success.changed);
       } else {
         setEmailError(data.error || strings.account.emailChange.errors.verifyFailed);
       }
@@ -844,10 +846,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         // Redirect to Google OAuth with linking token
         window.location.href = `https://justtype.io/auth/google/link?state=${data.linkingToken}`;
       } else {
-        alert(data.error || 'failed to initiate google linking');
+        showToast(data.error || 'failed to initiate google linking');
       }
     } catch (err) {
-      alert('failed to initiate google linking');
+      showToast('failed to initiate google linking');
     }
   };
 
@@ -957,10 +959,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         setShowUnlinkGoogleModal(true);
         setUnlinkSuccess(strings.account.googleAuth.unlink.success.codeSent);
       } else {
-        alert(data.error || 'failed to send verification code');
+        showToast(data.error || 'failed to send verification code');
       }
     } catch (err) {
-      alert('failed to send verification code');
+      showToast('failed to send verification code');
     } finally {
       setRequestingUnlink(false);
     }
@@ -1965,6 +1967,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         />
       )}
       </div>
+      {toastNode}
     </div>
   );
 }

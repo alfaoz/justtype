@@ -4,6 +4,8 @@ import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
+import { useToast } from './Toast';
+import { withViewTransition } from '../viewTransition';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -19,6 +21,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [leaveConfirmId, setLeaveConfirmId] = useState(null);
   const leaveTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(leaveTimerRef.current), []);
+  const [showToast, toastNode] = useToast();
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -219,7 +222,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   };
 
   const cancelDelete = () => {
-    setDeleteModal({ show: false, slateId: null, slateTitle: '' });
+    withViewTransition(() => setDeleteModal({ show: false, slateId: null, slateTitle: '' }));
   };
 
   const confirmDelete = async () => {
@@ -238,11 +241,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         setSlates(prevSlates => prevSlates.filter(s => s.slate_number !== id));
       } else {
         const data = await response.json();
-        alert(data.error || strings.errors.deleteSlate);
+        showToast(data.error || strings.errors.deleteSlate);
       }
     } catch (err) {
       console.error('Failed to delete slate:', err);
-      alert(strings.errors.deleteSlate);
+      showToast(strings.errors.deleteSlate);
     }
   };
 
@@ -271,11 +274,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           )
         );
       } else {
-        alert(data.error || strings.errors.pinFailed);
+        showToast(data.error || strings.errors.pinFailed);
       }
     } catch (err) {
       console.error('Failed to toggle pin:', err);
-      alert(strings.errors.pinFailed);
+      showToast(strings.errors.pinFailed);
     }
   };
 
@@ -294,7 +297,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   };
 
   const closeTagsEditor = () => {
-    setTagsModal({ show: false, slateId: null, slateTitle: '', tags: [] });
+    withViewTransition(() => setTagsModal({ show: false, slateId: null, slateTitle: '', tags: [] }));
     setTagInput('');
     setTagError('');
     setTagsSaving(false);
@@ -413,7 +416,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           const slateData = await slateResp.json();
 
           if (!slateResp.ok) {
-            alert(slateData.error || strings.errors.loadFailed);
+            showToast(slateData.error || strings.errors.loadFailed);
             return;
           }
 
@@ -436,7 +439,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           body.encryptedTitle = await encryptTitle(titleToEncrypt, slateKey);
         }
       } else if (looksE2E) {
-        alert(strings.slates.unlockRequired);
+        showToast(strings.slates.unlockRequired);
         return;
       }
 
@@ -467,11 +470,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         );
       } else {
         const data = await response.json();
-        alert(data.error || strings.errors.publishFailed);
+        showToast(data.error || strings.errors.publishFailed);
       }
     } catch (err) {
       console.error('Failed to toggle publish:', err);
-      alert(strings.errors.publishFailed);
+      showToast(strings.errors.publishFailed);
     }
   };
 
@@ -1173,6 +1176,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         </div>
       )}
       </div>
+      {toastNode}
     </div>
   );
 }

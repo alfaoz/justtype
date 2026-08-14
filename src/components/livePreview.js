@@ -33,6 +33,10 @@ class CopyButtonWidget extends WidgetType {
     btn.className = 'cm-lp-copy';
     btn.type = 'button';
     btn.textContent = 'copy';
+    // The label swap below mutates DOM inside cm-content; without this flag
+    // CodeMirror's mutation observer reconciles the "foreign" change and the
+    // rendered view falls apart.
+    btn.cmIgnore = true;
     btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
     btn.onclick = (e) => {
       e.preventDefault();
@@ -350,27 +354,35 @@ export function livePreview({ reveal = true } = {}) {
                 }
               }
 
-              const colMax = [];
-              for (const row of rows) {
-                row.cells.forEach((cell, i) => {
-                  const len = cell.to - cell.from;
-                  if (!colMax[i] || len > colMax[i]) colMax[i] = len;
-                });
+              // Align on pipe-to-pipe SEGMENT widths (they include the
+              // author's own padding spaces): measuring trimmed cell nodes
+              // double-pads hand-aligned tables and the pipes drift.
+              const rowPipes = rows.map(row => ({
+                row,
+                pipes: row.node.getChildren('TableDelimiter').map(p => p.from)
+              }));
+              const segMax = [];
+              for (const { pipes } of rowPipes) {
+                for (let i = 0; i + 1 < pipes.length; i++) {
+                  const len = pipes[i + 1] - pipes[i] - 1;
+                  if (!segMax[i] || len > segMax[i]) segMax[i] = len;
+                }
               }
 
-              for (const row of rows) {
+              for (const { row, pipes } of rowPipes) {
                 if (row.node.name === 'TableHeader') {
                   all.push(TABLE_HEADER.range(row.node.from, row.node.to));
                 }
                 for (const pipe of row.node.getChildren('TableDelimiter')) {
                   all.push(TABLE_DELIM.range(pipe.from, pipe.to));
                 }
-                row.cells.forEach((cell, i) => {
-                  const deficit = (colMax[i] || 0) - (cell.to - cell.from);
+                for (let i = 0; i + 1 < pipes.length; i++) {
+                  const deficit = (segMax[i] || 0) - (pipes[i + 1] - pipes[i] - 1);
                   if (deficit > 0) {
-                    all.push(Decoration.widget({ widget: new PadWidget(deficit), side: 1 }).range(cell.to));
+                    // Pad just before the closing pipe so text stays left-aligned
+                    all.push(Decoration.widget({ widget: new PadWidget(deficit), side: -1 }).range(pipes[i + 1]));
                   }
-                });
+                }
               }
 
               if (sepRow) {
@@ -386,7 +398,7 @@ export function livePreview({ reveal = true } = {}) {
                     const ch = i < text.length ? text[i] : '|';
                     if (ch === '|') {
                       if (segStart !== null && segStart < i) {
-                        const width = (colMax[col] || Math.max(1, i - segStart - 2)) + 2;
+                        const width = segMax[col] || Math.max(1, i - segStart);
                         all.push(Decoration.replace({
                           widget: new TextMarkerWidget('─'.repeat(width), 'cm-lpmark'),
                         }).range(sepRow.from + segStart, sepRow.from + i));

@@ -1,6 +1,6 @@
 {
   "name": "justtype",
-  "version": "3.9.0-beta.1",
+  "version": "3.10.0-beta.1",
   "description": "Just Type - Minimalist writing app with slates",
   "main": "server/index.js",
   "scripts": {
@@ -34,7 +34,10 @@
     "resend": "^6.5.2",
     "stripe": "^20.0.0",
     "web-push": "^3.6.7",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "y-codemirror.next": "^0.3.5",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.20"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

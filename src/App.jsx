@@ -25,6 +25,7 @@ import { strings } from './strings';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
+import { withViewTransition } from './viewTransition';
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
@@ -1325,7 +1326,7 @@ export default function App() {
               your slates are encrypted and saved automatically. happy writing!
             </p>
             <button
-              onClick={() => setShowGoogleSuccessModal(false)}
+              onClick={() => withViewTransition(() => setShowGoogleSuccessModal(false))}
               className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
             >
               get started
@@ -1435,7 +1436,7 @@ export default function App() {
 
       {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => setShowLogoutConfirm(false)}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => withViewTransition(() => setShowLogoutConfirm(false))}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg text-white mb-2">{strings.account.sessions.logoutConfirm.title}</h2>
             <p className="text-[var(--theme-text-muted)] text-sm mb-2">{strings.account.sessions.logoutConfirm.message}</p>
@@ -1444,7 +1445,7 @@ export default function App() {
             )}
             <div className="flex gap-3 mt-4">
               <button
-                onClick={() => setShowLogoutConfirm(false)}
+                onClick={() => withViewTransition(() => setShowLogoutConfirm(false))}
                 className="flex-1 px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.sessions.logoutConfirm.cancel}
@@ -1491,7 +1492,7 @@ export default function App() {
                 {strings.pin.googleReauth.button}
               </button>
               <button
-                onClick={() => setNeedsGoogleReauth(false)}
+                onClick={() => withViewTransition(() => setNeedsGoogleReauth(false))}
                 className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 {strings.pin.googleReauth.later}
