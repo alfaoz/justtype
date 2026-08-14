@@ -27,6 +27,11 @@ const strings = {
       value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
       loading: 'loading rich editor...'
     },
+    publicState: {
+      current: 'public',
+      outdated: 'outdated · sync',
+      outdatedHint: 'your public copy is stale — click to update it'
+    },
     zenMode: {
       on: 'zen mode on',
       off: 'zen mode off'
@@ -193,13 +198,14 @@ const strings = {
 
   // e2ee collaborative slates
   collab: {
-    menuButton: 'share',
+    menuButton: 'collab',
     modal: {
-      title: 'share slate',
+      title: 'collab',
       explainer: 'invite people by username. the slate stays end-to-end encrypted — the key travels wrapped, the server never sees your words.',
       enableButton: 'turn on sharing',
       enabling: 'turning on...',
       disableButton: 'turn off sharing',
+      disableConfirm: 'sure?',
       disabling: 'turning off...',
       disableHint: 'turning sharing off removes everyone and re-keys the slate.',
       inputPlaceholder: 'username to invite...',
@@ -223,15 +229,26 @@ const strings = {
     },
     shared: {
       title: 'shared with you',
-      by: (owner) => `by ${owner}`,
+      by: (owner) => `by: ${owner}`,
       leave: 'leave',
       leaveConfirm: 'sure?',
       readOnlyNote: 'read-only for now — live editing is on its way'
+    },
+    filter: {
+      label: 'show:',
+      all: 'all',
+      collab: 'collab'
+    },
+    badge: 'collab',
+    presence: {
+      here: (peers) => peers.length === 1 ? `● ${peers[0].username}` : `● ${peers.length} here`
     },
     viewer: {
       sharedBy: (owner) => `shared by ${owner}`,
       back: '← back',
       loading: 'loading...',
+      live: 'live',
+      accessRemoved: 'your access was removed',
       view: (mode) => `view: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`
     },
     errors: {

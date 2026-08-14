@@ -1289,8 +1289,8 @@ export default function App() {
 
       {/* REPUBLISH WARNING MODAL */}
       {showRepublishModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">unpublished changes</h2>
             <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               your edits won't be visible to others until you republish.
@@ -1315,8 +1315,8 @@ export default function App() {
 
       {/* GOOGLE OAUTH SUCCESS MODAL */}
       {showGoogleSuccessModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">welcome to justtype!</h2>
             <p className="text-sm text-[var(--theme-text-dim)] mb-4">
               you've successfully signed in with google as <span className="text-white">{username}</span>.
@@ -1336,7 +1336,7 @@ export default function App() {
 
       {/* PAYMENT SUCCESS MODAL */}
       {showPaymentSuccessModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <style>{`
             @keyframes confetti-fall {
               0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
@@ -1373,7 +1373,7 @@ export default function App() {
             />
           ))}
 
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full celebration-modal">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full celebration-modal">
             <div className="text-center">
               <div className="text-6xl mb-4">🎉</div>
               <h2 className="text-2xl md:text-3xl text-white mb-4">thank you!</h2>
@@ -1408,8 +1408,8 @@ export default function App() {
 
       {/* GOOGLE OAUTH ERROR MODAL */}
       {showGoogleErrorModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">
               {googleErrorType === 'account_exists' ? 'account already exists' : 'sign in failed'}
             </h2>
@@ -1436,7 +1436,7 @@ export default function App() {
       {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => setShowLogoutConfirm(false)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg text-white mb-2">{strings.account.sessions.logoutConfirm.title}</h2>
             <p className="text-[var(--theme-text-muted)] text-sm mb-2">{strings.account.sessions.logoutConfirm.message}</p>
             {(authProvider === 'google' || authProvider === 'both') && (
@@ -1479,8 +1479,8 @@ export default function App() {
       {/* Google user stuck mid-E2E-migration with no local key: only a fresh
           Google sign-in can re-release the legacy key for PIN setup */}
       {needsGoogleReauth && !showPinSetup && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.pin.googleReauth.title}</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.pin.googleReauth.message}</p>
             <div className="flex gap-3">

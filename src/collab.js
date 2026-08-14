@@ -9,7 +9,7 @@
 import { API_URL } from './config';
 import {
   generateSlateKey, wrapKey, unwrapKey, encryptContent, decryptContent,
-  encryptTitle, decryptTitle, importAppPublicKey, wrapKeyToAppKey, unwrapKeyRsa
+  encryptTitle, decryptTitle, decryptTags, importAppPublicKey, wrapKeyToAppKey, unwrapKeyRsa
 } from './crypto';
 import { getSlateKey } from './keyStore';
 import { getUserPrivateKey } from './userKeys';
@@ -49,7 +49,7 @@ async function requireMasterKey(userId) {
 export async function enableCollab(slateNumber, userId, content, title) {
   const masterKey = await requireMasterKey(userId);
   const docKey = await generateSlateKey();
-  await api(`/slates/${encodeURIComponent(slateNumber)}/collab/enable`, {
+  const res = await api(`/slates/${encodeURIComponent(slateNumber)}/collab/enable`, {
     body: {
       ownerWrappedKey: await wrapKey(docKey, masterKey),
       encryptedContent: await encryptContent(content || '', docKey),
@@ -58,7 +58,7 @@ export async function enableCollab(slateNumber, userId, content, title) {
       charCount: (content || '').length
     }
   });
-  return docKey;
+  return { docKey, slateId: res.slate_id };
 }
 
 // Disable collaboration: re-encrypt back under the owner's master key; the
@@ -142,16 +142,23 @@ export async function fetchSharedSlates(userId) {
   const out = [];
   for (const s of shared) {
     let title = null;
-    if (masterKey && s.wrapped_key && s.encrypted_title) {
+    let tags = [];
+    if (masterKey && s.wrapped_key) {
       try {
-        title = await decryptTitle(s.encrypted_title, await unwrapKey(s.wrapped_key, masterKey));
+        const docKey = await unwrapKey(s.wrapped_key, masterKey);
+        if (s.encrypted_title) title = await decryptTitle(s.encrypted_title, docKey);
+        // Tags encrypted before sharing was turned on are under the owner's
+        // master key and stay theirs; doc-key tags decrypt for everyone.
+        if (s.encrypted_tags) {
+          try { tags = await decryptTags(s.encrypted_tags, docKey); } catch { tags = []; }
+        }
       } catch (e) {
-        console.warn('shared title decrypt failed', e);
+        console.warn('shared slate decrypt failed', e);
       }
     }
     out.push({
       slateId: s.slate_id, owner: s.owner_username, editorMode: s.editor_mode,
-      updatedAt: s.updated_at, wordCount: s.word_count, charCount: s.char_count, title
+      updatedAt: s.updated_at, wordCount: s.word_count, charCount: s.char_count, title, tags
     });
   }
   return out;

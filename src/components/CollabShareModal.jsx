@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { strings } from '../strings';
 import { enableCollab, disableCollab, inviteToSlate, fetchMembers, removeMember } from '../collab';
 
@@ -16,6 +16,11 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Two-step turn-off: first click arms "sure?", reverts after 3s untouched
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  const confirmTimerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(confirmTimerRef.current), []);
 
   const enabled = !!docKey;
 
@@ -36,8 +41,8 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
     setBusy(true); setError('');
     try {
       const { content, title } = getCurrent();
-      const key = await enableCollab(slateNumber, userId, content, title);
-      onDocKeyChange(key);
+      const { docKey: key, slateId } = await enableCollab(slateNumber, userId, content, title);
+      onDocKeyChange(key, slateId);
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
     } finally {
@@ -45,12 +50,23 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
     }
   };
 
+  const handleDisableClick = () => {
+    if (!confirmDisable) {
+      setConfirmDisable(true);
+      confirmTimerRef.current = setTimeout(() => setConfirmDisable(false), 3000);
+      return;
+    }
+    clearTimeout(confirmTimerRef.current);
+    setConfirmDisable(false);
+    handleDisable();
+  };
+
   const handleDisable = async () => {
     setBusy(true); setError('');
     try {
       const { content, title } = getCurrent();
       await disableCollab(slateNumber, userId, content, title);
-      onDocKeyChange(null);
+      onDocKeyChange(null, null);
       setMembers([]);
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
@@ -89,8 +105,8 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg md:text-xl text-white mb-4">{strings.collab.modal.title}</h2>
 
         {!enabled ? (
@@ -162,12 +178,12 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
 
             <div className="flex gap-3 items-center">
               <button
-                onClick={handleDisable}
+                onClick={handleDisableClick}
                 disabled={busy}
-                className="text-[var(--theme-text-dim)] hover:text-[var(--theme-red)] transition-colors text-xs disabled:opacity-50"
+                className={`transition-colors text-xs disabled:opacity-50 ${confirmDisable ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
                 title={strings.collab.modal.disableHint}
               >
-                {busy ? strings.collab.modal.disabling : strings.collab.modal.disableButton}
+                {busy ? strings.collab.modal.disabling : (confirmDisable ? strings.collab.modal.disableConfirm : strings.collab.modal.disableButton)}
               </button>
               <div className="flex-1" />
               <button

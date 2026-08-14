@@ -38,6 +38,7 @@ class RateLimiter {
     collabInvite: { max: 30, windowMs: 60 * 60 * 1000 }, // invites sent
     collabRespond: { max: 60, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
     collabFetch: { max: 240, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
+    collabSnapshot: { max: 120, windowMs: 60 * 60 * 1000 }, // snapshot posts (each re-uploads the doc state)
   };
 
   check(userId, operation) {

@@ -1521,7 +1521,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Email Change Modal */}
       {showEmailModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.account.emailChange.title}</h2>
 
@@ -1607,7 +1607,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Username Change Modal */}
       {showUsernameModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.account.usernameChange.title}</h2>
             <form onSubmit={handleChangeUsername} className="space-y-4">
@@ -1668,7 +1668,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Logout Everywhere Confirmation Modal */}
       {showLogoutEverywhereModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.sessions.everywhereModal.title}</h2>
             <p className="text-sm text-[#666] mb-6">
@@ -1694,7 +1694,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Delete Account Confirmation Modal */}
       {showDeleteAccountModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.danger.title}</h2>
             <p className="text-sm text-[#666] mb-4">
@@ -1735,7 +1735,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Link Google Confirmation Modal */}
       {showLinkGoogleModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.modal.title}</h2>
             <p className="text-sm text-[#666] mb-6">
@@ -1761,7 +1761,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Link Google Success Modal */}
       {showLinkSuccessModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.success.title}</h2>
             <p className="text-sm text-[#666] mb-6">
@@ -1782,7 +1782,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Link Google Error Modal */}
       {showLinkErrorModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.errors.title}</h2>
             <p className="text-sm text-[#666] mb-6">
@@ -1803,7 +1803,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Unlink Google Verification Modal */}
       {showUnlinkGoogleModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.modal.title}</h2>
             <p className="text-sm text-[#666] mb-4">
@@ -1852,7 +1852,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       {/* Unlink Google Success Modal */}
       {showUnlinkSuccessModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.success.title}</h2>
             <p className="text-sm text-[#666] mb-6">

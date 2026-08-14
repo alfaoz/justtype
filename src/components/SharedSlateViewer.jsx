@@ -1,32 +1,84 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { strings } from '../strings';
 import { fetchSharedSlate } from '../collab';
+import { subscribeCollab } from '../collabSync';
+import { usePresence } from '../presence';
 
 // Rendered-markdown view for shared slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
 
 // Read view of a slate someone shared with the signed-in user. Content arrives
 // as ciphertext and is decrypted here with the member's copy of the doc key
-// (src/collab.js). Read-only until the realtime channel ships.
+// (src/collab.js). Subscribes to the slate's realtime room and refetches when
+// the owner saves; still read-only until the CRDT editor surface ships.
 export function SharedSlateViewer({ slateId, userId, onBack }) {
   const [slate, setSlate] = useState(null);
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState('plain');
+  const [live, setLive] = useState(false);
+  const [removed, setRemoved] = useState(false);
+  const refetchTimer = useRef(null);
+  const firstLoad = useRef(true);
+  const peers = usePresence({
+    slateId,
+    docKey: slate ? slate.docKey : null,
+    username: localStorage.getItem('justtype-username'),
+    enabled: !!(slate && slate.docKey && !removed)
+  });
 
   useEffect(() => {
     let cancelled = false;
+    firstLoad.current = true;
     setSlate(null);
     setError('');
-    fetchSharedSlate(slateId, userId)
+    setRemoved(false);
+    setLive(false);
+
+    const load = () => fetchSharedSlate(slateId, userId)
       .then((data) => {
         if (cancelled) return;
         setSlate(data);
-        setViewMode(data.editorMode === 'wysiwyg' ? 'rich' : 'plain');
+        if (firstLoad.current) {
+          setViewMode(data.editorMode === 'wysiwyg' ? 'rich' : 'plain');
+          firstLoad.current = false;
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(String(e.message || 'failed to load').toLowerCase());
       });
-    return () => { cancelled = true; };
+
+    load();
+
+    // Debounced refetch on any signal that the canonical blob moved.
+    const scheduleRefetch = () => {
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      refetchTimer.current = setTimeout(load, 400);
+    };
+
+    const unsubscribe = subscribeCollab(slateId, (event) => {
+      if (cancelled) return;
+      switch (event.type) {
+        case 'joined':
+          setLive(true);
+          break;
+        case 'changed':
+        case 'reconnected':
+          scheduleRefetch();
+          break;
+        case 'removed':
+          setLive(false);
+          setRemoved(true);
+          break;
+        default:
+          break;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      if (refetchTimer.current) clearTimeout(refetchTimer.current);
+      unsubscribe();
+    };
   }, [slateId, userId]);
 
   return (
@@ -49,7 +101,21 @@ export function SharedSlateViewer({ slateId, userId, onBack }) {
               <div className="text-sm text-[var(--theme-text-dim)] flex gap-2 flex-wrap items-center">
                 <span>{strings.collab.viewer.sharedBy(slate.owner)}</span>
                 <span>|</span>
-                <span>{strings.collab.shared.readOnlyNote}</span>
+                <span>{removed ? strings.collab.viewer.accessRemoved : strings.collab.shared.readOnlyNote}</span>
+                {live && !removed && (
+                  <>
+                    <span>|</span>
+                    <span className="text-[var(--theme-green)]">{strings.collab.viewer.live}</span>
+                  </>
+                )}
+                {peers.length > 0 && !removed && (
+                  <>
+                    <span>|</span>
+                    <span className="text-[var(--theme-green)]" title={peers.map(p => p.username).join(', ')}>
+                      {strings.collab.presence.here(peers)}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 

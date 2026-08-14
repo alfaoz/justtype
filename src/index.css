@@ -43,6 +43,23 @@ body {
 /* Punto theme overrides - CSS variables handle this now */
 
 /* Animations */
+
+/* Modal entrances: icy overlay fades in, content settles up with a soft ease */
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-content-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-modal-overlay {
+  animation: modal-overlay-in 0.18s ease-out both;
+}
+.animate-modal-content {
+  animation: modal-content-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 @keyframes slide-in-right {
   from {
     opacity: 0;

@@ -6,6 +6,7 @@ import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addC
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { CollabShareModal } from './CollabShareModal';
+import { usePresence } from '../presence';
 import { VerifyBadge } from './VerifyBadge';
 
 // Rich (live preview) editor loads on demand so plain-mode writers never pay for it
@@ -113,6 +114,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // modal when sharing is turned on/off.
   const [collabDocKey, setCollabDocKey] = useState(null);
   const [showCollabModal, setShowCollabModal] = useState(false);
+  // Rooms are keyed by the slate's DB id (not the per-user slate_number)
+  const [collabSlateDbId, setCollabSlateDbId] = useState(null);
+  const collabPeers = usePresence({
+    slateId: collabSlateDbId,
+    docKey: collabDocKey,
+    username: localStorage.getItem('justtype-username'),
+    enabled: !!(collabSlateDbId && collabDocKey)
+  });
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -287,8 +296,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (focusMode !== 'auto') return;
 
     const handleTyping = (e) => {
-      // Only trigger on actual typing in the textarea, not shortcuts
-      if (e.target !== textareaRef.current) return;
+      // Only trigger on actual typing in the editor, not shortcuts. The rich
+      // editor is a CM6 contenteditable (.cm-content), not the textarea.
+      const inPlain = e.target === textareaRef.current;
+      const inRich = e.target instanceof Element && e.target.closest('.cm-content');
+      if (!inPlain && !inRich) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       // Enter zen mode if not already in it
@@ -698,8 +710,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (data.is_collab && data.collab_wrapped_key) {
           contentKey = await unwrapKey(data.collab_wrapped_key, slateKey);
           setCollabDocKey(contentKey);
+          setCollabSlateDbId(data.id);
         } else {
           setCollabDocKey(null);
+          setCollabSlateDbId(null);
         }
         slateContent = await decryptContent(data.encryptedContent, contentKey);
         // Decrypt title if encrypted
@@ -854,6 +868,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       localStorage.removeItem('justtype-draft');
       setEditorModeState(localStorage.getItem('justtype-draft-mode') === 'wysiwyg' ? 'wysiwyg' : 'plain');
       setCollabDocKey(null);
+      setCollabSlateDbId(null);
       setShowCollabModal(false);
     },
     // Command palette methods
@@ -1530,6 +1545,61 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     </button>
                   </>
                 )}
+                {token && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowPublishMenu(!showPublishMenu)}
+                        className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                        style={{ color: 'var(--theme-accent)' }}
+                      >
+                        share
+                      </button>
+                      {showPublishMenu && (
+                        <div className="absolute bottom-full left-0 mb-2 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
+                          {!shareUrl && !wasPublishedBeforeEdit && (
+                            <button
+                              onClick={handlePublish}
+                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+                            >
+                              make public
+                            </button>
+                          )}
+                          {shareUrl && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(shareUrl);
+                                  setStatus(strings.writer.status.linkCopied);
+                                  setTimeout(() => setStatus('ready'), 2000);
+                                  setShowPublishMenu(false);
+                                }}
+                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+                              >
+                                copy link
+                              </button>
+                              <button
+                                onClick={handlePublish}
+                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+                              >
+                                make private
+                              </button>
+                            </>
+                          )}
+                          {wasPublishedBeforeEdit && !shareUrl && (
+                            <button
+                              onClick={handlePublish}
+                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+                            >
+                              update public version
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -1576,70 +1646,29 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
             {token && (
               <div className="relative flex items-center gap-3">
-                {/* Public status indicator */}
-                {(shareUrl || wasPublishedBeforeEdit) && (
-                  <span className={`text-sm ${wasPublishedBeforeEdit ? 'text-orange-400' : 'text-blue-400'}`}>
-                    public{wasPublishedBeforeEdit ? ' · outdated' : ''}
-                  </span>
+                {/* One compact publish indicator: blue when the public copy is
+                    current, orange and clickable when it needs a sync */}
+                {shareUrl && !wasPublishedBeforeEdit && (
+                  <span className="text-sm text-blue-400">{strings.writer.publicState.current}</span>
                 )}
-
-                {/* Sync button - only when changes pending */}
                 {wasPublishedBeforeEdit && (
                   <button
                     onClick={handlePublish}
-                    className="text-orange-400 hover:text-white transition-colors duration-200"
+                    className="text-sm text-orange-400 hover:text-white transition-colors duration-200"
+                    title={strings.writer.publicState.outdatedHint}
                   >
-                    sync
+                    {strings.writer.publicState.outdated}
                   </button>
                 )}
 
-                {/* Share button */}
-                <button
-                  onClick={() => setShowPublishMenu(!showPublishMenu)}
-                  className="hover:text-white transition-colors duration-200"
-                >
-                  share
-                </button>
-                {showPublishMenu && (
-                  <div className="absolute bottom-full right-0 mb-2 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]">
-                    {!shareUrl && !wasPublishedBeforeEdit && (
-                      <button
-                        onClick={handlePublish}
-                        className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                      >
-                        make public
-                      </button>
-                    )}
-                    {shareUrl && (
-                      <>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(shareUrl);
-                            setStatus(strings.writer.status.linkCopied);
-                            setTimeout(() => setStatus('ready'), 2000);
-                            setShowPublishMenu(false);
-                          }}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                        >
-                          copy link
-                        </button>
-                        <button
-                          onClick={handlePublish}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
-                        >
-                          make private
-                        </button>
-                      </>
-                    )}
-                    {wasPublishedBeforeEdit && !shareUrl && (
-                      <button
-                        onClick={handlePublish}
-                        className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                      >
-                        update public version
-                      </button>
-                    )}
-                  </div>
+                {/* Who else is in this collab slate right now */}
+                {collabPeers.length > 0 && (
+                  <span
+                    className="text-sm text-[var(--theme-green)]"
+                    title={collabPeers.map(p => p.username).join(', ')}
+                  >
+                    {strings.collab.presence.here(collabPeers)}
+                  </span>
                 )}
               </div>
             )}
@@ -1697,7 +1726,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {showMobileMenu && (
         <>
           <div
-            className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-40"
+            className="md:hidden fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
             onClick={() => setShowMobileMenu(false)}
           />
           <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[60vh] flex flex-col">
@@ -1916,14 +1945,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             content,
             title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
           })}
-          onDocKeyChange={(key) => setCollabDocKey(key)}
+          onDocKeyChange={(key, slateDbId) => {
+            setCollabDocKey(key);
+            setCollabSlateDbId(slateDbId ?? null);
+          }}
           onClose={() => setShowCollabModal(false)}
         />
       )}
 
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => setShowAboutModal(false)}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => setShowAboutModal(false)}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
             <div className="space-y-4 text-sm text-[var(--theme-text-muted)]">
@@ -2013,11 +2045,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* PUBLISH MODAL */}
       {showPublishModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => {
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => {
           setShowPublishModal(false);
           setLinkCopied(false);
         }}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">anyone with this link can view your slate:</p>
             <div className="bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 mb-6 break-all text-sm text-blue-400">
@@ -2057,8 +2089,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* DONATE MODAL */}
       {showDonateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowDonateModal(false)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowDonateModal(false)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">support justtype</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
             <input
@@ -2113,8 +2145,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* Already Subscribed Modal */}
       {showAlreadySubscribedModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowAlreadySubscribedModal(false)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowAlreadySubscribedModal(false)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.subscription.alreadySubscribed.title}</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">
               {strings.subscription.alreadySubscribed.message}
@@ -2142,8 +2174,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* Export Modal */}
       {showExportMenu && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={() => setShowExportMenu(false)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowExportMenu(false)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">export slate</h2>
             <div className="flex flex-col gap-3">
               <button

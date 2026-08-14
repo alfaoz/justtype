@@ -1003,6 +1003,31 @@ try {
     CREATE INDEX IF NOT EXISTS idx_collab_members_slate ON collab_members(slate_id);
   `);
   console.log('✓ Collab members table initialized');
+
+  // Realtime relay log: encrypted (opaque) per-slate updates with dense
+  // integer versions, plus per-slate snapshot metadata (the snapshot blob
+  // itself lives in B2, encrypted client-side under the doc key). Updates at
+  // or below snapshot_version are pruned when a snapshot lands.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collab_updates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slate_id INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      author_id INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      UNIQUE (slate_id, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_collab_updates_slate ON collab_updates(slate_id, version);
+
+    CREATE TABLE IF NOT EXISTS collab_docs (
+      slate_id INTEGER PRIMARY KEY,
+      snapshot_version INTEGER NOT NULL DEFAULT 0,
+      snapshot_b2_file_id TEXT,
+      updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+  `);
+  console.log('✓ Collab updates/docs tables initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

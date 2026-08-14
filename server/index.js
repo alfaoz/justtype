@@ -12,6 +12,7 @@ const b2Storage = require('./b2Storage');
 const b2Monitor = require('./b2Monitor');
 const { mountOAuth } = require('./oauth');
 const { mountCollab } = require('./collab');
+const collabHub = require('./collabHub');
 const dropHub = require('./dropHub');
 const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
@@ -440,7 +441,10 @@ app.use(helmet({
       scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", "https://challenges.cloudflare.com", "https://alfaoz.github.io", "https://api.github.com"],
+      // wss origin listed explicitly — CSP3 'self' covers same-origin
+      // websockets in modern browsers, but being explicit costs nothing
+      connectSrc: ["'self'", "https://challenges.cloudflare.com", "https://alfaoz.github.io", "https://api.github.com",
+        ...(process.env.PUBLIC_URL ? [process.env.PUBLIC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')] : [])],
       frameSrc: ["https://challenges.cloudflare.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
@@ -1117,7 +1121,7 @@ mountOAuth(app, {
 
 mountCollab(app, {
   db, b2Storage, authenticateToken, createRateLimitMiddleware,
-  decodeBase64Strict, B2Error
+  decodeBase64Strict, B2Error, collabHub
 });
 
 // ============ AUTH ROUTES ============
@@ -2584,9 +2588,11 @@ app.get('/api/slates', authenticateToken, (req, res) => {
     const slates = db.prepare(`
       SELECT s.id, s.slate_number, s.title, s.encrypted_title, s.encrypted_tags, s.pinned_at, s.is_published,
              s.share_id, s.word_count, s.char_count, s.created_at, s.updated_at, s.published_at,
-             s.source_app, s.adoption_pending, c.name AS source_app_name
+             s.source_app, s.adoption_pending, c.name AS source_app_name,
+             s.is_collab, cm.wrapped_key AS collab_wrapped_key
       FROM slates s
       LEFT JOIN oauth_clients c ON c.client_id = s.source_app
+      LEFT JOIN collab_members cm ON cm.slate_id = s.id AND cm.user_id = s.user_id
       WHERE s.user_id = ?
     `).all(req.user.id);
 
@@ -2971,6 +2977,9 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 	    `);
 	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
 
+    // Collaborative slate: the canonical blob changed — tell live viewers to refetch.
+    if (slate.is_collab) collabHub.notifySlateChanged(slate.id);
+
     // Best-effort cleanup of old B2 files AFTER the DB update (prevents data loss if the DB write fails).
     const fileIdsToDelete = new Set();
     if (oldB2FileId) fileIdsToDelete.add(oldB2FileId);
@@ -3132,9 +3141,18 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       console.warn('Failed to delete B2 file:', err);
     }
 
-    // Delete from database (collab memberships too — no FK cascade)
+    // Delete from database (collab state too — no FK cascade)
+    const collabDoc = slate.is_collab
+      ? db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id)
+      : null;
     db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
+    if (slate.is_collab) collabHub.closeRoom(slate.id);
+    if (collabDoc && collabDoc.snapshot_b2_file_id) {
+      try { await b2Storage.deleteSlate(collabDoc.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+    }
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -3414,8 +3432,17 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
       }
     }
 
-    // Collab memberships: theirs, and everyone's on slates they own (before the
+    // Collab state: their memberships, and everything on slates they own —
+    // members, update log, snapshot metadata + B2 snapshot files (before the
     // slates rows go away — no FK cascade)
+    const collabSnapshotFiles = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId);
+    for (const row of collabSnapshotFiles) {
+      if (row.snapshot_b2_file_id) {
+        try { await b2Storage.deleteSlate(row.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+      }
+    }
+    db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
@@ -5187,8 +5214,17 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
       }
     }
 
-    // Collab memberships: theirs, and everyone's on slates they own (before the
+    // Collab state: their memberships, and everything on slates they own —
+    // members, update log, snapshot metadata + B2 snapshot files (before the
     // slates rows go away — no FK cascade)
+    const collabSnapshotFiles = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId);
+    for (const row of collabSnapshotFiles) {
+      if (row.snapshot_b2_file_id) {
+        try { await b2Storage.deleteSlate(row.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
+      }
+    }
+    db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
@@ -5753,10 +5789,13 @@ setInterval(runCleanup, 60 * 60 * 1000);
       }
     }
 
-    app.listen(PORT, () => {
+    const httpServer = app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
       console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
     });
+
+    // Realtime relay for collaborative slates (ws upgrade on /collab/ws)
+    collabHub.attach(httpServer, { db, jwt, JWT_SECRET, crypto });
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

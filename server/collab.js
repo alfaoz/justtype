@@ -22,7 +22,7 @@
 function mountCollab(app, deps) {
   const {
     db, b2Storage, authenticateToken, createRateLimitMiddleware,
-    decodeBase64Strict, B2Error
+    decodeBase64Strict, B2Error, collabHub
   } = deps;
 
   const MAX_CONTENT_BYTES = 5 * 1024 * 1024;
@@ -146,6 +146,7 @@ function mountCollab(app, deps) {
 
       const newFileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}`, blob);
       const oldFileId = slate.b2_file_id;
+      const docRow = db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id);
 
       db.transaction(() => {
         db.prepare(`
@@ -153,10 +154,16 @@ function mountCollab(app, deps) {
           WHERE id = ?
         `).run(newFileId, encryptedTitle, blob.length, slate.id);
         db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
+        db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
       })();
 
+      if (collabHub) collabHub.closeRoom(slate.id);
       if (oldFileId && oldFileId !== newFileId) {
         try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
+      }
+      if (docRow && docRow.snapshot_b2_file_id) {
+        try { await b2Storage.deleteSlate(docRow.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete snapshot B2 file:', err); }
       }
       res.json({ success: true });
     } catch (error) {
@@ -229,6 +236,7 @@ function mountCollab(app, deps) {
       if (!member) return res.status(404).json({ error: 'Not a member' });
       if (member.role === 'owner') return res.status(400).json({ error: 'The owner cannot be removed' });
       db.prepare('DELETE FROM collab_members WHERE id = ?').run(member.id);
+      if (collabHub) collabHub.kickMember(slate.id, target.id);
       res.json({ success: true });
     } catch (error) {
       console.error('Collab remove member error:', error);
@@ -300,6 +308,7 @@ function mountCollab(app, deps) {
       if (!row) return res.status(404).json({ error: 'Not a member' });
       if (row.role === 'owner') return res.status(400).json({ error: 'The owner cannot leave; disable collaboration instead' });
       db.prepare('DELETE FROM collab_members WHERE id = ?').run(row.id);
+      if (collabHub) collabHub.kickMember(Number(req.params.slateId), req.user.id);
       res.json({ success: true });
     } catch (error) {
       console.error('Collab leave error:', error);
@@ -311,7 +320,7 @@ function mountCollab(app, deps) {
   app.get('/api/collab/slates', authenticateToken, (req, res) => {
     try {
       const shared = db.prepare(`
-        SELECT s.id AS slate_id, s.encrypted_title, s.editor_mode, s.updated_at,
+        SELECT s.id AS slate_id, s.encrypted_title, s.encrypted_tags, s.editor_mode, s.updated_at,
                s.word_count, s.char_count, m.wrapped_key, u.username AS owner_username
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
@@ -352,6 +361,89 @@ function mountCollab(app, deps) {
     } catch (error) {
       console.error('Collab fetch slate error:', error);
       b2ErrorResponse(res, error, 'Failed to fetch slate');
+    }
+  });
+
+  // --- Realtime log + snapshots (the ws hub handles live traffic; these are
+  // the HTTP sides: catch-up reads and client-produced snapshot persistence) ---
+
+  const acceptedMember = (slateId, userId) => {
+    const m = getMember.get(slateId, userId);
+    return m && m.status === 'accepted' ? m : null;
+  };
+
+  // Catch-up: encrypted updates after a version (for clients joining over
+  // HTTP before/without the socket).
+  app.get('/api/collab/slates/:slateId/updates', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
+    try {
+      if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const since = Number(req.query.since) || 0;
+      const rows = db.prepare(
+        'SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT 501'
+      ).all(req.params.slateId, since);
+      const more = rows.length > 500;
+      const latest = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM collab_updates WHERE slate_id = ?').get(req.params.slateId).v;
+      res.json({ updates: rows.slice(0, 500), more, latest });
+    } catch (error) {
+      console.error('Collab updates fetch error:', error);
+      res.status(500).json({ error: 'Failed to fetch updates' });
+    }
+  });
+
+  // Current snapshot: encrypted doc state covering the log up to `version`.
+  app.get('/api/collab/slates/:slateId/snapshot', authenticateToken, createRateLimitMiddleware('collabFetch'), async (req, res) => {
+    try {
+      if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const doc = db.prepare('SELECT snapshot_version, snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(req.params.slateId);
+      if (!doc || !doc.snapshot_b2_file_id) return res.json({ version: 0, payload: null });
+      const rawData = await b2Storage.downloadRawFile(doc.snapshot_b2_file_id);
+      res.json({ version: doc.snapshot_version, payload: rawData.toString('base64') });
+    } catch (error) {
+      console.error('Collab snapshot fetch error:', error);
+      b2ErrorResponse(res, error, 'Failed to fetch snapshot');
+    }
+  });
+
+  // Store a client-produced snapshot and prune the log it covers. Any
+  // accepted member may post one (they all hold the doc key; the server can
+  // neither produce nor validate ciphertext). version = highest log version
+  // the snapshot includes — never ahead of the log itself.
+  app.post('/api/collab/slates/:slateId/snapshot', authenticateToken, createRateLimitMiddleware('collabSnapshot'), async (req, res) => {
+    const { payload, version } = req.body || {};
+    try {
+      const slateId = Number(req.params.slateId);
+      if (!acceptedMember(slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const coveredVersion = Number(version);
+      if (!Number.isInteger(coveredVersion) || coveredVersion < 0) return res.status(400).json({ error: 'version required' });
+      const latest = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM collab_updates WHERE slate_id = ?').get(slateId).v;
+      if (coveredVersion > latest) return res.status(409).json({ error: 'snapshot version is ahead of the log' });
+      const existing = db.prepare('SELECT snapshot_version, snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slateId);
+      if (existing && coveredVersion < existing.snapshot_version) {
+        return res.status(409).json({ error: 'a newer snapshot already exists' });
+      }
+      const blob = decodeBlob(res, payload);
+      if (!blob) return;
+
+      const newFileId = await b2Storage.uploadRawSlate(`collab-snap-${slateId}-${Date.now()}`, blob);
+      db.transaction(() => {
+        db.prepare(`
+          INSERT INTO collab_docs (slate_id, snapshot_version, snapshot_b2_file_id, updated_at)
+          VALUES (?, ?, ?, strftime('%s','now'))
+          ON CONFLICT(slate_id) DO UPDATE SET
+            snapshot_version = excluded.snapshot_version,
+            snapshot_b2_file_id = excluded.snapshot_b2_file_id,
+            updated_at = strftime('%s','now')
+        `).run(slateId, coveredVersion, newFileId);
+        db.prepare('DELETE FROM collab_updates WHERE slate_id = ? AND version <= ?').run(slateId, coveredVersion);
+      })();
+
+      if (existing && existing.snapshot_b2_file_id && existing.snapshot_b2_file_id !== newFileId) {
+        try { await b2Storage.deleteSlate(existing.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete old snapshot B2 file:', err); }
+      }
+      res.json({ success: true, snapshotVersion: coveredVersion });
+    } catch (error) {
+      console.error('Collab snapshot store error:', error);
+      b2ErrorResponse(res, error, 'Failed to store snapshot');
     }
   });
 }
