@@ -767,6 +767,11 @@ export default function App() {
       setView('slates');
       setZenMode(false);
       window.history.pushState({}, '', '/slates');
+    } else if (view === 'shared') {
+      // Shared slates live-sync through the relay — nothing to save here.
+      setView('slates');
+      setZenMode(false);
+      window.history.pushState({}, '', '/slates');
     } else if (view === 'slates' || view === 'account' || view === 'manage-subscription') {
       // Switching from slates/account/manage-subscription to writer - restore last slate
       if (lastSlateRef.current) {
@@ -1104,7 +1109,7 @@ export default function App() {
               >
                 <div
                   className={`absolute inset-0 flex flex-col transition-transform duration-150 ease-out ${
-                    view === 'writer' ? '-translate-y-5' : 'translate-y-0'
+                    view === 'writer' || view === 'shared' ? '-translate-y-5' : 'translate-y-0'
                   }`}
                 >
                   <span className="h-5 flex items-center justify-center whitespace-nowrap px-1 leading-5">{strings.app.tabs.writer}</span>

@@ -93,12 +93,14 @@ function connect(isReconnect = false) {
 export function subscribeCollab(slateId, onEvent) {
   slateId = Number(slateId);
   let set = listeners.get(slateId);
-  const firstForSlate = !set;
   if (!set) { set = new Set(); listeners.set(slateId, set); }
   set.add(onEvent);
 
   if (socket && socket.readyState === 1) {
-    if (firstForSlate) sendRaw({ type: 'join', slateId });
+    // Always re-join: the server answers duplicate joins with a fresh
+    // `joined`, so a late subscriber (a lazy-loaded editor mounting after the
+    // presence hook already consumed the first reply) still gets bootstrapped.
+    sendRaw({ type: 'join', slateId });
   } else {
     connect();
   }
@@ -118,6 +120,15 @@ export function subscribeCollab(slateId, onEvent) {
       }
     }
   };
+}
+
+// Ask the server for a fresh `joined` frame (joins are idempotent). Used by
+// subscribers still waiting on their bootstrap after a lost or failed one.
+export function requestCollabJoin(slateId) {
+  slateId = Number(slateId);
+  if (!listeners.has(slateId)) return;
+  if (socket && socket.readyState === 1) sendRaw({ type: 'join', slateId });
+  else connect();
 }
 
 // Fire an encrypted update into the slate's room. seq is echoed back on the

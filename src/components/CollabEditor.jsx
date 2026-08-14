@@ -10,7 +10,7 @@ import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-mar
 import { livePreview } from './livePreview';
 import { strings } from '../strings';
 import { wrapKey, unwrapKey } from '../crypto';
-import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates } from '../collabSync';
+import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates, requestCollabJoin } from '../collabSync';
 import { API_URL } from '../config';
 
 // Collaborative editor surface for a shared slate. Owns the whole Yjs
@@ -84,7 +84,8 @@ export default function CollabEditor({
     const [color, colorLight] = colorFor(usernameRef.current);
     awareness.setLocalStateField('user', { name: usernameRef.current || 'anonymous', color, colorLight });
 
-    let initialized = false;
+    let seeded = false;
+    let loading = false;
     let becameReady = false;
     let appliedVersion = 0;
     let snapshotVersion = 0;
@@ -92,7 +93,26 @@ export default function CollabEditor({
     let seq = 1;
     const sendQueue = [];
 
+    // The bootstrap `joined` frame can be lost (this component lazy-loads and
+    // may subscribe after the room's first join round-trip already happened,
+    // or the snapshot fetch fails transiently). Joins are idempotent server-
+    // side, so re-ask with backoff until we're ready.
+    let retryTimer = null;
+    let retryDelay = 4000;
+    const clearRetry = () => { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } };
+    const scheduleRetry = () => {
+      if (cancelled || becameReady || retryTimer) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (cancelled || becameReady) return;
+        requestCollabJoin(slateId);
+        retryDelay = Math.min(Math.round(retryDelay * 1.5), 30000);
+        scheduleRetry();
+      }, retryDelay);
+    };
+
     const finishReady = () => {
+      clearRetry();
       if (cancelled || becameReady) return;
       becameReady = true;
       setSession({ ytext, awareness, undoManager });
@@ -206,25 +226,32 @@ export default function CollabEditor({
       if (cancelled) return;
       switch (event.type) {
         case 'joined': {
-          if (!initialized) {
-            initialized = true;
-            try {
-              if (event.version === 0 && event.snapshotVersion === 0) {
-                seed();
-                finishReady();
-              } else {
-                if (event.snapshotVersion > 0) await loadSnapshot();
-                if (event.version > appliedVersion) fetchCollabUpdates(slateId, appliedVersion);
-                else finishReady();
-              }
-            } catch (e) {
-              console.error('collab doc load failed', e);
-              if (onErrorRef.current) onErrorRef.current(e);
-            }
-          } else {
-            // Reconnect: push what we wrote offline, pull what we missed.
+          if (becameReady) {
+            // Rejoin while live: push what we wrote offline, pull what we missed.
             flushQueue();
             if (event.version > appliedVersion) fetchCollabUpdates(slateId, appliedVersion);
+            break;
+          }
+          if (loading) break;
+          loading = true;
+          try {
+            if (event.version === 0 && event.snapshotVersion === 0) {
+              if (!seeded) { seeded = true; seed(); }
+              finishReady();
+            } else {
+              if (event.snapshotVersion > 0 && snapshotVersion === 0) await loadSnapshot();
+              if (event.version > appliedVersion) {
+                // Ready lands once the catch-up reply drains.
+                if (!fetchCollabUpdates(slateId, appliedVersion)) throw new Error('socket closed mid catch-up');
+              } else {
+                finishReady();
+              }
+            }
+          } catch (e) {
+            // Transient — the retry loop re-requests a fresh `joined`.
+            console.warn('collab doc load failed, retrying', e);
+          } finally {
+            loading = false;
           }
           break;
         }
@@ -251,16 +278,30 @@ export default function CollabEditor({
           break;
         }
         case 'removed': {
+          clearRetry();
           if (onRemovedRef.current) onRemovedRef.current();
+          break;
+        }
+        case 'error': {
+          // Fatal pre-bootstrap errors (revoked membership, caps) would
+          // otherwise leave the loading note up until the retries exhaust.
+          if (!becameReady && (event.code === 'NOT_MEMBER' || event.code === 'ROOM_LIMIT' || event.code === 'CONN_LIMIT')) {
+            clearRetry();
+            if (onErrorRef.current) onErrorRef.current(new Error(event.error || 'collab error'));
+          } else {
+            console.warn('collab server error:', event.error, event.code);
+          }
           break;
         }
         default:
           break;
       }
     });
+    scheduleRetry();
 
     return () => {
       cancelled = true;
+      clearRetry();
       unsubscribe();
       awareness.off('update', awarenessHandler);
       awareness.destroy();

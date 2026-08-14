@@ -47,7 +47,10 @@ const send = (ws, obj) => {
   }
 };
 
-const sendError = (ws, error, code) => send(ws, { type: 'error', error, code });
+// slateId lets the client route the error to that room's listeners; frames
+// without one never reach a subscriber (pre-parse failures only).
+const sendError = (ws, error, code, slateId) =>
+  send(ws, slateId ? { type: 'error', error, code, slateId } : { type: 'error', error, code });
 
 function joinRoom(slateId, ws) {
   let set = rooms.get(slateId);
@@ -155,17 +158,17 @@ function handleMessage(ws, raw) {
       if (ws.slateRooms.has(slateId)) {
         return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId) });
       }
-      if (ws.slateRooms.size >= MAX_ROOMS_PER_SOCKET) return sendError(ws, 'too many open slates', 'ROOM_LIMIT');
-      if (!membership(slateId, ws.userId)) return sendError(ws, 'not a member', 'NOT_MEMBER');
+      if (ws.slateRooms.size >= MAX_ROOMS_PER_SOCKET) return sendError(ws, 'too many open slates', 'ROOM_LIMIT', slateId);
+      if (!membership(slateId, ws.userId)) return sendError(ws, 'not a member', 'NOT_MEMBER', slateId);
       joinRoom(slateId, ws);
       return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId) });
     }
     case 'leave':
       return leaveRoom(slateId, ws);
     case 'update': {
-      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED');
+      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
       if (typeof msg.payload !== 'string' || !msg.payload || msg.payload.length > MAX_PAYLOAD_CHARS) {
-        return sendError(ws, 'bad payload');
+        return sendError(ws, 'bad payload', undefined, slateId);
       }
       let version;
       try {
@@ -174,7 +177,7 @@ function handleMessage(ws, raw) {
           .run(slateId, version, msg.payload, ws.userId);
       } catch (e) {
         console.error('collab update insert failed:', e);
-        return sendError(ws, 'update rejected');
+        return sendError(ws, 'update rejected', undefined, slateId);
       }
       const out = { type: 'update', slateId, version, payload: msg.payload, authorId: ws.userId };
       if (msg.seq != null) send(ws, { ...out, seq: msg.seq });
@@ -183,7 +186,7 @@ function handleMessage(ws, raw) {
       return;
     }
     case 'fetch': {
-      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED');
+      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
       const since = Number(msg.since) || 0;
       const rowsOut = deps.db.prepare(
         'SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT ?'
@@ -192,8 +195,8 @@ function handleMessage(ws, raw) {
       return send(ws, { type: 'updates', slateId, updates: rowsOut.slice(0, FETCH_BATCH), more });
     }
     case 'awareness': {
-      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED');
-      if (typeof msg.payload !== 'string' || msg.payload.length > MAX_PAYLOAD_CHARS) return sendError(ws, 'bad payload');
+      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
+      if (typeof msg.payload !== 'string' || msg.payload.length > MAX_PAYLOAD_CHARS) return sendError(ws, 'bad payload', undefined, slateId);
       return broadcast(slateId, { type: 'awareness', slateId, payload: msg.payload, authorId: ws.userId }, ws);
     }
     default:

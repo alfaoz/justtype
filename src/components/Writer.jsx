@@ -1448,6 +1448,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               initialContent={loadedContentRef.current}
               onChange={setContent}
               onRemoved={() => setSharedRemoved(true)}
+              onError={isShared ? () => setSharedRemoved(true) : undefined}
               puntoClass={`punto-${punto}`}
             />
           </React.Suspense>
