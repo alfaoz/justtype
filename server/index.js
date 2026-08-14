@@ -1116,7 +1116,7 @@ mountOAuth(app, {
 
 // Register
 app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('register'), async (req, res) => {
-  let { username, password, email, termsAccepted, wrappedKey: clientWrappedKey, recoveryWrappedKey: clientRecoveryWrappedKey, recoverySalt: clientRecoverySalt, encryptionSalt: clientEncryptionSalt } = req.body;
+  let { username, password, email, termsAccepted, theme: clientTheme, wrappedKey: clientWrappedKey, recoveryWrappedKey: clientRecoveryWrappedKey, recoverySalt: clientRecoverySalt, encryptionSalt: clientEncryptionSalt } = req.body;
 
   if (!username || !password || !email) {
     return res.status(400).json({ error: 'Username, password, and email are required' });
@@ -1157,6 +1157,11 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
     const stmt = db.prepare('INSERT INTO users (username, password, email, verification_token, verification_code_expires, terms_accepted, terms_accepted_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     const result = stmt.run(username, hashedPassword, email.toLowerCase(), verificationCode, expiresAt, 1, termsAcceptedAt);
 
+    // Carry over the theme the user was browsing with, so first login doesn't reset to the default
+    if (typeof clientTheme === 'string' && clientTheme.length > 0 && clientTheme.length <= 50) {
+      db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(clientTheme, result.lastInsertRowid);
+    }
+
     // Send verification email
     const emailSent = await emailService.sendVerificationEmail(email, username, verificationCode);
     if (!emailSent) {
@@ -1176,7 +1181,7 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
     if (isE2E) {
       // Client generated keys — store them directly, no server-side key generation
       db.prepare(`
-        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, encryption_salt = ?, key_migrated = 1, e2e_migrated = 1
+        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, encryption_salt = ?, key_migrated = 1, e2e_migrated = 1, recovery_key_shown = 0
         WHERE id = ?
       `).run(clientWrappedKey, clientRecoveryWrappedKey, clientRecoverySalt, clientEncryptionSalt, result.lastInsertRowid);
     } else {
@@ -1186,7 +1191,7 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
       recoveryPhrase = keyData.recoveryPhrase;
 
       db.prepare(`
-        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1
+        UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1, recovery_key_shown = 0
         WHERE id = ?
       `).run(keyData.wrappedKey, keyData.recoveryWrappedKey, keyData.recoverySalt, result.lastInsertRowid);
 

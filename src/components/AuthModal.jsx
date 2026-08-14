@@ -8,7 +8,7 @@ import { saveSlateKey, getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 import { VerifyBadge } from './VerifyBadge';
 
-export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = '' }) {
+export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = '', resumeVerificationEmail = null, onVerified = null }) {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -259,7 +259,9 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
         body = {
           username, password, email, termsAccepted,
           ...authProof,
-          wrappedKey, recoveryWrappedKey, recoverySalt, encryptionSalt
+          wrappedKey, recoveryWrappedKey, recoverySalt, encryptionSalt,
+          // Keep whatever theme the user was browsing with (avoids reset to default on first login)
+          theme: localStorage.getItem('justtype-theme') || undefined
         };
       }
 
@@ -356,6 +358,14 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
     }
   };
 
+  // Resume a verification the user left mid-signup (session cookie exists, email unverified)
+  useEffect(() => {
+    if (resumeVerificationEmail) {
+      setRegisteredEmail(resumeVerificationEmail);
+      setShowVerification(true);
+    }
+  }, [resumeVerificationEmail]);
+
   const handleVerify = async (e) => {
     e.preventDefault();
     setError('');
@@ -390,6 +400,12 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           authDataToComplete.recoveryPhrase = pendingRecoveryPhrase;
         }
         onAuth(authDataToComplete);
+        return;
+      }
+
+      // Resumed verification: the session cookie already exists, so just tell the app we're done
+      if (onVerified) {
+        setTimeout(() => onVerified(), 1200);
         return;
       }
 

@@ -37,6 +37,7 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [resumeVerifyEmail, setResumeVerifyEmail] = useState(null);
   // OAuth login gate: when a logged-out user is sent to /login?gate=... from an
   // OAuth authorize request, we open the auth modal and bounce back to consent
   // once they finish (and any recovery-key / PIN steps are done).
@@ -116,8 +117,9 @@ export default function App() {
   // Fetch current user data on mount to verify session and update user info
   useEffect(() => {
     const fetchUserData = async () => {
-      if (!token) return;
-
+      // No early return on missing local state: a signup abandoned at the email
+      // verification step leaves a valid session cookie but no localStorage user,
+      // and we want to resume that session (and its verification prompt).
       try {
         const response = await fetch(`${API_URL}/auth/me`, {
           credentials: 'include' // Use HttpOnly cookie for auth
@@ -160,6 +162,13 @@ export default function App() {
           const prefs = await fetchAndMergePreferences();
           if (prefs.success && prefs.theme) {
             applyThemeVariables(prefs.theme);
+          }
+
+          // If the user left mid-signup before entering their email code, resume
+          // the verification prompt instead of leaving them in limbo
+          if (!userData.email_verified) {
+            setResumeVerifyEmail(userData.email);
+            setShowAuthModal(true);
           }
 
           // If recovery key was never shown to user, redirect to account to regenerate
@@ -1215,6 +1224,14 @@ export default function App() {
           onAuth={handleAuth}
           oauthGate={oauthGate}
           oauthAppName={oauthAppName}
+          resumeVerificationEmail={resumeVerifyEmail}
+          onVerified={() => {
+            setResumeVerifyEmail(null);
+            setShowAuthModal(false);
+            localStorage.setItem('justtype-email-verified', 'true');
+            // Reload so all post-auth checks (recovery key pending, prefs) re-run cleanly
+            window.location.reload();
+          }}
         />
       )}
 
