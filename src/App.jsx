@@ -14,6 +14,7 @@ import { AuthorizeShare } from './components/AuthorizeShare';
 import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
 import { Status } from './components/Status';
+import { WhatsNew } from './components/WhatsNew';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
 import { PinSetupModal } from './components/PinSetupModal';
 import { API_URL } from './config';
@@ -376,6 +377,8 @@ export default function App() {
         setView('verify');
       } else if (path === '/status') {
         setView('status');
+      } else if (path === '/whats-new') {
+        setView('whats-new');
       } else if (path === '/') {
         setCurrentSlate(null);
         setView('writer');
@@ -982,6 +985,10 @@ export default function App() {
 
   if (view === 'status') {
     return <Status />;
+  }
+
+  if (view === 'whats-new') {
+    return <WhatsNew />;
   }
 
   return (

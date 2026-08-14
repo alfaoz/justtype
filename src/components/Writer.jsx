@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
@@ -169,6 +169,54 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const threeDotsRef = useRef(null);
   const draftRestoredRef = useRef(false);
   const localDraftTimeoutRef = useRef(null);
+  // Settings strip overflow: fades apply only where more content hides, and a
+  // slim thumb under the strip hints that it scrolls. The thumb is driven
+  // through refs so scrolling never re-renders the component.
+  const stripRef = useRef(null);
+  const stripTrackRef = useRef(null);
+  const stripThumbRef = useRef(null);
+  const stripScrollEndTimerRef = useRef(null);
+  const [stripFade, setStripFade] = useState({ l: false, r: false });
+
+  const updateStripScroll = useCallback(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const overflowing = max > 1;
+    const l = overflowing && el.scrollLeft > 1;
+    const r = overflowing && el.scrollLeft < max - 1;
+    setStripFade((prev) => (prev.l === l && prev.r === r ? prev : { l, r }));
+    const track = stripTrackRef.current;
+    const thumb = stripThumbRef.current;
+    if (track && thumb) {
+      track.classList.toggle('visible', overflowing);
+      if (overflowing) {
+        const trackWidth = track.clientWidth;
+        const thumbWidth = Math.max(24, (el.clientWidth / el.scrollWidth) * trackWidth);
+        const left = (el.scrollLeft / max) * (trackWidth - thumbWidth);
+        thumb.style.width = `${thumbWidth}px`;
+        thumb.style.transform = `translateX(${left}px)`;
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showMenuButton) return;
+    const el = stripRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(updateStripScroll);
+    ro.observe(el);
+    window.addEventListener('resize', updateStripScroll);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateStripScroll);
+      clearTimeout(stripScrollEndTimerRef.current);
+    };
+  }, [showMenuButton, updateStripScroll]);
+
+  // The strip's contents change with state (labels grow, buttons appear) —
+  // a cheap re-measure after every render keeps the fades honest.
+  useEffect(() => { if (showMenuButton) updateStripScroll(); });
 
   // Restore local draft on initial mount (only if no slate is being loaded)
   useEffect(() => {
@@ -1516,11 +1564,19 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 narrow windows the strip scrolls, fading out at the cutoff. */}
             {showMenuButton && (
               <div
-                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
+                ref={stripRef}
+                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
                 style={{ zIndex: 150 }}
                 onScroll={() => {
                   setShowThemePicker(false);
                   setShowPublishMenu(false);
+                  updateStripScroll();
+                  const track = stripTrackRef.current;
+                  if (track) {
+                    track.classList.add('scrolling');
+                    clearTimeout(stripScrollEndTimerRef.current);
+                    stripScrollEndTimerRef.current = setTimeout(() => track.classList.remove('scrolling'), 600);
+                  }
                 }}
               >
                 <div className="relative" data-theme-picker>
@@ -1745,6 +1801,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {/* Scroll hint for the strip: a slim thumb that appears only when
+                the controls overflow, brightening while the user scrolls */}
+            {showMenuButton && !isMenuClosing && (
+              <div ref={stripTrackRef} className="strip-scrollbar" aria-hidden="true">
+                <div ref={stripThumbRef} className="strip-scrollbar-thumb" />
               </div>
             )}
 

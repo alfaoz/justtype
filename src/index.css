@@ -72,15 +72,49 @@ body {
 .animate-toast-in { animation: toast-in 0.2s ease-out both; }
 .animate-toast-out { animation: toast-out 0.22s ease-in both; }
 
-/* Settings strip: scrolls when the window is too narrow for every control,
-   with a soft fade at the cutoff instead of colliding with the right side */
+/* Settings strip: scrolls when the window is too narrow for every control.
+   Fades are directional — applied only where more content hides, so nothing
+   gets cropped once you reach either end. */
 .settings-strip {
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
 }
 .settings-strip::-webkit-scrollbar { display: none; }
 .settings-strip > * { flex-shrink: 0; }
+.settings-strip.strip-fade-r {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+}
+.settings-strip.strip-fade-l {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 28px);
+  mask-image: linear-gradient(to right, transparent, black 28px);
+}
+.settings-strip.strip-fade-l.strip-fade-r {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
+}
+
+/* Scroll hint under the strip: a hairline thumb that mirrors the scroll
+   position. Visible whenever the strip overflows, brighter mid-scroll. */
+.strip-scrollbar {
+  position: absolute;
+  left: 3rem;
+  right: 0;
+  bottom: -8px;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.strip-scrollbar.visible { opacity: 1; }
+.strip-scrollbar-thumb {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--theme-text-dim);
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+  will-change: transform, width;
+}
+.strip-scrollbar.scrolling .strip-scrollbar-thumb { opacity: 0.85; }
 
 /* Remote carets + selections (y-codemirror.next). Colors arrive inline from
    each user's awareness state; these rules handle geometry and the name tag

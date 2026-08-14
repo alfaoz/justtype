@@ -1272,6 +1272,49 @@ take care!
         note: 'public clients use PKCE and need no secret. keep tokens server-side where you can; for SPAs, hold them in memory.'
       }
     }
+  },
+  whatsNew: {
+    pageTitle: "what's new",
+    versionTag: 'v4',
+    heroTitle: 'write together.',
+    heroSub: 'justtype v4 brings real-time collaboration to your slates, end-to-end encrypted like everything else here.',
+    demo: {
+      lineA: 'ideas flow better',
+      lineB: "when they're shared",
+      userA: 'alfa',
+      userB: 'mert'
+    },
+    features: [
+      {
+        title: 'collab slates',
+        body: 'turn any slate collaborative and write in the same document at the same time. every keystroke syncs live between everyone in the group.'
+      },
+      {
+        title: 'end-to-end encrypted, still',
+        body: 'each collab slate gets its own key that only members hold. the server stores ciphertext it cannot read.'
+      },
+      {
+        title: 'live carets & presence',
+        body: "see who's in the slate and where they're writing. hover a caret to see whose it is."
+      },
+      {
+        title: 'invites, where you are',
+        body: 'invite people by username or with a link. invites land in your updates and on your slates page.'
+      },
+      {
+        title: 'version history',
+        body: 'step back through earlier checkpoints of a collab slate, preview them, restore the one you want.'
+      },
+      {
+        title: 'unpublish, completely',
+        body: 'take a published slate all the way back. the public link dies and the slate returns to being fully private.'
+      },
+      {
+        title: 'sweat the details',
+        body: 'smoother modals, inline sure? confirms, a footer that scrolls when space runs out, custom toasts.'
+      }
+    ],
+    backLink: 'back to writing'
   }
 };
 
