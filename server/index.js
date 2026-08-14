@@ -2601,7 +2601,7 @@ app.get('/api/slates', authenticateToken, (req, res) => {
 
 // Update slate metadata (pinning, tags, etc.)
 app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
-  const { pinned, encryptedTags } = req.body || {};
+  const { pinned, encryptedTags, editorMode } = req.body || {};
 
   try {
     const slate = db.prepare('SELECT id, slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
@@ -2640,6 +2640,14 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
 
       updates.push('encrypted_tags = ?');
       params.push(encryptedTags);
+    }
+
+    if (editorMode !== undefined) {
+      if (editorMode !== 'plain' && editorMode !== 'wysiwyg') {
+        return res.status(400).json({ error: 'Invalid editorMode value' });
+      }
+      updates.push('editor_mode = ?');
+      params.push(editorMode);
     }
 
     if (updates.length === 0) {
@@ -2773,12 +2781,13 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 	    // For E2E private slates, never store plaintext title in the DB (ZK). Keep it empty and rely on encrypted_title.
 	    const titleToStore = isE2E ? '' : title;
 	    const encryptedTitleToStore = isE2E ? encryptedTitle : null;
+	    const editorModeToStore = req.body.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain';
 	    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
 	    const stmt = db.prepare(`
-	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version)
-	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	    `);
-	    const result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1);
+	    const result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1, editorModeToStore);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -3220,7 +3229,8 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
       char_count: slate.char_count,
       view_count: slate.view_count + 1, // Return updated count
       created_at: slate.created_at,
-      updated_at: slate.updated_at
+      updated_at: slate.updated_at,
+      editor_mode: slate.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain'
     });
   } catch (error) {
     console.error('Get public slate error:', error);

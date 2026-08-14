@@ -92,27 +92,33 @@ export function VerifyBadge({ children, className }) {
       const manifest = await manifestRes.json();
       const gh = ghRes && ghRes.ok ? await ghRes.json() : null;
 
-      const [jsRes, cssRes] = await Promise.all([
-        fetch(bustCache(`/assets/${manifest.jsFile}`)),
-        fetch(bustCache(`/assets/${manifest.cssFile}`))
-      ]);
-
-      const [jsBuf, cssBuf] = await Promise.all([
-        jsRes.arrayBuffer(),
-        cssRes.arrayBuffer()
-      ]);
-
-      const [jsDigest, cssDigest] = await Promise.all([
-        crypto.subtle.digest('SHA-256', jsBuf),
-        crypto.subtle.digest('SHA-256', cssBuf)
-      ]);
+      // Hash every manifest-listed file (entry + lazy chunks); legacy manifests
+      // without a files array fall back to the two entry files.
+      const filesToHash = manifest.files || [
+        { file: manifest.jsFile, hash: manifest.jsHash },
+        { file: manifest.cssFile, hash: manifest.cssHash },
+      ];
 
       const hex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-      const computedJs = hex(jsDigest);
-      const computedCss = hex(cssDigest);
+      const computed = {};
+      await Promise.all(filesToHash.map(async (f) => {
+        const res = await fetch(bustCache(`/assets/${f.file}`));
+        const buf = await res.arrayBuffer();
+        computed[f.file] = hex(await crypto.subtle.digest('SHA-256', buf));
+      }));
 
-      const serverMatch = manifest.jsHash === computedJs && manifest.cssHash === computedCss;
-      const ghMatch = gh ? (gh.jsHash === computedJs && gh.cssHash === computedCss) : null;
+      const ghHashFor = (name) => {
+        if (!gh) return undefined;
+        if (gh.files) return gh.files.find(x => x.file === name)?.hash;
+        if (name === manifest.jsFile) return gh.jsHash;
+        if (name === manifest.cssFile) return gh.cssHash;
+        return undefined;
+      };
+
+      const computedJs = computed[manifest.jsFile];
+      const computedCss = computed[manifest.cssFile];
+      const serverMatch = filesToHash.every(f => computed[f.file] === f.hash);
+      const ghMatch = gh ? filesToHash.every(f => ghHashFor(f.file) === computed[f.file]) : null;
 
       const r = {
         verified: IS_BETA ? serverMatch : (serverMatch && ghMatch === true),
@@ -122,6 +128,7 @@ export function VerifyBadge({ children, className }) {
         cssHash: computedCss,
         ghJsHash: gh?.jsHash || null,
         version: manifest.version,
+        fileCount: filesToHash.length,
       };
       cachedResult = r;
       setResult(r);
@@ -195,6 +202,12 @@ export function VerifyBadge({ children, className }) {
                     <span>css</span>
                     <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{truncate(result.cssHash)}</span>
                   </div>
+                  {result.fileCount > 2 && (
+                    <div className="flex justify-between gap-4">
+                      <span>chunks</span>
+                      <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{result.fileCount} files checked</span>
+                    </div>
+                  )}
                   {result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash && (
                     <div className="text-red-400/70 pt-1">server and github hashes differ</div>
                   )}

@@ -619,3 +619,52 @@ body.custom-theme ::-webkit-scrollbar-thumb {
 body.custom-theme ::-webkit-scrollbar-track {
   background: var(--theme-bg);
 }
+
+/* Rich (wysiwyg) editor surface - lives in the same visual space as the textarea */
+.wysiwyg-editor .tiptap {
+  outline: none;
+  min-height: 70vh;
+  color: var(--theme-text);
+  caret-color: var(--theme-text);
+  line-height: inherit;
+}
+.wysiwyg-editor .tiptap p { margin: 0 0 0.75em 0; }
+.wysiwyg-editor .tiptap h1 { font-size: 1.6em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
+.wysiwyg-editor .tiptap h2 { font-size: 1.35em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
+.wysiwyg-editor .tiptap h3 { font-size: 1.15em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
+.wysiwyg-editor .tiptap h4,
+.wysiwyg-editor .tiptap h5,
+.wysiwyg-editor .tiptap h6 { font-size: 1em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
+.wysiwyg-editor .tiptap ul { list-style: disc; padding-left: 1.5em; margin: 0 0 0.75em 0; }
+.wysiwyg-editor .tiptap ol { list-style: decimal; padding-left: 1.5em; margin: 0 0 0.75em 0; }
+.wysiwyg-editor .tiptap li { margin: 0.15em 0; }
+.wysiwyg-editor .tiptap li p { margin: 0; }
+.wysiwyg-editor .tiptap blockquote {
+  border-left: 2px solid var(--theme-border);
+  padding-left: 1em;
+  margin: 0 0 0.75em 0;
+  color: var(--theme-text-muted);
+}
+.wysiwyg-editor .tiptap code {
+  background: var(--theme-bg-tertiary);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.wysiwyg-editor .tiptap pre {
+  background: var(--theme-bg-secondary);
+  border: 1px solid var(--theme-border-light);
+  border-radius: 4px;
+  padding: 0.75em 1em;
+  margin: 0 0 0.75em 0;
+  overflow-x: auto;
+}
+.wysiwyg-editor .tiptap pre code { background: transparent; padding: 0; font-size: 0.9em; }
+.wysiwyg-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--theme-border);
+  margin: 1.5em 0;
+}
+.wysiwyg-editor .tiptap a { color: var(--theme-blue); text-decoration: underline; text-underline-offset: 2px; }
+.wysiwyg-editor .tiptap strong { color: var(--theme-accent); }
+.wysiwyg-readonly .tiptap { min-height: 0; }

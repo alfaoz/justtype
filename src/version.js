@@ -2,4 +2,4 @@
 // MAJOR: Breaking changes
 // MINOR: New features (backward compatible)
 // PATCH: Bug fixes/hotfixes
-export const VERSION = '3.5.0-beta.1';
+export const VERSION = '3.6.0-beta.1';

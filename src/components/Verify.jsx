@@ -17,6 +17,7 @@ export function Verify() {
   const [githubError, setGithubError] = useState(false);
   const [computedJs, setComputedJs] = useState(null);
   const [computedCss, setComputedCss] = useState(null);
+  const [computedFiles, setComputedFiles] = useState(null);
   const [error, setError] = useState(null);
   const [polling, setPolling] = useState(false);
   const [actionsStatus, setActionsStatus] = useState(null); // 'running' | 'completed' | 'failed' | null
@@ -64,23 +65,23 @@ export function Verify() {
       setManifest(data);
       manifestRef.current = data;
 
-      const [jsRes, cssRes] = await Promise.all([
-        fetch(bustCache(`/assets/${data.jsFile}`)),
-        fetch(bustCache(`/assets/${data.cssFile}`))
-      ]);
+      // Hash every file listed in the manifest (entry + lazy chunks); older
+      // manifests without a files array fall back to the two entry files.
+      const filesToHash = data.files || [
+        { file: data.jsFile, hash: data.jsHash },
+        { file: data.cssFile, hash: data.cssHash },
+      ];
 
-      const [jsBuf, cssBuf] = await Promise.all([
-        jsRes.arrayBuffer(),
-        cssRes.arrayBuffer()
-      ]);
-
-      const [jsDigest, cssDigest] = await Promise.all([
-        crypto.subtle.digest('SHA-256', jsBuf),
-        crypto.subtle.digest('SHA-256', cssBuf)
-      ]);
-
-      setComputedJs(bufToHex(jsDigest));
-      setComputedCss(bufToHex(cssDigest));
+      const results = await Promise.all(filesToHash.map(async (f) => {
+        const res = await fetch(bustCache(`/assets/${f.file}`));
+        const buf = await res.arrayBuffer();
+        const digest = await crypto.subtle.digest('SHA-256', buf);
+        return [f.file, bufToHex(digest)];
+      }));
+      const computedMap = Object.fromEntries(results);
+      setComputedFiles(computedMap);
+      setComputedJs(computedMap[data.jsFile] || null);
+      setComputedCss(computedMap[data.cssFile] || null);
     } catch (err) {
       console.error('Verification failed:', err);
       setError(true);
@@ -120,11 +121,24 @@ export function Verify() {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
-  const jsAllMatch = manifest && github && computedJs && manifest.jsHash === github.jsHash && github.jsHash === computedJs;
-  const cssAllMatch = manifest && github && computedCss && manifest.cssHash === github.cssHash && github.cssHash === computedCss;
-  const allMatch = jsAllMatch && cssAllMatch;
-  const serverMatch = manifest && computedJs && computedCss && manifest.jsHash === computedJs && manifest.cssHash === computedCss;
-  const done = manifest && computedJs && computedCss && (IS_BETA || github || githubError);
+  const manifestFiles = manifest ? (manifest.files || [
+    { file: manifest.jsFile, hash: manifest.jsHash },
+    { file: manifest.cssFile, hash: manifest.cssHash },
+  ]) : null;
+
+  // GitHub hash lookup that understands both the multi-file and legacy schemas
+  const ghHashFor = (name) => {
+    if (!github) return undefined;
+    if (github.files) return github.files.find(f => f.file === name)?.hash;
+    if (manifest && name === manifest.jsFile) return github.jsHash;
+    if (manifest && name === manifest.cssFile) return github.cssHash;
+    return undefined;
+  };
+
+  const computedDone = manifestFiles && computedFiles && manifestFiles.every(f => computedFiles[f.file]);
+  const serverMatch = computedDone && manifestFiles.every(f => f.hash === computedFiles[f.file]);
+  const allMatch = computedDone && github && manifestFiles.every(f => f.hash === computedFiles[f.file] && ghHashFor(f.file) === computedFiles[f.file]);
+  const done = computedDone && (IS_BETA || github || githubError);
   const betaOk = IS_BETA && done && serverMatch;
   const serverOkGithubOff = !IS_BETA && done && serverMatch && !allMatch;
   const actionsRunning = serverOkGithubOff && (actionsStatus === 'running' || actionsStatus === null);
@@ -246,29 +260,27 @@ export function Verify() {
               </a>
             </div>
 
-            {/* JS bundle */}
-            <HashSection
-              label={strings.verify.jsBundle}
-              file={manifest.jsFile}
-              server={manifest.jsHash}
-              gh={github?.jsHash}
-              ghError={githubError}
-              computed={computedJs}
-              allMatch={IS_BETA ? (manifest.jsHash === computedJs) : jsAllMatch}
-              beta={IS_BETA}
-            />
-
-            {/* CSS bundle */}
-            <HashSection
-              label={strings.verify.cssBundle}
-              file={manifest.cssFile}
-              server={manifest.cssHash}
-              gh={github?.cssHash}
-              ghError={githubError}
-              computed={computedCss}
-              allMatch={IS_BETA ? (manifest.cssHash === computedCss) : cssAllMatch}
-              beta={IS_BETA}
-            />
+            {/* One hash section per built file (entry bundles + lazy chunks) */}
+            {manifestFiles.map((f) => {
+              const fileServerOk = computedFiles && f.hash === computedFiles[f.file];
+              return (
+                <HashSection
+                  key={f.file}
+                  label={
+                    f.file === manifest.jsFile ? strings.verify.jsBundle :
+                    f.file === manifest.cssFile ? strings.verify.cssBundle :
+                    strings.verify.chunk
+                  }
+                  file={f.file}
+                  server={f.hash}
+                  gh={ghHashFor(f.file)}
+                  ghError={githubError}
+                  computed={computedFiles?.[f.file]}
+                  allMatch={IS_BETA ? fileServerOk : (fileServerOk && github && ghHashFor(f.file) === computedFiles[f.file])}
+                  beta={IS_BETA}
+                />
+              );
+            })}
 
             {/* GitHub actions source */}
             <div className="pt-2 border-t" style={{ borderColor: 'var(--theme-border-light)' }}>

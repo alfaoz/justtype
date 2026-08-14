@@ -21,6 +21,12 @@ const strings = {
   writer: {
     titlePlaceholder: 'slate title...',
     contentPlaceholder: 'just start typing...',
+    editorMode: {
+      label: (mode) => `editor: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`,
+      menuTitle: 'editor',
+      value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
+      loading: 'loading rich editor...'
+    },
     zenMode: {
       on: 'zen mode on',
       off: 'zen mode off'
@@ -847,6 +853,7 @@ take care!
     error: 'failed to verify. try refreshing.',
     jsBundle: 'javascript bundle',
     cssBundle: 'css bundle',
+    chunk: 'lazy chunk',
     sources: {
       server: 'server',
       github: 'github',

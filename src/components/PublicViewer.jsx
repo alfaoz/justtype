@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 
+// Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
+const MarkdownView = React.lazy(() => import('./TiptapEditor').then(m => ({ default: m.MarkdownView })));
+
 export function PublicViewer() {
   const [slate, setSlate] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -226,9 +229,17 @@ export function PublicViewer() {
           </div>
         </div>
 
-        <div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>
-          {slate.content}
-        </div>
+        {slate.editor_mode === 'wysiwyg' ? (
+          <React.Suspense
+            fallback={<div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>{slate.content}</div>}
+          >
+            <MarkdownView content={slate.content} puntoClass={`leading-relaxed punto-${punto}`} />
+          </React.Suspense>
+        ) : (
+          <div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>
+            {slate.content}
+          </div>
+        )}
       </main>
 
       {/* FOOTER */}

@@ -667,6 +667,14 @@ try {
     console.log('✓ Database migrated: Added adoption_pending column to slates');
   }
 
+  // Per-document editor mode: 'plain' (textarea) or 'wysiwyg' (rich markdown editor).
+  // Deliberately unencrypted metadata: low sensitivity, needed before content decrypts.
+  const slateCols4 = db.pragma('table_info(slates)');
+  if (!slateCols4.some(col => col.name === 'editor_mode')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN editor_mode TEXT DEFAULT 'plain';`);
+    console.log('✓ Database migrated: Added editor_mode column to slates');
+  }
+
   // Tombstones for incremental sync (GET /api/oauth/sync). A trigger records every
   // slate deletion regardless of which code path removed it, so third-party clients
   // can propagate deletes without a full re-list. Retained ~90 days (swept by the

@@ -7,6 +7,9 @@ import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptFo
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
 
+// Rich (wysiwyg) editor loads on demand so plain-mode writers never pay for it
+const TiptapEditor = React.lazy(() => import('./TiptapEditor'));
+
 // Live re-sync (push): re-wrap the just-saved plaintext to every app that should
 // hold a copy of this slate — apps with an explicit grant AND apps the user gave
 // "share all" access (so brand-new slates auto-share). The content key is wrapped
@@ -83,6 +86,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showPublishMenu, setShowPublishMenu] = useState(false);
   const [shareUrl, setShareUrl] = useState(null);
   const [showSaveMenu, setShowSaveMenu] = useState(false);
+  const [editorMode, setEditorModeState] = useState('plain'); // 'plain' | 'wysiwyg' — a per-document setting
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -136,6 +140,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     // Only restore if we're on a new slate (no currentSlate) and no content yet
     if (!currentSlate && !content) {
+      // Restore the draft's editor mode preference too
+      if (localStorage.getItem('justtype-draft-mode') === 'wysiwyg') {
+        setEditorModeState('wysiwyg');
+      }
       try {
         const savedDraft = localStorage.getItem('justtype-draft');
         if (savedDraft) {
@@ -632,6 +640,24 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return () => window.removeEventListener('popstate', handlePopstate);
   }, [hasUnsavedChanges, content, token, currentSlate]);
 
+  // Per-document editor mode. Persisted on the slate for saved docs; for unsaved
+  // drafts the preference rides along in localStorage until first save.
+  const setEditorMode = (mode) => {
+    setEditorModeState(mode);
+    if (currentSlate && token) {
+      fetch(`${API_URL}/slates/${currentSlate.slate_number}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ editorMode: mode }),
+      }).catch(() => {});
+    } else {
+      localStorage.setItem('justtype-draft-mode', mode);
+    }
+  };
+
+  const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
+
   const loadSlate = async (id) => {
     try {
       const response = await fetch(`${API_URL}/slates/${id}`, {
@@ -685,6 +711,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       setTitle(slateTitle);
       setContent(slateContent);
+      setEditorModeState(data.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain');
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
       setWasPublishedBeforeEdit(isPreviouslyPublishedDraft);
@@ -744,7 +771,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setStatus('saving...');
 
     try {
-      const firstLine = content.split('\n')[0].trim();
+      const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
       const titleToSave = firstLine || 'untitled slate';
 
       // Try E2E encryption
@@ -807,9 +834,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
       localStorage.removeItem('justtype-draft');
+      setEditorModeState(localStorage.getItem('justtype-draft-mode') === 'wysiwyg' ? 'wysiwyg' : 'plain');
     },
     // Command palette methods
     saveSlate: () => saveSlate(),
+    toggleEditorMode: () => toggleEditorMode(),
     openPublishMenu: () => setShowPublishMenu(true),
     exportAs: (format) => {
       switch (format) {
@@ -825,7 +854,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const saveSlate = async () => {
     // Extract title from first line of content
-    const firstLine = content.split('\n')[0].trim();
+    const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
 
     if (!content.trim()) return null;
@@ -851,6 +880,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
       } else {
         body = { title: titleToSave, content };
+      }
+
+      // New slates carry their editor mode; existing slates persist it via metadata PATCH
+      if (!currentSlate) {
+        body.editorMode = editorMode;
       }
 
       const response = await fetch(url, {
@@ -988,13 +1022,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (slateKey) {
           publishBody.publicContent = content;
           // Send plaintext title for public view
-          const firstLine = content.split('\n')[0].trim();
+          const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
           publishBody.publicTitle = firstLine || 'untitled slate';
         }
       } else {
         // Unpublishing — encrypt title for private storage
         if (slateKey) {
-          const firstLine = content.split('\n')[0].trim();
+          const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
           const titleToEncrypt = firstLine || 'untitled slate';
           publishBody.encryptedTitle = await encryptTitle(titleToEncrypt, slateKey);
         }
@@ -1054,6 +1088,34 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const a = document.createElement('a');
     a.href = url;
     a.download = `${title || 'slate'}-${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setShowSaveMenu(false);
+  };
+
+  const exportToMarkdown = () => {
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'slate'}-${Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setShowSaveMenu(false);
+  };
+
+  const exportToHtml = () => {
+    const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = `<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>${escapeHtml(title || 'slate')}</title>\n<style>body{font-family:monospace;max-width:800px;margin:0 auto;padding:40px;line-height:1.6}pre{white-space:pre-wrap;word-wrap:break-word}</style>\n</head>\n<body>\n<pre>${escapeHtml(content)}</pre>\n</body>\n</html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title || 'slate'}-${Date.now()}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1234,15 +1296,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* WRITING AREA */}
       <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={handleTextareaKeyDown}
-          placeholder={strings.writer.contentPlaceholder}
-          spellCheck={false}
-          className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
-        />
+        {editorMode === 'wysiwyg' ? (
+          <React.Suspense
+            fallback={
+              <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
+                {strings.writer.editorMode.loading}
+              </div>
+            }
+          >
+            <TiptapEditor
+              content={content}
+              onChange={setContent}
+              puntoClass={`punto-${punto}`}
+            />
+          </React.Suspense>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={handleTextareaKeyDown}
+            placeholder={strings.writer.contentPlaceholder}
+            spellCheck={false}
+            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
+          />
+        )}
       </main>
 
       {/* DESKTOP FOOTER */}
@@ -1408,6 +1486,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   style={{ color: 'var(--theme-accent)' }}
                 >
                   {getCounterLabel()}
+                </button>
+                <span className="opacity-30">·</span>
+                <button
+                  onClick={toggleEditorMode}
+                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  style={{ color: 'var(--theme-accent)' }}
+                >
+                  {strings.writer.editorMode.label(editorMode)}
                 </button>
               </div>
             )}
@@ -1733,6 +1819,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   >
                     <span>counter</span>
                     <span className="text-[var(--theme-text-dim)]">{showCounter ? 'on' : 'off'}</span>
+                  </button>
+                  <button
+                    onClick={toggleEditorMode}
+                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
+                  >
+                    <span>{strings.writer.editorMode.menuTitle}</span>
+                    <span className="text-[var(--theme-text-dim)]">{strings.writer.editorMode.value(editorMode)}</span>
                   </button>
                 </div>
               )}

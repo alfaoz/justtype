@@ -851,6 +851,12 @@ export default function App() {
         }
         break;
 
+      case 'TOGGLE_EDITOR':
+        if (writerRef.current) {
+          writerRef.current.toggleEditorMode?.();
+        }
+        break;
+
       case 'TOGGLE_ZEN':
         if (view === 'writer') {
           setZenMode(prev => !prev);

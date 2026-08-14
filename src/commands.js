@@ -121,6 +121,19 @@ export const commands = {
     payload: 'html',
     cli: 'justtype export html'
   },
+  editor: {
+    id: 'toggle-editor',
+    aliases: ['rich', 'wysiwyg', 'markdown editor'],
+    title: 'toggle editor mode',
+    description: 'switch this slate between plain and rich (wysiwyg) editing',
+    icon: '¶',
+    category: 'actions',
+    shortcut: null,
+    context: ['writer'],
+    requiresAuth: false,
+    action: 'TOGGLE_EDITOR',
+    cli: null
+  },
 
   // Settings
   theme: {
