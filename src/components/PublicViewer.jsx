@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
-const MarkdownView = React.lazy(() => import('./TiptapEditor').then(m => ({ default: m.MarkdownView })));
+const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
 
 export function PublicViewer() {
   const [slate, setSlate] = useState(null);

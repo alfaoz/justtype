@@ -7,8 +7,8 @@ import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptFo
 import { getSlateKey } from '../keyStore';
 import { VerifyBadge } from './VerifyBadge';
 
-// Rich (wysiwyg) editor loads on demand so plain-mode writers never pay for it
-const TiptapEditor = React.lazy(() => import('./TiptapEditor'));
+// Rich (live preview) editor loads on demand so plain-mode writers never pay for it
+const TiptapEditor = React.lazy(() => import('./LivePreviewEditor'));
 
 // Live re-sync (push): re-wrap the just-saved plaintext to every app that should
 // hold a copy of this slate — apps with an explicit grant AND apps the user gave

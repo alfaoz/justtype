@@ -620,51 +620,53 @@ body.custom-theme ::-webkit-scrollbar-track {
   background: var(--theme-bg);
 }
 
-/* Rich (wysiwyg) editor surface - lives in the same visual space as the textarea */
-.wysiwyg-editor .tiptap {
-  outline: none;
-  min-height: 70vh;
-  color: var(--theme-text);
-  caret-color: var(--theme-text);
+/* Rich (live preview) editor surface - lives in the same visual space as the textarea */
+.wysiwyg-editor .cm-editor { background: transparent; outline: none !important; height: auto; }
+.wysiwyg-editor .cm-editor.cm-focused { outline: none !important; }
+.wysiwyg-editor .cm-scroller {
+  font-family: var(--theme-font-writer) !important;
   line-height: inherit;
+  overflow: visible;
 }
-.wysiwyg-editor .tiptap p { margin: 0 0 0.75em 0; }
-.wysiwyg-editor .tiptap h1 { font-size: 1.6em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
-.wysiwyg-editor .tiptap h2 { font-size: 1.35em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
-.wysiwyg-editor .tiptap h3 { font-size: 1.15em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
-.wysiwyg-editor .tiptap h4,
-.wysiwyg-editor .tiptap h5,
-.wysiwyg-editor .tiptap h6 { font-size: 1em; font-weight: 600; margin: 1em 0 0.5em 0; color: var(--theme-accent); }
-.wysiwyg-editor .tiptap ul { list-style: disc; padding-left: 1.5em; margin: 0 0 0.75em 0; }
-.wysiwyg-editor .tiptap ol { list-style: decimal; padding-left: 1.5em; margin: 0 0 0.75em 0; }
-.wysiwyg-editor .tiptap li { margin: 0.15em 0; }
-.wysiwyg-editor .tiptap li p { margin: 0; }
-.wysiwyg-editor .tiptap blockquote {
-  border-left: 2px solid var(--theme-border);
-  padding-left: 1em;
-  margin: 0 0 0.75em 0;
-  color: var(--theme-text-muted);
+.wysiwyg-editor .cm-content {
+  padding: 0;
+  caret-color: var(--theme-text);
+  color: var(--theme-text);
+  min-height: 70vh;
 }
-.wysiwyg-editor .tiptap code {
+.wysiwyg-editor .cm-line { padding: 0; }
+.wysiwyg-editor .cm-cursor { border-left-color: var(--theme-text); }
+.wysiwyg-editor .cm-selectionBackground,
+.wysiwyg-editor .cm-content ::selection { background: var(--theme-border) !important; }
+.wysiwyg-editor .cm-placeholder { color: var(--theme-text-dim); }
+
+/* dimmed syntax markers - visible only when the caret is inside the element */
+.wysiwyg-editor .cm-lpmark { color: var(--theme-text-dim); opacity: 0.75; }
+
+.wysiwyg-editor .cm-lp-h1 { font-size: 1.6em; font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-h2 { font-size: 1.35em; font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-h3 { font-size: 1.15em; font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-h4,
+.wysiwyg-editor .cm-lp-h5,
+.wysiwyg-editor .cm-lp-h6 { font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-strong { font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-em { font-style: italic; }
+.wysiwyg-editor .cm-lp-strike { text-decoration: line-through; color: var(--theme-text-muted); }
+.wysiwyg-editor .cm-lp-inlinecode {
   background: var(--theme-bg-tertiary);
   border-radius: 3px;
-  padding: 0.1em 0.35em;
-  font-size: 0.9em;
+  padding: 0.05em 0.3em;
+  font-size: 0.95em;
 }
-.wysiwyg-editor .tiptap pre {
-  background: var(--theme-bg-secondary);
-  border: 1px solid var(--theme-border-light);
-  border-radius: 4px;
-  padding: 0.75em 1em;
-  margin: 0 0 0.75em 0;
-  overflow-x: auto;
+.wysiwyg-editor .cm-lp-codeline { background: var(--theme-bg-secondary); padding: 0 0.5em !important; }
+.wysiwyg-editor .cm-lp-quoteline {
+  border-left: 2px solid var(--theme-border);
+  padding-left: 1em !important;
+  color: var(--theme-text-muted);
 }
-.wysiwyg-editor .tiptap pre code { background: transparent; padding: 0; font-size: 0.9em; }
-.wysiwyg-editor .tiptap hr {
-  border: none;
-  border-top: 1px solid var(--theme-border);
-  margin: 1.5em 0;
-}
-.wysiwyg-editor .tiptap a { color: var(--theme-blue); text-decoration: underline; text-underline-offset: 2px; }
-.wysiwyg-editor .tiptap strong { color: var(--theme-accent); }
-.wysiwyg-readonly .tiptap { min-height: 0; }
+.wysiwyg-editor .cm-lp-link { color: var(--theme-blue); text-decoration: underline; text-underline-offset: 2px; }
+.wysiwyg-editor .cm-lp-listmark { color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-taskmark { color: var(--theme-green); }
+.wysiwyg-editor .cm-lp-tableheader { font-weight: 600; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-hr { color: var(--theme-text-dim); opacity: 0.6; }
+.wysiwyg-readonly .cm-content { min-height: 0; }
