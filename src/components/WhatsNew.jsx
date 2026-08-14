@@ -45,10 +45,6 @@ export function WhatsNew() {
         <span className="wn-type wn-type-b">{s.demo.lineB}</span>
         <span className="wn-caret" data-user={s.demo.userB} style={{ background: '#3ecf8e' }} />
       </div>
-      <div className="wn-presence">
-        <span style={{ color: '#4a9eff' }}>●</span>&nbsp;{s.demo.userA}
-        <span style={{ color: '#3ecf8e', marginLeft: '0.9rem' }}>●</span>&nbsp;{s.demo.userB}
-      </div>
     </div>,
 
     // 02 · version history: cycling checkpoint highlight + synced preview
@@ -122,10 +118,9 @@ export function WhatsNew() {
           overflow: hidden;
         }
         .wn-frame-center { align-items: center; }
-        .wn-demo { border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); }
         .wn-line { display: flex; align-items: center; min-height: 2rem; color: var(--theme-text); font-size: 0.9rem; }
 
-        /* Hero: two collaborators typing on loop */
+        /* Collab card: two collaborators typing on loop */
         .wn-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; }
         .wn-type-a { animation: wnTypeA 9s steps(17, end) infinite; }
         .wn-type-b { animation: wnTypeB 9s steps(19, end) infinite; }
@@ -135,7 +130,6 @@ export function WhatsNew() {
         .wn-caret { position: relative; display: inline-block; width: 2px; height: 1.25em; margin-left: 1px; vertical-align: text-bottom; flex-shrink: 0; }
         .wn-caret[data-user]::after { content: attr(data-user); position: absolute; bottom: calc(100% + 4px); left: -2px; padding: 1px 5px; border-radius: 3px; font-size: 0.6rem; line-height: 1.4; color: #111; background: inherit; white-space: nowrap; }
 
-        .wn-presence { margin-top: 0.9rem; font-size: 0.7rem; color: var(--theme-text-dim); display: flex; align-items: center; }
 
         /* Version history: highlight walks the checkpoints, preview follows */
         .wn-hist { display: flex; gap: 1.25rem; align-items: stretch; }
@@ -204,19 +198,12 @@ export function WhatsNew() {
         {/* hero */}
         <section className="pt-16 md:pt-24 pb-16 wn-fade-in">
           <p className="text-xs tracking-widest text-[var(--theme-text-dim)] mb-4">{strings.app.logo} · {s.versionTag}</p>
-          <h1 className="text-4xl md:text-5xl text-white font-medium mb-5">{s.heroTitle}</h1>
+          <h1 className="text-4xl md:text-5xl text-white font-medium mb-5">
+            {s.heroTitle.split('. ').map((part, i, arr) => (
+              <span key={part} className="block">{i < arr.length - 1 ? `${part}.` : part}</span>
+            ))}
+          </h1>
           <p className="text-sm md:text-base text-[var(--theme-text-muted)] leading-relaxed max-w-lg">{s.heroSub}</p>
-
-          <div className="wn-demo mt-10 px-5 py-6 text-sm md:text-base text-[var(--theme-text)] max-w-xl">
-            <div className="wn-line">
-              <span className="wn-type wn-type-a">{s.demo.lineA}</span>
-              <span className="wn-caret" data-user={s.demo.userA} style={{ background: '#4a9eff' }} />
-            </div>
-            <div className="wn-line">
-              <span className="wn-type wn-type-b">{s.demo.lineB}</span>
-              <span className="wn-caret" data-user={s.demo.userB} style={{ background: '#3ecf8e' }} />
-            </div>
-          </div>
         </section>
 
         {/* features */}

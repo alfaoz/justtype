@@ -1605,7 +1605,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             {showMenuButton && (
               <div
                 ref={stripRef}
-                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_both]'}`}
+                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
                 style={{ zIndex: 150 }}
                 onScroll={() => {
                   setShowThemePicker(false);
@@ -1762,6 +1762,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       style={{ color: 'var(--theme-accent)' }}
                     >
                       {strings.collab.menuButton}
+                    </button>
+                  </>
+                )}
+                {token && collabDocKey && collabSlateDbId && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <button
+                      onClick={() => setShowCollabHistory(true)}
+                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                      style={{ color: 'var(--theme-accent)' }}
+                    >
+                      {strings.collab.history.button}
                     </button>
                   </>
                 )}
@@ -2169,6 +2181,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       <span className="text-[var(--theme-text-dim)]">{collabDocKey ? 'on' : 'off'}</span>
                     </button>
                   )}
+                  {token && collabDocKey && collabSlateDbId && (
+                    <button
+                      onClick={() => {
+                        setShowMobileMenu(false);
+                        setShowCollabHistory(true);
+                      }}
+                      className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
+                    >
+                      <span>{strings.collab.history.button}</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -2225,10 +2248,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             // undefined = key rotation, same slate; null = collab disabled
             setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
           }}
-          onOpenHistory={collabDocKey && collabSlateDbId ? () => {
-            setShowCollabModal(false);
-            setShowCollabHistory(true);
-          } : null}
           onClose={() => setShowCollabModal(false)}
         />
       )}
