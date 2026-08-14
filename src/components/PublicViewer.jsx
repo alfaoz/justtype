@@ -181,9 +181,9 @@ export function PublicViewer() {
   return (
     <div className="min-h-screen bg-[#111111] text-[#a0a0a0] font-mono">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
         html, body { background-color: #111111; margin: 0; padding: 0; }
-        body { font-family: 'JetBrains Mono', monospace; }
+        body { font-family: 'IBM Plex Mono', monospace; }
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #111111; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }

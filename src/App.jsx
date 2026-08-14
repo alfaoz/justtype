@@ -875,13 +875,13 @@ export default function App() {
     return (
       <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
           html, body, #root {
             height: 100%;
             overflow: hidden;
           }
           body {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'IBM Plex Mono', monospace;
             background-color: #111111;
             margin: 0;
             padding: 0;
@@ -940,13 +940,13 @@ export default function App() {
     <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
         html, body, #root {
           height: 100%;
           overflow: hidden;
         }
         body {
-          font-family: 'JetBrains Mono', monospace;
+          font-family: 'IBM Plex Mono', monospace;
           background-color: #111111;
           margin: 0;
           padding: 0;

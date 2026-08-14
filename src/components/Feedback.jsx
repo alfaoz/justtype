@@ -43,7 +43,7 @@ export function Feedback({ token, username, email }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#111] flex items-center justify-center p-4 font-mono text-[#a0a0a0]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+    <div className="min-h-screen bg-[#111] flex items-center justify-center p-4 font-mono text-[#a0a0a0]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
       <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
         {token && token !== 'checking' ? (
           submitted ? (

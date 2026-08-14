@@ -10,8 +10,14 @@ const requiredColorKeys = [
   'blue', 'orange', 'red', 'green'
 ];
 
-// Default fonts (JetBrains Mono)
+// Default fonts (IBM Plex Mono)
 const defaultFonts = {
+  ui: { family: 'IBM Plex Mono', weights: [300, 400, 500] },
+  writer: { family: 'IBM Plex Mono', weights: [300, 400, 500] }
+};
+
+// Legacy fonts (JetBrains Mono, the original justtype font)
+const legacyFonts = {
   ui: { family: 'JetBrains Mono', weights: [300, 400, 500] },
   writer: { family: 'JetBrains Mono', weights: [300, 400, 500] }
 };
@@ -63,7 +69,7 @@ export const builtInThemes = {
       red: '#f87171',
       green: '#4ade80',
     },
-    fonts: defaultFonts
+    fonts: legacyFonts
   },
   light: {
     id: 'light',
@@ -530,8 +536,8 @@ export const applyThemeVariables = async (themeId) => {
   const writerFont = parseFontSpec(fonts.writer);
 
   // Set font CSS variables (with fallbacks)
-  const uiFontFamily = uiFont ? `'${uiFont.family}', monospace` : "'JetBrains Mono', monospace";
-  const writerFontFamily = writerFont ? `'${writerFont.family}', monospace` : "'JetBrains Mono', monospace";
+  const uiFontFamily = uiFont ? `'${uiFont.family}', monospace` : "'IBM Plex Mono', monospace";
+  const writerFontFamily = writerFont ? `'${writerFont.family}', monospace` : "'IBM Plex Mono', monospace";
 
   root.style.setProperty('--theme-font-ui', uiFontFamily);
   root.style.setProperty('--theme-font-writer', writerFontFamily);

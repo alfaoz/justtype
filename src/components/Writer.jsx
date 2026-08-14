@@ -1070,7 +1070,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           <title>${title || 'Slate'}</title>
           <style>
             body {
-              font-family: 'JetBrains Mono', monospace;
+              font-family: 'IBM Plex Mono', monospace;
               padding: 40px;
               max-width: 800px;
               margin: 0 auto;

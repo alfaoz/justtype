@@ -21,8 +21,8 @@
   --theme-red: #b33000;
   --theme-green: #008800;
   /* Font variables */
-  --theme-font-ui: 'JetBrains Mono', monospace;
-  --theme-font-writer: 'JetBrains Mono', monospace;
+  --theme-font-ui: 'IBM Plex Mono', monospace;
+  --theme-font-writer: 'IBM Plex Mono', monospace;
 }
 
 /* Apply UI font to body and override Tailwind's font-mono */
