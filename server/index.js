@@ -11,6 +11,7 @@ const db = require('./database');
 const b2Storage = require('./b2Storage');
 const b2Monitor = require('./b2Monitor');
 const { mountOAuth } = require('./oauth');
+const { mountCollab } = require('./collab');
 const dropHub = require('./dropHub');
 const { B2Error } = require('./b2ErrorHandler');
 const emailService = require('./emailService');
@@ -1110,6 +1111,13 @@ mountOAuth(app, {
   checkStorageLimit,
   updateUserStorage,
   dropHub
+});
+
+// ============ E2EE COLLABORATIVE SLATES ============
+
+mountCollab(app, {
+  db, b2Storage, authenticateToken, createRateLimitMiddleware,
+  decodeBase64Strict, B2Error
 });
 
 // ============ AUTH ROUTES ============
@@ -2686,7 +2694,14 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
       // E2E user: download raw encrypted blob from B2, return as base64
       const rawData = await b2Storage.downloadRawFile(slate.b2_file_id);
       const encryptedContent = rawData.toString('base64');
-      return res.json({ ...slate, encryptedContent, encrypted: true });
+      // Collaborative slate: content is under the doc key, not the master key —
+      // include the owner's wrapped copy so the client can unwrap and decrypt.
+      let collabWrappedKey = null;
+      if (slate.is_collab) {
+        const member = db.prepare('SELECT wrapped_key FROM collab_members WHERE slate_id = ? AND user_id = ?').get(slate.id, req.user.id);
+        collabWrappedKey = member ? member.wrapped_key : null;
+      }
+      return res.json({ ...slate, encryptedContent, encrypted: true, collab_wrapped_key: collabWrappedKey });
     }
 
     // Use encryption key from middleware (already verified to exist)
@@ -3117,7 +3132,8 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       console.warn('Failed to delete B2 file:', err);
     }
 
-    // Delete from database
+    // Delete from database (collab memberships too — no FK cascade)
+    db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
 
     // Update user's total storage usage
@@ -3397,6 +3413,10 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
         console.error(`Failed to delete B2 file ${slate.b2_file_id}:`, err);
       }
     }
+
+    // Collab memberships: theirs, and everyone's on slates they own (before the
+    // slates rows go away — no FK cascade)
+    db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
     const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
@@ -5166,6 +5186,10 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
         }
       }
     }
+
+    // Collab memberships: theirs, and everyone's on slates they own (before the
+    // slates rows go away — no FK cascade)
+    db.prepare('DELETE FROM collab_members WHERE user_id = ? OR slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId, userId);
 
     // Delete user from database (CASCADE will delete slates)
     const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId);

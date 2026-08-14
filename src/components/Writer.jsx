@@ -3,8 +3,9 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { CollabShareModal } from './CollabShareModal';
 import { VerifyBadge } from './VerifyBadge';
 
 // Rich (live preview) editor loads on demand so plain-mode writers never pay for it
@@ -107,6 +108,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [viQuizError, setViQuizError] = useState('');
   const [viModeState, setViModeState] = useState('normal'); // 'normal', 'insert'
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  // Collaborative slate: the doc key the content is encrypted under (null for
+  // solo slates). Set on load from the owner's wrapped copy, or by the share
+  // modal when sharing is turned on/off.
+  const [collabDocKey, setCollabDocKey] = useState(null);
+  const [showCollabModal, setShowCollabModal] = useState(false);
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -686,11 +692,20 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           onLogin();
           return;
         }
-        slateContent = await decryptContent(data.encryptedContent, slateKey);
+        // Collaborative slate: content is under the shared doc key, which the
+        // server returns wrapped to our master key.
+        let contentKey = slateKey;
+        if (data.is_collab && data.collab_wrapped_key) {
+          contentKey = await unwrapKey(data.collab_wrapped_key, slateKey);
+          setCollabDocKey(contentKey);
+        } else {
+          setCollabDocKey(null);
+        }
+        slateContent = await decryptContent(data.encryptedContent, contentKey);
         // Decrypt title if encrypted
         if (data.encrypted_title && !data.is_published) {
           try {
-            slateTitle = await decryptTitle(data.encrypted_title, slateKey);
+            slateTitle = await decryptTitle(data.encrypted_title, contentKey);
           } catch (err) {
             console.error('Failed to decrypt title:', err);
             slateTitle = 'untitled slate';
@@ -698,10 +713,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         }
       } else {
         slateContent = data.content;
+        setCollabDocKey(null);
       }
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
-      if (data.encrypted && slateKey && !data.is_published) {
+      // (Collab slates are never app-shared — enforced server-side.)
+      if (data.encrypted && slateKey && !data.is_published && !data.is_collab) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -774,12 +791,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
       const titleToSave = firstLine || 'untitled slate';
 
-      // Try E2E encryption
+      // Try E2E encryption (collab slates encrypt under the shared doc key)
       const slateKey = userId ? await getSlateKey(userId) : null;
+      const contentKey = collabDocKey || slateKey;
       let body;
-      if (slateKey) {
-        const encrypted = await encryptContent(content, slateKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, slateKey);
+      if (contentKey) {
+        const encrypted = await encryptContent(content, contentKey);
+        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
         const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
         const charCount = content.length;
         const sizeBytes = new TextEncoder().encode(content).length;
@@ -835,6 +853,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       lastSavedContentRef.current = '';
       localStorage.removeItem('justtype-draft');
       setEditorModeState(localStorage.getItem('justtype-draft-mode') === 'wysiwyg' ? 'wysiwyg' : 'plain');
+      setCollabDocKey(null);
+      setShowCollabModal(false);
     },
     // Command palette methods
     saveSlate: () => saveSlate(),
@@ -867,12 +887,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         ? `${API_URL}/slates/${currentSlate.slate_number}`
         : `${API_URL}/slates`;
 
-      // Try E2E encryption
+      // Try E2E encryption (collab slates encrypt under the shared doc key;
+      // new slates are never collab)
       const slateKey = userId ? await getSlateKey(userId) : null;
+      const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
       let body;
-      if (slateKey) {
-        const encrypted = await encryptContent(content, slateKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, slateKey);
+      if (contentKey) {
+        const encrypted = await encryptContent(content, contentKey);
+        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
         const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
         const charCount = content.length;
         const sizeBytes = new TextEncoder().encode(content).length;
@@ -919,7 +941,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setHasUnsavedChanges(false);
 
       // Keep any third-party shares of this slate in sync with the new content.
-      if (slateKey) {
+      // (Not for collab slates — they cannot be app-shared.)
+      if (slateKey && !collabDocKey) {
         const slateNumber = currentSlate ? currentSlate.slate_number : data.slate_number;
         if (slateNumber != null) resyncSharedGrants(slateNumber, content, titleToSave, slateKey);
       }
@@ -1495,6 +1518,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 >
                   {strings.writer.editorMode.label(editorMode)}
                 </button>
+                {token && currentSlate && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <button
+                      onClick={() => setShowCollabModal(true)}
+                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                      style={{ color: 'var(--theme-accent)' }}
+                    >
+                      {strings.collab.menuButton}
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -1827,6 +1862,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     <span>{strings.writer.editorMode.menuTitle}</span>
                     <span className="text-[var(--theme-text-dim)]">{strings.writer.editorMode.value(editorMode)}</span>
                   </button>
+                  {token && currentSlate && (
+                    <button
+                      onClick={() => {
+                        setShowMobileMenu(false);
+                        setShowCollabModal(true);
+                      }}
+                      className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
+                    >
+                      <span>{strings.collab.menuButton}</span>
+                      <span className="text-[var(--theme-text-dim)]">{collabDocKey ? 'on' : 'off'}</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1856,6 +1903,22 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </div>
           </div>
         </>
+      )}
+
+      {/* COLLAB SHARE MODAL */}
+      {showCollabModal && currentSlate && (
+        <CollabShareModal
+          slateNumber={currentSlate.slate_number}
+          userId={userId}
+          username={localStorage.getItem('justtype-username')}
+          docKey={collabDocKey}
+          getCurrent={() => ({
+            content,
+            title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
+          })}
+          onDocKeyChange={(key) => setCollabDocKey(key)}
+          onClose={() => setShowCollabModal(false)}
+        />
       )}
 
       {/* ABOUT MODAL */}

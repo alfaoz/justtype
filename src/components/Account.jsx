@@ -8,7 +8,7 @@ import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, de
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 
-export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, onUsernameUpdate, recoveryKeyPending, onRecoveryKeyShown }) {
+export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, onUsernameUpdate, recoveryKeyPending, onRecoveryKeyShown, onRecoveryKeyAcknowledged }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -1342,6 +1342,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               onAcknowledge={() => {
                 setRecoveryPhrase(null);
                 setShowRecoverySection(false);
+                // Clear App's pending flag so the yellow warning goes away
+                // without a refresh
+                if (onRecoveryKeyAcknowledged) onRecoveryKeyAcknowledged();
                 // Tell server user has seen their recovery key
                 fetch(`${API_URL}/account/acknowledge-recovery-key`, {
                   method: 'POST',

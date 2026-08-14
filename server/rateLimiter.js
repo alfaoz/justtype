@@ -31,6 +31,13 @@ class RateLimiter {
     approveDevice: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 approvals per 15 minutes
     requestDeviceCode: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 device code requests per 15 minutes (IP-based)
     pollToken: { max: 120, windowMs: 15 * 60 * 1000 }, // 120 polls per 15 minutes (CLI polls every 5s for max 10 min)
+
+    // Collaborative slates
+    collabLookup: { max: 30, windowMs: 15 * 60 * 1000 }, // username -> public key lookups (enumeration guard)
+    collabEnable: { max: 20, windowMs: 60 * 60 * 1000 }, // enable/disable collab (re-uploads the blob)
+    collabInvite: { max: 30, windowMs: 60 * 60 * 1000 }, // invites sent
+    collabRespond: { max: 60, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
+    collabFetch: { max: 240, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
   };
 
   check(userId, operation) {

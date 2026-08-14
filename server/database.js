@@ -974,6 +974,35 @@ try {
     );
   `);
   console.log('✓ Feedback table initialized');
+
+  // Collaborative slates: is_collab marks a slate whose content is encrypted
+  // under a shared doc key; collab_members holds who has that key and how it
+  // is wrapped for them (see server/collab.js). No FK cascades here — SQLite
+  // foreign_keys is off, so slate/user deletion paths clean these rows up
+  // explicitly.
+  const slateColsCollab = db.pragma('table_info(slates)');
+  if (!slateColsCollab.some(col => col.name === 'is_collab')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN is_collab INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added is_collab column to slates');
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS collab_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slate_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'editor',        -- 'owner' | 'editor'
+      status TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'accepted'
+      wrapped_key TEXT,                           -- doc key, AES-256-GCM under the member's master key
+      invite_wrapped_key TEXT,                    -- doc key, RSA-OAEP under the member's public key (while pending)
+      invited_by INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      accepted_at INTEGER,
+      UNIQUE (slate_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_collab_members_user ON collab_members(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_collab_members_slate ON collab_members(slate_id);
+  `);
+  console.log('✓ Collab members table initialized');
 } catch (err) {
   console.error('Database migration error:', err);
 }

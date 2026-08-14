@@ -2060,7 +2060,9 @@ function mountOAuth(app, deps) {
       }
       if (!validGrantBlob(g)) return res.status(413).json({ error: 'blob too large or malformed device_wraps' });
     }
-    const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ?').all(req.user.id).map(r => r.slate_number));
+    // Collab slates are excluded like unowned ones: skipped, not errored (see
+    // the single-grant endpoint for the rule).
+    const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND COALESCE(is_collab, 0) = 0').all(req.user.id).map(r => r.slate_number));
     const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
     const run = db.transaction((rows) => {
       let saved = 0;
@@ -2089,9 +2091,12 @@ function mountOAuth(app, deps) {
     if (!grantableClient(req.user.id, client_id)) {
       return res.status(403).json({ error: 'client not authorized for private slates' });
     }
-    const slate = db.prepare('SELECT slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
+    const slate = db.prepare('SELECT slate_number, is_collab FROM slates WHERE slate_number = ? AND user_id = ?')
       .get(slate_number, req.user.id);
     if (!slate) return res.status(404).json({ error: 'slate not found' });
+    // Collaborative slates are multi-writer under a shared doc key; the grant
+    // sync model assumes a single-writer owner-canonical slate. One or the other.
+    if (slate.is_collab) return res.status(409).json({ error: 'collaborative slates cannot be shared with apps' });
 
     const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
     db.transaction(() => writeGrant(client_id, req.user.id,

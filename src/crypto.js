@@ -220,6 +220,13 @@ export async function wrapKeyToAppKey(keyBytes, appPublicKey) {
   return bufToBase64(new Uint8Array(out));
 }
 
+// Unwrap raw key bytes that were RSA-OAEP-wrapped to one of the user's public
+// keys (collab invites travel this way). Returns the raw key bytes.
+export async function unwrapKeyRsa(wrappedBase64, privateKey) {
+  const out = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, base64ToBuf(wrappedBase64));
+  return new Uint8Array(out);
+}
+
 // Re-encrypt a slate's plaintext for an app's INSTALLATIONS. Generates one fresh
 // content key, encrypts content + title under it (justtype's own blob format), and
 // wraps that single content key once per registered device key. Returns base64

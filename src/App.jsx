@@ -16,6 +16,7 @@ import { Verify } from './components/Verify';
 import { Status } from './components/Status';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
 import { PinSetupModal } from './components/PinSetupModal';
+import { SharedSlateViewer } from './components/SharedSlateViewer';
 import { API_URL } from './config';
 import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } from './crypto';
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
@@ -34,6 +35,8 @@ export default function App() {
   const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
   // Bumped whenever app-created drops are adopted, to refresh the slate list.
   const [dropRefreshKey, setDropRefreshKey] = useState(0);
+  // Collab slate opened from the "shared with you" list (slates.id, not slate_number)
+  const [sharedSlateId, setSharedSlateId] = useState(null);
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -50,6 +53,9 @@ export default function App() {
   const [recoveryKeyPending, setRecoveryKeyPending] = useState(false);
   const [pendingMigrationKey, setPendingMigrationKey] = useState(null); // Google users needing PIN setup
   const [showPinSetup, setShowPinSetup] = useState(false);
+  // Google user abandoned E2E migration and the one-time key is gone from this
+  // device — only a fresh Google sign-in can re-release it for PIN setup.
+  const [needsGoogleReauth, setNeedsGoogleReauth] = useState(false);
   const [googleErrorType, setGoogleErrorType] = useState('');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
@@ -185,9 +191,19 @@ export default function App() {
             }
           }
 
-          // Google user needing first-time PIN setup (not yet migrated)
+          // Google user needing first-time PIN setup (not yet migrated). The
+          // migration key was saved to IndexedDB when the Google auth code was
+          // exchanged — if it's still on this device (they closed the PIN modal
+          // mid-setup), resume setup with it. Otherwise only a fresh Google
+          // sign-in re-releases the legacy key.
           if (userData.needsPinSetup) {
-            // They need to log in via Google OAuth to trigger migration first
+            const migrationKey = await getSlateKey(userData.id);
+            if (migrationKey) {
+              setPendingMigrationKey(migrationKey);
+              setShowPinSetup(true);
+            } else {
+              setNeedsGoogleReauth(true);
+            }
           }
         } else if (response.status === 401 || response.status === 403) {
           // Session is invalid, clear everything
@@ -310,6 +326,18 @@ export default function App() {
           window.history.pushState({}, '', '/');
         } else {
           setView('slates');
+        }
+      } else if (path.startsWith('/shared/')) {
+        const sharedId = parseInt(path.split('/shared/')[1]);
+        if (!token) {
+          setView('writer');
+          setShowAuthModal(true);
+          window.history.pushState({}, '', '/');
+        } else if (sharedId) {
+          setSharedSlateId(sharedId);
+          setView('shared');
+        } else {
+          setView('notfound');
         }
       } else if (path === '/account') {
         if (!token) {
@@ -1181,6 +1209,23 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
+              onOpenShared={(slateId) => {
+                setSharedSlateId(slateId);
+                setView('shared');
+                window.history.pushState({}, '', `/shared/${slateId}`);
+              }}
+            />
+          </div>
+        )}
+        {view === 'shared' && sharedSlateId && (
+          <div className="h-full animate-slide-down">
+            <SharedSlateViewer
+              slateId={sharedSlateId}
+              userId={userId}
+              onBack={() => {
+                setView('slates');
+                window.history.pushState({}, '', '/slates');
+              }}
             />
           </div>
         )}
@@ -1199,6 +1244,7 @@ export default function App() {
               onRecoveryKeyShown={(phrase) => {
                 setPendingRecoveryPhrase(phrase);
               }}
+              onRecoveryKeyAcknowledged={() => setRecoveryKeyPending(false)}
               onUsernameUpdate={(newUsername) => {
                 setUsername(newUsername);
                 localStorage.setItem('justtype-username', newUsername);
@@ -1428,6 +1474,31 @@ export default function App() {
             }).catch(() => {});
           }}
         />
+      )}
+
+      {/* Google user stuck mid-E2E-migration with no local key: only a fresh
+          Google sign-in can re-release the legacy key for PIN setup */}
+      {needsGoogleReauth && !showPinSetup && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.pin.googleReauth.title}</h2>
+            <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.pin.googleReauth.message}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { window.location.href = '/auth/google'; }}
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+              >
+                {strings.pin.googleReauth.button}
+              </button>
+              <button
+                onClick={() => setNeedsGoogleReauth(false)}
+                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+              >
+                {strings.pin.googleReauth.later}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* PIN Setup/Unlock Modal for Google users */}

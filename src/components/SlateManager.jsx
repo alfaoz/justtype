@@ -3,14 +3,20 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
 const MAX_TAGS_PER_SLATE = 20;
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
   const [slates, setSlates] = useState([]);
   const [loading, setLoading] = useState(true);
+  // E2EE collaboration: invites waiting on me + slates others shared with me
+  const [collabInvites, setCollabInvites] = useState([]);
+  const [sharedSlates, setSharedSlates] = useState([]);
+  const [collabBusyId, setCollabBusyId] = useState(null);
+  const [leaveConfirmId, setLeaveConfirmId] = useState(null);
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,8 +44,60 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
   useEffect(() => {
     if (token) {
       loadSlates();
+      loadCollab();
     }
   }, [token]);
+
+  // Best-effort: collab rows are additive UI; failures never block the list.
+  const loadCollab = async () => {
+    try {
+      const [invites, shared] = await Promise.all([
+        fetchInvites(userId),
+        fetchSharedSlates(userId)
+      ]);
+      setCollabInvites(invites);
+      setSharedSlates(shared);
+    } catch (e) {
+      console.warn('collab load failed', e);
+    }
+  };
+
+  const handleAcceptInvite = async (invite) => {
+    setCollabBusyId(invite.id);
+    try {
+      await acceptInvite(invite, userId);
+      await loadCollab();
+    } catch (e) {
+      console.warn('accept invite failed', e);
+    } finally {
+      setCollabBusyId(null);
+    }
+  };
+
+  const handleDeclineInvite = async (invite) => {
+    setCollabBusyId(invite.id);
+    try {
+      await declineInvite(invite.id);
+      setCollabInvites(prev => prev.filter(i => i.id !== invite.id));
+    } catch (e) {
+      console.warn('decline invite failed', e);
+    } finally {
+      setCollabBusyId(null);
+    }
+  };
+
+  const handleLeaveShared = async (slateId) => {
+    setCollabBusyId(`leave-${slateId}`);
+    try {
+      await leaveSharedSlate(slateId);
+      setSharedSlates(prev => prev.filter(s => s.slateId !== slateId));
+    } catch (e) {
+      console.warn('leave shared failed', e);
+    } finally {
+      setCollabBusyId(null);
+      setLeaveConfirmId(null);
+    }
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -488,6 +546,66 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate }) {
             {strings.slates.newSlate}
           </button>
         </div>
+
+        {/* Collab invites waiting on me */}
+        {collabInvites.length > 0 && (
+          <div className="mb-6">
+            <p className="text-xs text-[var(--theme-text-dim)] mb-2">{strings.collab.invites.title}</p>
+            <div className="flex flex-col gap-2">
+              {collabInvites.map((invite) => (
+                <div key={invite.id} className="flex items-center justify-between gap-3 p-3 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded">
+                  <div className="min-w-0">
+                    <span className="text-sm text-[var(--theme-text)] truncate block">{invite.title || strings.slates.untitled}</span>
+                    <span className="text-xs text-[var(--theme-text-dim)]">{strings.collab.invites.from(invite.owner)}</span>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => handleAcceptInvite(invite)}
+                      disabled={collabBusyId === invite.id || !invite.docKey}
+                      className="bg-white text-black px-3 py-1.5 rounded hover:bg-[#e5e5e5] transition-all text-xs font-medium disabled:opacity-50"
+                    >
+                      {collabBusyId === invite.id ? strings.collab.invites.working : strings.collab.invites.accept}
+                    </button>
+                    <button
+                      onClick={() => handleDeclineInvite(invite)}
+                      disabled={collabBusyId === invite.id}
+                      className="border border-[var(--theme-border)] px-3 py-1.5 rounded hover:bg-[var(--theme-bg-tertiary)] transition-all text-xs disabled:opacity-50"
+                    >
+                      {strings.collab.invites.decline}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Slates shared with me */}
+        {sharedSlates.length > 0 && (
+          <div className="mb-6">
+            <p className="text-xs text-[var(--theme-text-dim)] mb-2">{strings.collab.shared.title}</p>
+            <div className="flex flex-col gap-2">
+              {sharedSlates.map((s) => (
+                <div key={s.slateId} className="flex items-center justify-between gap-3 p-3 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded hover:border-[var(--theme-text-dim)] transition-colors">
+                  <button onClick={() => onOpenShared && onOpenShared(s.slateId)} className="min-w-0 text-left flex-1">
+                    <span className="text-sm text-[var(--theme-text)] truncate block">{s.title || strings.slates.untitled}</span>
+                    <span className="text-xs text-[var(--theme-text-dim)]">
+                      {strings.collab.shared.by(s.owner)} · {strings.slates.stats.wordsShort(s.wordCount || 0)}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => leaveConfirmId === s.slateId ? handleLeaveShared(s.slateId) : setLeaveConfirmId(s.slateId)}
+                    onBlur={() => setLeaveConfirmId(null)}
+                    disabled={collabBusyId === `leave-${s.slateId}`}
+                    className={`text-xs transition-colors flex-shrink-0 disabled:opacity-50 ${leaveConfirmId === s.slateId ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-red)]'}`}
+                  >
+                    {leaveConfirmId === s.slateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Search + Sort + Filters */}
         {slates.length > 0 && (

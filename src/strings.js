@@ -191,6 +191,54 @@ const strings = {
     }
   },
 
+  // e2ee collaborative slates
+  collab: {
+    menuButton: 'share',
+    modal: {
+      title: 'share slate',
+      explainer: 'invite people by username. the slate stays end-to-end encrypted — the key travels wrapped, the server never sees your words.',
+      enableButton: 'turn on sharing',
+      enabling: 'turning on...',
+      disableButton: 'turn off sharing',
+      disabling: 'turning off...',
+      disableHint: 'turning sharing off removes everyone and re-keys the slate.',
+      inputPlaceholder: 'username to invite...',
+      inviteButton: 'invite',
+      inviting: 'inviting...',
+      membersTitle: 'people',
+      you: 'you',
+      roleOwner: 'owner',
+      statusPending: 'invited',
+      remove: 'remove',
+      needsSave: 'save this slate before sharing it',
+      appShared: 'this slate is shared with an app — a slate cannot be app-shared and collaborative at once.',
+      close: 'close'
+    },
+    invites: {
+      title: 'invites',
+      from: (owner) => `from ${owner}`,
+      accept: 'accept',
+      decline: 'decline',
+      working: '...'
+    },
+    shared: {
+      title: 'shared with you',
+      by: (owner) => `by ${owner}`,
+      leave: 'leave',
+      leaveConfirm: 'sure?',
+      readOnlyNote: 'read-only for now — live editing is on its way'
+    },
+    viewer: {
+      sharedBy: (owner) => `shared by ${owner}`,
+      back: '← back',
+      loading: 'loading...',
+      view: (mode) => `view: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`
+    },
+    errors: {
+      locked: 'unlock your slates first'
+    }
+  },
+
   // auth modal
   auth: {
     oauthContinue: {
@@ -306,6 +354,12 @@ const strings = {
 
   // 6-digit PIN for Google users
   pin: {
+    googleReauth: {
+      title: 'finish setting up encryption',
+      message: 'your slates are not yet end-to-end encrypted. sign in with google once more to finish setup — you\'ll pick a pin right after.',
+      button: 'sign in with google',
+      later: 'later'
+    },
     setup: {
       title: 'set a 6-digit pin',
       description: 'this pin protects your encrypted slates. you\'ll need it to access your slates on new devices or after clearing your browser data.',
