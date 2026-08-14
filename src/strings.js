@@ -45,24 +45,6 @@ const strings = {
       words: (count) => `${count} words`,
       chars: (count) => `${count} chars`
     },
-    editingOptions: {
-      title: 'editing',
-      viMode: {
-        label: 'vi mode',
-        enabled: 'vi mode enabled',
-        disabled: 'vi mode disabled',
-        quiz: {
-          title: 'enable vi mode?',
-          question: 'what command quits vi?',
-          placeholder: 'enter command',
-          hint: 'hint: starts with :',
-          correct: 'correct! vi mode enabled',
-          incorrect: 'not quite. try again!',
-          confirm: 'enable',
-          cancel: 'cancel'
-        }
-      }
-    },
     buttons: {
       about: 'about',
       feedback: 'feedback',

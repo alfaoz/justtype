@@ -106,11 +106,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showAlreadySubscribedModal, setShowAlreadySubscribedModal] = useState(false);
   const [supporterTier, setSupporterTier] = useState(null);
   const [showEditingOptions, setShowEditingOptions] = useState(false);
-  const [viMode, setViMode] = useState(false);
-  const [showViQuizModal, setShowViQuizModal] = useState(false);
-  const [viQuizAnswer, setViQuizAnswer] = useState('');
-  const [viQuizError, setViQuizError] = useState('');
-  const [viModeState, setViModeState] = useState('normal'); // 'normal', 'insert'
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   // Collaborative slate: the doc key the content is encrypted under (null for
   // solo slates). Set on load from the owner's wrapped copy, or by the share
@@ -154,7 +149,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
   const settingsMenuRef = useRef(null);
-  const editingOptionsTimeoutRef = useRef(null);
   const threeDotsRef = useRef(null);
   const draftRestoredRef = useRef(false);
   const localDraftTimeoutRef = useRef(null);
