@@ -202,8 +202,9 @@ export const loadThemeFonts = async (theme) => {
   const fonts = theme.fonts || defaultFonts;
   const uiFont = parseFontSpec(fonts.ui);
   const writerFont = parseFontSpec(fonts.writer);
+  const codeFont = parseFontSpec(fonts.code);
 
-  const fontsToLoad = [uiFont, writerFont].filter(f => f && f.family);
+  const fontsToLoad = [uiFont, writerFont, codeFont].filter(f => f && f.family);
 
   // Filter out already loaded fonts
   const newFonts = fontsToLoad.filter(f => !loadedFonts.has(f.family));
@@ -503,8 +504,10 @@ export const getExampleThemeJson = () => {
       // - With weights: "Inter:wght@400;500;700"
       // - Google Fonts URL: "https://fonts.google.com/specimen/Inter"
       // - Object: { family: "Inter", weights: [400, 500, 700] }
-      ui: { family: 'JetBrains Mono', weights: [400, 500] },
-      writer: { family: 'JetBrains Mono', weights: [400, 500] }
+      // "code" is optional and applies to code blocks / inline code (falls back to writer)
+      ui: { family: 'IBM Plex Mono', weights: [400, 500] },
+      writer: { family: 'IBM Plex Mono', weights: [400, 500] },
+      code: { family: 'JetBrains Mono', weights: [400, 500] }
     }
   };
 };
@@ -538,9 +541,13 @@ export const applyThemeVariables = async (themeId) => {
   // Set font CSS variables (with fallbacks)
   const uiFontFamily = uiFont ? `'${uiFont.family}', monospace` : "'IBM Plex Mono', monospace";
   const writerFontFamily = writerFont ? `'${writerFont.family}', monospace` : "'IBM Plex Mono', monospace";
+  // Code blocks fall back to the writer font unless the theme specifies one
+  const codeFont2 = parseFontSpec((theme.fonts || defaultFonts).code);
+  const codeFontFamily = codeFont2 ? `'${codeFont2.family}', monospace` : writerFontFamily;
 
   root.style.setProperty('--theme-font-ui', uiFontFamily);
   root.style.setProperty('--theme-font-writer', writerFontFamily);
+  root.style.setProperty('--theme-font-code', codeFontFamily);
 
   // Load fonts asynchronously (don't block theme application)
   loadThemeFonts(theme);

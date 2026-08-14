@@ -23,6 +23,7 @@
   /* Font variables */
   --theme-font-ui: 'IBM Plex Mono', monospace;
   --theme-font-writer: 'IBM Plex Mono', monospace;
+  --theme-font-code: 'IBM Plex Mono', monospace;
 }
 
 /* Apply UI font to body and override Tailwind's font-mono */
@@ -657,16 +658,47 @@ body.custom-theme ::-webkit-scrollbar-track {
   border-radius: 3px;
   padding: 0.05em 0.3em;
   font-size: 0.95em;
+  font-family: var(--theme-font-code);
 }
-.wysiwyg-editor .cm-lp-codeline { background: var(--theme-bg-secondary); padding: 0 0.5em !important; }
-.wysiwyg-editor .cm-lp-quoteline {
+.wysiwyg-editor .cm-lp-codeline { background: var(--theme-bg-secondary); padding: 0 0.5em !important; position: relative; font-family: var(--theme-font-code) !important; }
+.wysiwyg-editor .cm-lp-quoteline { color: var(--theme-text-muted); }
+.wysiwyg-editor .cm-lp-qd1 {
   border-left: 2px solid var(--theme-border);
-  padding-left: 1em !important;
-  color: var(--theme-text-muted);
+  padding-left: 14px !important;
 }
-.wysiwyg-editor .cm-lp-link { color: var(--theme-blue); text-decoration: underline; text-underline-offset: 2px; }
+.wysiwyg-editor .cm-lp-qd2 {
+  border-left: 2px solid var(--theme-border);
+  box-shadow: inset 12px 0 0 var(--theme-bg), inset 14px 0 0 var(--theme-border);
+  padding-left: 26px !important;
+}
+.wysiwyg-editor .cm-lp-qd3 {
+  border-left: 2px solid var(--theme-border);
+  box-shadow: inset 12px 0 0 var(--theme-bg), inset 14px 0 0 var(--theme-border), inset 24px 0 0 var(--theme-bg), inset 26px 0 0 var(--theme-border);
+  padding-left: 38px !important;
+}
+.wysiwyg-editor .cm-lp-link { color: var(--theme-blue); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .wysiwyg-editor .cm-lp-listmark { color: var(--theme-accent); }
 .wysiwyg-editor .cm-lp-taskmark { color: var(--theme-green); }
 .wysiwyg-editor .cm-lp-tableheader { font-weight: 600; color: var(--theme-accent); }
 .wysiwyg-editor .cm-lp-hr { color: var(--theme-text-dim); opacity: 0.6; }
 .wysiwyg-readonly .cm-content { min-height: 0; }
+
+/* per-code-block copy button */
+.wysiwyg-editor .cm-lp-copy {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  font-family: var(--theme-font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-bg-tertiary);
+  color: var(--theme-text-dim);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s;
+  z-index: 5;
+}
+.wysiwyg-editor .cm-lp-copy:hover { opacity: 1; color: var(--theme-accent); }
