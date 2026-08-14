@@ -6,6 +6,9 @@ const GITHUB_WORKFLOW_URL = 'https://github.com/alfaoz/justtype/blob/master/.git
 const GITHUB_RUNS_URL = 'https://api.github.com/repos/alfaoz/justtype/actions/workflows/publish-hashes.yml/runs?per_page=1';
 const GITHUB_LATEST_COMMIT_URL = 'https://github.com/alfaoz/justtype/commit/HEAD';
 
+// Beta builds are not published to github pages, so only server-manifest comparison applies
+const IS_BETA = import.meta.env.VITE_BETA === '1';
+
 const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 
 export function Verify() {
@@ -22,13 +25,16 @@ export function Verify() {
 
   useEffect(() => {
     verify();
-    fetchGithub();
-    fetchActionsStatus();
+    if (!IS_BETA) {
+      fetchGithub();
+      fetchActionsStatus();
+    }
     return () => clearInterval(pollRef.current);
   }, []);
 
   // Start polling github if we have computed hashes but github doesn't match yet
   useEffect(() => {
+    if (IS_BETA) return;
     if (!manifest || !computedJs || !computedCss) return;
     if (github && github.jsHash === computedJs && github.cssHash === computedCss) return;
     if (githubError || polling) return;
@@ -118,8 +124,9 @@ export function Verify() {
   const cssAllMatch = manifest && github && computedCss && manifest.cssHash === github.cssHash && github.cssHash === computedCss;
   const allMatch = jsAllMatch && cssAllMatch;
   const serverMatch = manifest && computedJs && computedCss && manifest.jsHash === computedJs && manifest.cssHash === computedCss;
-  const done = manifest && computedJs && computedCss && (github || githubError);
-  const serverOkGithubOff = done && serverMatch && !allMatch;
+  const done = manifest && computedJs && computedCss && (IS_BETA || github || githubError);
+  const betaOk = IS_BETA && done && serverMatch;
+  const serverOkGithubOff = !IS_BETA && done && serverMatch && !allMatch;
   const actionsRunning = serverOkGithubOff && (actionsStatus === 'running' || actionsStatus === null);
   const actionsFailed = serverOkGithubOff && actionsStatus === 'failed';
   const actionsCompletedMismatch = serverOkGithubOff && actionsStatus === 'completed';
@@ -171,14 +178,17 @@ export function Verify() {
               className="text-sm py-3 px-4 rounded border"
               style={{
                 borderColor: !done ? 'var(--theme-border)' :
+                  betaOk ? 'rgba(96, 165, 250, 0.3)' :
                   allMatch ? 'rgba(var(--theme-green-rgb, 74, 222, 128), 0.3)' :
                   actionsRunning ? 'rgba(var(--theme-orange-rgb, 251, 146, 60), 0.3)' :
                   'rgba(var(--theme-red-rgb, 248, 113, 113), 0.3)',
                 backgroundColor: !done ? 'transparent' :
+                  betaOk ? 'rgba(96, 165, 250, 0.1)' :
                   allMatch ? 'rgba(74, 222, 128, 0.1)' :
                   actionsRunning ? 'rgba(251, 146, 60, 0.1)' :
                   'rgba(248, 113, 113, 0.1)',
                 color: !done ? 'var(--theme-text-muted)' :
+                  betaOk ? 'var(--theme-blue)' :
                   allMatch ? 'var(--theme-green)' :
                   actionsRunning ? 'var(--theme-orange)' :
                   'var(--theme-red)'
@@ -186,6 +196,8 @@ export function Verify() {
             >
               {!done ? (
                 <span className="animate-pulse">{strings.verify.computing}</span>
+              ) : betaOk ? (
+                <span>&#10003; {strings.verify.betaBuild}</span>
               ) : allMatch ? (
                 <span>&#10003; {strings.verify.verified}</span>
               ) : actionsRunning ? (
@@ -242,7 +254,8 @@ export function Verify() {
               gh={github?.jsHash}
               ghError={githubError}
               computed={computedJs}
-              allMatch={jsAllMatch}
+              allMatch={IS_BETA ? (manifest.jsHash === computedJs) : jsAllMatch}
+              beta={IS_BETA}
             />
 
             {/* CSS bundle */}
@@ -253,7 +266,8 @@ export function Verify() {
               gh={github?.cssHash}
               ghError={githubError}
               computed={computedCss}
-              allMatch={cssAllMatch}
+              allMatch={IS_BETA ? (manifest.cssHash === computedCss) : cssAllMatch}
+              beta={IS_BETA}
             />
 
             {/* GitHub actions source */}
@@ -261,7 +275,7 @@ export function Verify() {
               <div className="flex items-center justify-between py-3">
                 <div>
                   <span className="text-sm" style={{ color: 'var(--theme-accent)' }}>{strings.verify.github.label}</span>
-                  <p className="text-xs mt-1" style={{ color: 'var(--theme-text-dim)' }}>{strings.verify.github.hostedOn}</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--theme-text-dim)' }}>{IS_BETA ? strings.verify.betaGithubNote : strings.verify.github.hostedOn}</p>
                 </div>
                 {github && !polling && <span className="text-xs" style={{ color: 'var(--theme-green)' }}>&#10003;</span>}
                 {polling && <span className="text-xs animate-pulse" style={{ color: 'var(--theme-orange)' }}>{actionsStatus === 'running' ? 'actions running...' : actionsStatus === 'failed' ? 'actions failed' : 'waiting...'}</span>}
@@ -319,8 +333,8 @@ cat dist/build-manifest.json`}
               <p className="text-sm mb-2" style={{ color: 'var(--theme-accent)' }}>{strings.verify.localVerify.title}</p>
               <p className="text-xs mb-3" style={{ color: 'var(--theme-text-dim)' }}>{strings.verify.localVerify.description}</p>
               <pre className="text-xs font-mono rounded p-4 overflow-x-auto leading-6" style={{ color: 'var(--theme-text-muted)', backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border-light)' }}>
-{`curl -s https://justtype.io/assets/${manifest.jsFile} | sha256sum
-curl -s https://justtype.io/assets/${manifest.cssFile} | sha256sum`}
+{`curl -s ${window.location.origin}/assets/${manifest.jsFile} | sha256sum
+curl -s ${window.location.origin}/assets/${manifest.cssFile} | sha256sum`}
               </pre>
             </div>
 
@@ -341,7 +355,7 @@ curl -s https://justtype.io/assets/${manifest.cssFile} | sha256sum`}
   );
 }
 
-function HashSection({ label, file, server, gh, ghError, computed, allMatch }) {
+function HashSection({ label, file, server, gh, ghError, computed, allMatch, beta }) {
   const s = strings.verify.sources;
 
   const Row = ({ source, hash, ref }) => {
@@ -373,7 +387,7 @@ function HashSection({ label, file, server, gh, ghError, computed, allMatch }) {
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-sm" style={{ color: 'var(--theme-accent)' }}>{label}</span>
-        {server && gh && computed && (
+        {server && computed && (beta || gh) && (
           <span className="text-xs" style={{ color: allMatch ? 'var(--theme-green)' : 'var(--theme-red)' }}>
             {allMatch ? '\u2713' : '\u2717'}
           </span>
@@ -382,7 +396,7 @@ function HashSection({ label, file, server, gh, ghError, computed, allMatch }) {
       <p className="text-xs mb-2 font-mono" style={{ color: 'var(--theme-text-dim)' }}>{file}</p>
       <div>
         <Row source={s.server} hash={server} ref={computed} />
-        <Row source={s.github} hash={ghError ? 'unavailable' : gh} ref={server} />
+        {!beta && <Row source={s.github} hash={ghError ? 'unavailable' : gh} ref={server} />}
         <Row source={s.computed} hash={computed} ref={server} />
       </div>
     </div>

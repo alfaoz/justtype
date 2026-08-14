@@ -855,6 +855,9 @@ take care!
     version: (v) => `version ${v}`,
     buildDate: (d) => `built ${d}`,
     githubSource: 'view source on github',
+    betaBuild: 'beta build — served code matches the server manifest. github comparison runs on production releases only.',
+    betaBadge: 'beta build',
+    betaGithubNote: 'beta builds are not published to github pages. full three-way verification runs on production (justtype.io) releases.',
     github: {
       label: 'github actions hashes',
       hostedOn: 'built by github actions from the public repo, not controlled by justtype servers',

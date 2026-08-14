@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
 
+// Beta builds only verify against the server manifest (no github pages publish for beta)
+const IS_BETA = import.meta.env.VITE_BETA === '1';
+
 let cachedResult = null;
 
 const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
@@ -31,7 +34,7 @@ export function VerifyBadge({ children, className }) {
       if (!fetchedRef.current && !cachedResult) {
         fetchedRef.current = true;
         runVerification();
-      } else if (cachedResult && !cachedResult.verified && !cachedResult.error) {
+      } else if (!IS_BETA && cachedResult && !cachedResult.verified && !cachedResult.error) {
         startPolling();
       }
     }, 200);
@@ -82,12 +85,12 @@ export function VerifyBadge({ children, className }) {
     try {
       const [manifestRes, ghRes] = await Promise.all([
         fetch(bustCache('/build-manifest.json')),
-        fetch(bustCache(GITHUB_HASHES_URL))
+        IS_BETA ? Promise.resolve(null) : fetch(bustCache(GITHUB_HASHES_URL))
       ]);
 
       if (!manifestRes.ok) throw new Error('manifest');
       const manifest = await manifestRes.json();
-      const gh = ghRes.ok ? await ghRes.json() : null;
+      const gh = ghRes && ghRes.ok ? await ghRes.json() : null;
 
       const [jsRes, cssRes] = await Promise.all([
         fetch(bustCache(`/assets/${manifest.jsFile}`)),
@@ -112,7 +115,7 @@ export function VerifyBadge({ children, className }) {
       const ghMatch = gh ? (gh.jsHash === computedJs && gh.cssHash === computedCss) : null;
 
       const r = {
-        verified: serverMatch && ghMatch === true,
+        verified: IS_BETA ? serverMatch : (serverMatch && ghMatch === true),
         serverMatch,
         ghMatch,
         jsHash: computedJs,
@@ -123,7 +126,7 @@ export function VerifyBadge({ children, className }) {
       cachedResult = r;
       setResult(r);
 
-      if (!r.verified && !r.error && showRef.current) {
+      if (!IS_BETA && !r.verified && !r.error && showRef.current) {
         startPolling();
       }
     } catch {
@@ -179,7 +182,7 @@ export function VerifyBadge({ children, className }) {
                   (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? 'text-red-400' :
                   'text-yellow-400'
                 }`}>
-                  {result.verified ? '\u2713 verified' :
+                  {result.verified ? (IS_BETA ? '\u2713 beta build \u00b7 server match' : '\u2713 verified') :
                    (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? '\u2717 github mismatch' :
                    '\u2713 server match'}
                 </div>
@@ -198,7 +201,7 @@ export function VerifyBadge({ children, className }) {
                   {result.ghMatch === false && (!result.ghJsHash || result.ghJsHash === result.jsHash) && (
                     <div className="text-yellow-400/50 pt-1 animate-pulse">github actions: rebuilding...</div>
                   )}
-                  {result.ghMatch === null && (
+                  {result.ghMatch === null && !IS_BETA && (
                     <div className="text-[#555] pt-1 animate-pulse">github: checking...</div>
                   )}
                 </div>
