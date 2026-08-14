@@ -10,6 +10,8 @@ class B2Storage {
       applicationKey: process.env.B2_APPLICATION_KEY,
     });
     this.bucketId = process.env.B2_BUCKET_ID;
+    // Optional file name prefix so multiple instances (e.g. beta) can share a bucket without mixing files
+    this.prefix = process.env.B2_PREFIX || '';
     this.authorized = false;
     this.authExpiry = null; // Track when auth token expires
   }
@@ -90,7 +92,7 @@ class B2Storage {
   async uploadSlate(slateId, content, encryptionKey = null) {
     await this.authorize();
 
-    const fileName = `slates/${slateId}.json`;
+    const fileName = `${this.prefix}slates/${slateId}.json`;
     const slateData = JSON.stringify({
       content,
       uploadedAt: new Date().toISOString(),
@@ -282,7 +284,7 @@ class B2Storage {
       const uploadUrlResponse = await this.b2.getUploadUrl({
         bucketId: this.bucketId,
       });
-      const fileName = `slates/${slateId}.enc`;
+      const fileName = `${this.prefix}slates/${slateId}.enc`;
       const response = await this.b2.uploadFile({
         uploadUrl: uploadUrlResponse.data.uploadUrl,
         uploadAuthToken: uploadUrlResponse.data.authorizationToken,
