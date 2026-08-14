@@ -416,6 +416,11 @@ app.use(cors((req, callback) => {
     ? ['https://justtype.io', 'https://www.justtype.io']
     : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'];
 
+  // Always allow this instance's own origin (e.g. beta.justtype.io via PUBLIC_URL)
+  if (process.env.PUBLIC_URL) {
+    allowedOrigins.push(process.env.PUBLIC_URL.replace(/\/+$/, ''));
+  }
+
   if (allowedOrigins.includes(origin)) {
     return callback(null, { origin: true, credentials: true });
   }
