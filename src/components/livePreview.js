@@ -47,6 +47,19 @@ class CopyButtonWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// Invisible spacer that pads short table cells so pipes align (display-only)
+class PadWidget extends WidgetType {
+  constructor(chars) { super(); this.chars = chars; }
+  eq(other) { return other.chars === this.chars; }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'cm-lp-tablepad';
+    span.style.width = `${this.chars}ch`;
+    return span;
+  }
+  ignoreEvent() { return false; }
+}
+
 const ROMAN = [[50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
 function toRoman(n) {
   if (!Number.isFinite(n) || n < 1 || n > 199) return String(n);
@@ -78,6 +91,9 @@ const INLINE_CODE = Decoration.mark({ class: 'cm-lp-inlinecode' });
 const LINK = Decoration.mark({ class: 'cm-lp-link' });
 const LIST_MARK = Decoration.mark({ class: 'cm-lp-listmark' });
 const CODE_LINE = Decoration.line({ class: 'cm-lp-codeline' });
+const CODE_LINE_FIRST = Decoration.line({ class: 'cm-lp-codeline cm-lp-code-first' });
+const CODE_LINE_LAST = Decoration.line({ class: 'cm-lp-codeline cm-lp-code-last' });
+const CODE_LINE_ONLY = Decoration.line({ class: 'cm-lp-codeline cm-lp-code-first cm-lp-code-last' });
 const HR = Decoration.mark({ class: 'cm-lp-hr' });
 const TASK_MARK = Decoration.mark({ class: 'cm-lp-taskmark' });
 const TABLE_HEADER = Decoration.mark({ class: 'cm-lp-tableheader' });
@@ -272,7 +288,19 @@ export function livePreview({ reveal = true } = {}) {
             }
 
             if (name === 'FencedCode' || name === 'CodeBlock') {
-              addLines(node.from, node.to, CODE_LINE);
+              // Rounded first/last lines so the block reads as a card, not a slab
+              const firstLine = doc.lineAt(node.from);
+              const lastLine = doc.lineAt(node.to);
+              let line = firstLine;
+              for (;;) {
+                const deco = line.from === firstLine.from && line.from === lastLine.from ? CODE_LINE_ONLY
+                  : line.from === firstLine.from ? CODE_LINE_FIRST
+                  : line.from === lastLine.from ? CODE_LINE_LAST
+                  : CODE_LINE;
+                all.push(deco.range(line.from));
+                if (line.to >= node.to) break;
+                line = doc.lineAt(line.to + 1);
+              }
               if (name === 'FencedCode') {
                 const codeChild = node.node.getChild('CodeText');
                 const code = codeChild ? doc.sliceString(codeChild.from, codeChild.to) : '';
@@ -308,14 +336,72 @@ export function livePreview({ reveal = true } = {}) {
               return;
             }
 
-            if (name === 'TableHeader') {
-              all.push(TABLE_HEADER.range(node.from, node.to));
-              return;
-            }
+            if (name === 'Table') {
+              // Display-only column alignment: pad short cells with invisible
+              // spacers so pipes line up live while typing; the source is never touched.
+              const table = node.node;
+              const rows = [];
+              let sepRow = null;
+              for (let child = table.firstChild; child; child = child.nextSibling) {
+                if (child.name === 'TableHeader' || child.name === 'TableRow') {
+                  rows.push({ node: child, cells: child.getChildren('TableCell') });
+                } else if (child.name === 'TableDelimiter') {
+                  sepRow = child;
+                }
+              }
 
-            if (name === 'TableDelimiter') {
-              all.push(TABLE_DELIM.range(node.from, node.to));
-              return;
+              const colMax = [];
+              for (const row of rows) {
+                row.cells.forEach((cell, i) => {
+                  const len = cell.to - cell.from;
+                  if (!colMax[i] || len > colMax[i]) colMax[i] = len;
+                });
+              }
+
+              for (const row of rows) {
+                if (row.node.name === 'TableHeader') {
+                  all.push(TABLE_HEADER.range(row.node.from, row.node.to));
+                }
+                for (const pipe of row.node.getChildren('TableDelimiter')) {
+                  all.push(TABLE_DELIM.range(pipe.from, pipe.to));
+                }
+                row.cells.forEach((cell, i) => {
+                  const deficit = (colMax[i] || 0) - (cell.to - cell.from);
+                  if (deficit > 0) {
+                    all.push(Decoration.widget({ widget: new PadWidget(deficit), side: 1 }).range(cell.to));
+                  }
+                });
+              }
+
+              if (sepRow) {
+                const line = doc.lineAt(sepRow.from);
+                if (touches(line.from, line.to)) {
+                  all.push(TABLE_DELIM.range(sepRow.from, sepRow.to));
+                } else {
+                  // Redraw the ---|--- row as rules sized to the aligned columns
+                  const text = doc.sliceString(sepRow.from, sepRow.to);
+                  let col = 0;
+                  let segStart = text[0] === '|' ? null : 0;
+                  for (let i = 0; i <= text.length; i++) {
+                    const ch = i < text.length ? text[i] : '|';
+                    if (ch === '|') {
+                      if (segStart !== null && segStart < i) {
+                        const width = (colMax[col] || Math.max(1, i - segStart - 2)) + 2;
+                        all.push(Decoration.replace({
+                          widget: new TextMarkerWidget('─'.repeat(width), 'cm-lpmark'),
+                        }).range(sepRow.from + segStart, sepRow.from + i));
+                        hidden.push(MARK_HIDE.range(sepRow.from + segStart, sepRow.from + i));
+                        col++;
+                      }
+                      if (i < text.length) {
+                        all.push(TABLE_DELIM.range(sepRow.from + i, sepRow.from + i + 1));
+                      }
+                      segStart = i + 1;
+                    }
+                  }
+                }
+              }
+              return false;
             }
           },
         });

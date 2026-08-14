@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
+import { applyThemeVariables } from '../themes';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -13,6 +14,7 @@ export function PublicViewer() {
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'light');
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
 
   useEffect(() => {
     const shareId = window.location.pathname.split('/s/')[1];
@@ -80,20 +82,18 @@ export function PublicViewer() {
     };
   }, [slate]);
 
-  // Apply theme to body
+  // Apply the theme's CSS variables (colors + fonts) so the public page matches the app
   useEffect(() => {
-    if (theme === 'light') {
-      document.body.classList.add('light-mode');
-    } else {
-      document.body.classList.remove('light-mode');
-    }
+    applyThemeVariables(theme);
     localStorage.setItem('justtype-theme', theme);
-
-    // Cleanup on unmount
-    return () => {
-      document.body.classList.remove('light-mode');
-    };
   }, [theme]);
+
+  // Default the view to how the author wrote the slate
+  useEffect(() => {
+    if (slate) {
+      setViewMode(slate.editor_mode === 'wysiwyg' ? 'rich' : 'plain');
+    }
+  }, [slate]);
 
   // Save punto to localStorage
   useEffect(() => {
@@ -156,7 +156,7 @@ export function PublicViewer() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#111111] text-[#a0a0a0] flex items-center justify-center font-mono">
+      <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] flex items-center justify-center font-mono">
         <div>{strings.public.loading}</div>
       </div>
     );
@@ -164,15 +164,15 @@ export function PublicViewer() {
 
   if (error || !slate) {
     return (
-      <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex items-center justify-center p-4">
+      <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
-          <div className="text-4xl md:text-5xl text-[#333] mb-8 font-light">slate not found</div>
-          <p className="text-lg md:text-xl text-[#808080] mb-8 leading-relaxed">
+          <div className="text-4xl md:text-5xl text-[var(--theme-text-dim)] mb-8 font-light">slate not found</div>
+          <p className="text-lg md:text-xl text-[var(--theme-text-muted)] mb-8 leading-relaxed">
             {errorMessage || 'slate not found'}
           </p>
           <button
             onClick={() => window.location.href = '/'}
-            className="bg-[#1a1a1a] border border-[#333] text-white px-8 py-3 rounded hover:bg-[#222] hover:border-[#444] transition-all text-sm"
+            className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] text-[var(--theme-accent)] px-8 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-all text-sm"
           >
             {strings.slateNotFound.button}
           </button>
@@ -182,20 +182,20 @@ export function PublicViewer() {
   }
 
   return (
-    <div className="min-h-screen bg-[#111111] text-[#a0a0a0] font-mono">
+    <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap');
-        html, body { background-color: #111111; margin: 0; padding: 0; }
-        body { font-family: 'IBM Plex Mono', monospace; }
+        html, body { background-color: var(--theme-bg); margin: 0; padding: 0; }
+        body { font-family: var(--theme-font-ui, 'IBM Plex Mono', monospace); }
         ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #111111; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #555; }
+        ::-webkit-scrollbar-track { background: var(--theme-bg); }
+        ::-webkit-scrollbar-thumb { background: var(--theme-border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--theme-text-dim); }
       `}</style>
 
       {/* HEADER */}
-      <header className="p-8 border-b border-[#222]">
-        <a href="/" className="text-xl font-medium text-[#808080] hover:text-white transition-colors">
+      <header className="p-8 border-b border-[var(--theme-border-light)]">
+        <a href="/" className="text-xl font-medium text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] transition-colors">
           + just type
         </a>
       </header>
@@ -203,8 +203,8 @@ export function PublicViewer() {
       {/* SLATE CONTENT */}
       <main className="max-w-3xl mx-auto p-8">
         <div className="mb-8">
-          <h1 className="text-3xl text-white mb-4">{slate.title}</h1>
-          <div className="text-sm text-[#666] flex gap-2 flex-wrap items-center">
+          <h1 className="text-3xl text-[var(--theme-accent)] mb-4">{slate.title}</h1>
+          <div className="text-sm text-[var(--theme-text-dim)] flex gap-2 flex-wrap items-center">
             <span>
               {strings.public.byAuthor(slate.author)}
               {slate.supporter_badge_visible && slate.supporter_tier && (
@@ -222,30 +222,30 @@ export function PublicViewer() {
             <span>|</span>
             <a
               href={`mailto:hi@alfaoz.dev?subject=Report slate: ${encodeURIComponent(slate.title)}&body=Share ID: ${window.location.pathname.split('/s/')[1]}%0A%0AReason for report:%0A`}
-              className="text-[#666] hover:text-white transition-colors"
+              className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
             >
               {strings.public.report}
             </a>
           </div>
         </div>
 
-        {slate.editor_mode === 'wysiwyg' ? (
+        {viewMode === 'rich' ? (
           <React.Suspense
-            fallback={<div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>{slate.content}</div>}
+            fallback={<div className={`leading-relaxed text-[var(--theme-text)] whitespace-pre-wrap punto-${punto}`}>{slate.content}</div>}
           >
             <MarkdownView content={slate.content} puntoClass={`leading-relaxed punto-${punto}`} />
           </React.Suspense>
         ) : (
-          <div className={`leading-relaxed text-[#d4d4d4] whitespace-pre-wrap punto-${punto}`}>
+          <div className={`leading-relaxed text-[var(--theme-text)] whitespace-pre-wrap punto-${punto}`}>
             {slate.content}
           </div>
         )}
       </main>
 
       {/* FOOTER */}
-      <footer className="p-8 text-center border-t border-[#222] mt-16">
+      <footer className="p-8 text-center border-t border-[var(--theme-border-light)] mt-16">
         <div className="text-sm opacity-50">
-          created with <a href="/" className="hover:text-white transition-colors">just type</a>
+          created with <a href="/" className="hover:text-[var(--theme-accent)] transition-colors">just type</a>
         </div>
       </footer>
 
@@ -263,6 +263,13 @@ export function PublicViewer() {
           className="opacity-50 hover:opacity-100 transition-opacity"
         >
           {getPuntoLabel()}
+        </button>
+        <span className="opacity-30">·</span>
+        <button
+          onClick={() => setViewMode(viewMode === 'rich' ? 'plain' : 'rich')}
+          className="opacity-50 hover:opacity-100 transition-opacity"
+        >
+          {strings.public.viewMode(viewMode)}
         </button>
         <span className="opacity-30">·</span>
         <button

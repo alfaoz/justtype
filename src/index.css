@@ -660,7 +660,9 @@ body.custom-theme ::-webkit-scrollbar-track {
   font-size: 0.95em;
   font-family: var(--theme-font-code);
 }
-.wysiwyg-editor .cm-lp-codeline { background: var(--theme-bg-secondary); padding: 0 0.5em !important; position: relative; font-family: var(--theme-font-code) !important; }
+.wysiwyg-editor .cm-lp-codeline { background: var(--theme-bg-secondary); padding: 0 0.75em !important; position: relative; font-family: var(--theme-font-code) !important; }
+.wysiwyg-editor .cm-lp-code-first { border-radius: 6px 6px 0 0; padding-top: 0.35em !important; }
+.wysiwyg-editor .cm-lp-code-last { border-radius: 0 0 6px 6px; padding-bottom: 0.35em !important; }
 .wysiwyg-editor .cm-lp-quoteline { color: var(--theme-text-muted); }
 .wysiwyg-editor .cm-lp-qd1 {
   border-left: 2px solid var(--theme-border);
@@ -686,19 +688,21 @@ body.custom-theme ::-webkit-scrollbar-track {
 /* per-code-block copy button */
 .wysiwyg-editor .cm-lp-copy {
   position: absolute;
-  top: 2px;
-  right: 6px;
+  top: 0.35em;
+  right: 0.75em;
   font-family: var(--theme-font-ui);
   font-size: 11px;
   line-height: 1.4;
-  padding: 1px 8px;
-  border-radius: 3px;
-  border: 1px solid var(--theme-border);
-  background: var(--theme-bg-tertiary);
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--theme-text-dim);
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0.55;
   transition: opacity 0.15s, color 0.15s;
   z-index: 5;
 }
-.wysiwyg-editor .cm-lp-copy:hover { opacity: 1; color: var(--theme-accent); }
+.wysiwyg-editor .cm-lp-copy:hover { opacity: 1; color: var(--theme-text-muted); }
+
+/* invisible spacer used for live table column alignment */
+.wysiwyg-editor .cm-lp-tablepad { display: inline-block; }

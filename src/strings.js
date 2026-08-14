@@ -659,7 +659,8 @@ const strings = {
     },
     report: 'report',
     copy: 'copy',
-    copied: 'copied!'
+    copied: 'copied!',
+    viewMode: (mode) => `view: ${mode}`
   },
 
   // 404 not found
