@@ -1397,7 +1397,7 @@ take care!
   whatsNewModal: {
     version: 'v4',
     title: 'markdown and collab are here',
-    body: 'justtype just picked up the two things people asked for most. everything you already wrote is untouched.',
+    body: 'justtype just picked up the two things people asked for most.',
     points: [
       'write markdown and watch it format itself as you type',
       'turn any slate collaborative and write together, live',
@@ -1451,7 +1451,9 @@ take care!
       {
         id: 'brand',
         title: 'a new justtype',
-        body: 'a new default identity, a new font, a new justtype.'
+        body: 'a new default identity, a new default font, a polished design, a new justtype.',
+        fontPhrase: 'a new default font',
+        fontNote: 'ibm plex mono'
       }
     ],
     backLink: 'back to writing'

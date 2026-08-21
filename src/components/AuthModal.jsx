@@ -722,8 +722,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   // Show forgot password form
   if (showForgotPassword) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">forgot password</h2>
 
           <form onSubmit={handleForgotPassword} className="space-y-4">
@@ -735,7 +735,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 required
                 autoComplete="email"
                 defaultValue={resetEmail || ''}
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder="your@email.com"
               />
               <p className="text-xs opacity-50 mt-1">we'll send you a 6-digit reset code</p>
@@ -754,7 +754,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             <button
               type="submit"
               disabled={loading}
-              className={`w-full border py-2 transition-all duration-300 mt-6 ${
+              className={`w-full border rounded py-3 transition-all duration-300 mt-6 ${
                 showLoadingAnimation
                   ? 'auth-button-loading border-transparent text-white cursor-wait'
                   : 'border-[var(--theme-border)] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
@@ -816,8 +816,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
     };
 
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
 
           {/* Step 1: OTP entry */}
           {resetStep === 'otp' && (
@@ -835,7 +835,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     inputMode="numeric"
                     maxLength={6}
                     autoComplete="one-time-code"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder="000000"
                     autoFocus
                   />
@@ -880,7 +880,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                   }
                 }}
                 disabled={loading}
-                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
+                className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.otpStep.submit}
               </button>
@@ -931,7 +931,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                   setError('');
                   setResetStep('recovery-submit');
                 }}
-                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
+                className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
               >
                 {strings.auth.resetPassword.recoveryEntry.submit}
               </button>
@@ -958,7 +958,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                     autoFocus
                   />
@@ -970,7 +970,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               <button
                 onClick={() => handleResetPassword('recovery')}
                 disabled={loading}
-                className="w-full border border-[var(--theme-border)] py-2 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
+                className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
               >
                 {strings.auth.resetPassword.withRecovery.submit}
               </button>
@@ -1009,7 +1009,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                     autoFocus
                   />
@@ -1021,7 +1021,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               <button
                 onClick={() => handleResetPassword('destructive')}
                 disabled={loading || !destructiveConfirmed}
-                className="w-full border border-red-500/50 text-red-400 py-2 transition-all duration-300 hover:bg-red-500 hover:text-white hover:border-red-500 disabled:opacity-50"
+                className="w-full border border-red-500/50 text-red-400 rounded py-3 transition-all duration-300 hover:bg-red-500 hover:text-white hover:border-red-500 disabled:opacity-50"
               >
                 {strings.auth.resetPassword.destructive.submit}
               </button>
@@ -1043,8 +1043,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   // Show verification form if needed
   if (showVerification) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">{strings.auth.verify.title}</h2>
 
           <form onSubmit={handleVerify} className="space-y-4">
@@ -1058,7 +1058,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                   pattern="[0-9]{6}"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white text-center text-2xl tracking-widest focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder={strings.auth.verify.codePlaceholder}
                 />
               <p className="text-xs opacity-50 mt-1">{strings.auth.verify.instructions(registeredEmail)}</p>
@@ -1075,7 +1075,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             <button
               type="submit"
               disabled={loading}
-              className="w-full border border-[var(--theme-border)] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
+              className="w-full border border-[var(--theme-border)] rounded py-3 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 mt-6 disabled:opacity-50"
             >
               {strings.auth.verify.submit}
             </button>
@@ -1101,8 +1101,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   }
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-modal-overlay" onClick={onClose}>
-      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-8 max-w-md w-full shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto animate-modal-overlay" onClick={onClose}>
+      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
         <h2 className={`text-xl text-white ${oauthGate ? 'mb-2' : 'mb-6'}`}>{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
         {oauthGate && (
           <p className="text-sm opacity-60 mb-6">
@@ -1125,7 +1125,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 onChange={(e) => {
                   e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
                 }}
-              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
             />
           </div>
@@ -1138,7 +1138,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                   name="email"
                   required
                   autoComplete="email"
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder={strings.auth.signup.emailPlaceholder}
                 />
             </div>
@@ -1152,7 +1152,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 required
                 minLength={6}
                 autoComplete={isLogin ? 'current-password' : 'new-password'}
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder={isLogin ? strings.auth.login.passwordPlaceholder : strings.auth.signup.passwordPlaceholder}
               />
           </div>
@@ -1190,7 +1190,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             <div className="text-red-500 text-sm">{error}</div>
           )}
 
-          <div ref={turnstileRef}></div>
+          <div ref={turnstileRef} className="empty:hidden [&:not(:has(iframe))]:hidden"></div>
 
           <style>{`
             @keyframes rotate-gradient {
@@ -1250,7 +1250,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
 
         <button
           onClick={() => window.location.href = '/auth/google'}
-          className="mt-4 w-full border border-[var(--theme-border)] py-2 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
+          className="mt-4 w-full border border-[var(--theme-border)] rounded py-3 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>

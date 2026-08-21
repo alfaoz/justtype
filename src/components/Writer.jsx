@@ -105,7 +105,7 @@ function ScrollRow({ children, className = '' }) {
 
   return (
     <div className={className}>
-      <div ref={ref} onScroll={measure} className="flex gap-2 overflow-x-auto settings-strip">
+      <div ref={ref} onScroll={measure} className="flex gap-2 overflow-x-auto settings-strip no-native-scrollbar">
         {children}
       </div>
       <div className="h-[3px] mt-2 rounded-full bg-[var(--theme-border)]/40 overflow-hidden" style={{ opacity: bar ? 1 : 0 }}>
@@ -119,11 +119,11 @@ function ScrollRow({ children, className = '' }) {
 }
 
 /** A labelled row in the mobile sheet: full-width target, optional right-hand value. */
-function SheetRow({ label, value, accent, onClick }) {
+function SheetRow({ label, value, accent, onClick, highlight }) {
   return (
     <button
       onClick={onClick}
-      className="w-full h-12 px-4 bg-[var(--theme-bg)] active:bg-[var(--theme-bg-tertiary)] transition-colors flex items-center justify-between text-left text-sm"
+      className={`w-full h-12 px-4 bg-[var(--theme-bg)] active:bg-[var(--theme-bg-tertiary)] transition-colors flex items-center justify-between text-left text-sm ${highlight ? 'feature-pulse' : ''}`}
     >
       <span className="text-[var(--theme-text)]">{label}</span>
       {value && <span className={accent || 'text-[var(--theme-text-dim)]'}>{value}</span>}
@@ -238,7 +238,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const sheetTapSuppressed = useRef(false);
   // Swipe-up-to-open on the collapsed pill, so the sheet answers the same
   // gesture that dismisses it.
-  const triggerSwipeRef = useRef({ startY: 0, active: false });
+  const triggerSwipeRef = useRef({ startY: 0, active: false, opened: false });
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishModalUrl, setPublishModalUrl] = useState('');
@@ -253,6 +253,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [supporterTier, setSupporterTier] = useState(null);
   const [showEditingOptions, setShowEditingOptions] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  // After the v4 card is dismissed, the two things it advertised get pointed at
+  // rather than left for the user to find.
+  const [highlightNew, setHighlightNew] = useState(false);
   // Collaborative slate: the doc key the content is encrypted under (null for
   // solo slates). Set on load from the owner's wrapped copy, or by the share
   // modal when sharing is turned on/off.
@@ -1164,6 +1167,21 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     toggleEditorMode: () => toggleEditorMode(),
     openPublishMenu: () => setShowPublishMenu(true),
     openCollab: () => openCollab(),
+    // Open the settings surface for this breakpoint and flag the new controls.
+    revealNewFeatures: () => {
+      const desktop = typeof window !== 'undefined'
+        && window.matchMedia('(min-width: 768px)').matches;
+      if (desktop) {
+        if (!showSettingsMenu) handleToggleMenu();
+      } else {
+        setSheetDrag({ y: 0, dragging: false });
+        setShowMobileMenu(true);
+      }
+      // Long enough to notice after the strip's own 500ms reveal, short enough
+      // not to become permanent chrome.
+      setHighlightNew(true);
+      setTimeout(() => setHighlightNew(false), 6000);
+    },
     openHistory: () => setCollabPanel('history'),
     exportAs: (format) => {
       switch (format) {
@@ -1209,17 +1227,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setShowMobileMenu(true);
   };
   const beginTriggerSwipe = (e) => {
-    triggerSwipeRef.current = { startY: e.clientY, active: true };
+    triggerSwipeRef.current = { startY: e.clientY, active: true, opened: false };
+    // Capture, or the pointer leaves this small pill within a few pixels and
+    // the rest of the gesture is delivered somewhere else entirely.
+    e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const moveTriggerSwipe = (e) => {
-    if (!triggerSwipeRef.current.active) return;
-    if (triggerSwipeRef.current.startY - e.clientY > 24) {
-      triggerSwipeRef.current.active = false;
+    const t = triggerSwipeRef.current;
+    if (!t.active) return;
+    if (t.startY - e.clientY > 20) {
+      t.active = false;
+      t.opened = true;
       openSheet();
     }
   };
-  const endTriggerSwipe = () => {
+  const endTriggerSwipe = (e) => {
     triggerSwipeRef.current.active = false;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
   };
 
   const closeAbout = () => withViewTransition(() => setShowAboutModal(false));
@@ -2037,7 +2061,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <span className="opacity-30">·</span>
                 <button
                   onClick={toggleEditorMode}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                  className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
                   style={{ color: 'var(--theme-accent)' }}
                 >
                   {strings.writer.editorMode.label(editorMode)}
@@ -2047,7 +2071,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     <span className="opacity-30">·</span>
                     <button
                       onClick={() => openCollab('people')}
-                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                      className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
                       style={{ color: collabDocKey ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
                     >
                       {strings.collab.menuButton}
@@ -2316,7 +2340,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           than a 24px glyph. Falls back to a plain menu glyph when the counter
           is switched off. */}
       <button
-        onClick={openSheet}
+        onClick={() => {
+          if (triggerSwipeRef.current.opened) { triggerSwipeRef.current.opened = false; return; }
+          openSheet();
+        }}
         onPointerDown={beginTriggerSwipe}
         onPointerMove={moveTriggerSwipe}
         onPointerUp={endTriggerSwipe}
@@ -2349,9 +2376,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             onClick={() => setShowMobileMenu(false)}
           />
           <div
-            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[80vh] flex flex-col ${
-              sheetDrag.dragging ? '' : 'animate-[sheetUp_0.26s_cubic-bezier(0.16,1,0.3,1)]'
-            }`}
+            className="md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[80vh] flex flex-col animate-[sheetUp_0.26s_cubic-bezier(0.16,1,0.3,1)]"
             style={{
               transform: sheetDrag.y ? `translateY(${sheetDrag.y}px)` : undefined,
               transition: sheetDrag.dragging ? 'none' : 'transform 0.24s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -2374,7 +2399,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </button>
 
             <div
-              className="flex-1 overflow-y-auto sheet-scroll px-4 pb-4"
+              className="flex-1 overflow-y-auto no-native-scrollbar px-4 pb-4"
               style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
             >
               {/* counters */}
@@ -2398,12 +2423,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
                   { key: 'focus', label: getFocusLabel(), onClick: cycleFocus },
                   { key: 'counter', label: showCounter ? strings.writer.mobile.counterOn : strings.writer.mobile.counterOff, onClick: () => setShowCounter(!showCounter) },
-                  { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode },
+                  { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode, highlight: highlightNew },
                 ].map((c) => (
                   <button
                     key={c.key}
                     onClick={c.onClick}
-                    className="shrink-0 h-9 px-3.5 rounded-full border border-[var(--theme-border)] bg-[var(--theme-bg)] text-sm text-[var(--theme-text-muted)] active:bg-[var(--theme-bg-tertiary)] active:text-white transition-colors whitespace-nowrap"
+                    className={`shrink-0 h-9 px-3.5 rounded-full border border-[var(--theme-border)] bg-[var(--theme-bg)] text-sm text-[var(--theme-text-muted)] active:bg-[var(--theme-bg-tertiary)] active:text-white transition-colors whitespace-nowrap ${c.highlight ? 'feature-pulse' : ''}`}
                   >
                     {c.label}
                   </button>
@@ -2516,6 +2541,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     label={strings.collab.menuButton}
                     value={collabDocKey ? 'on' : 'off'}
                     accent={collabDocKey ? 'text-violet-400' : undefined}
+                    highlight={highlightNew}
                     onClick={() => { setShowMobileMenu(false); openCollab('people'); }}
                   />
                 )}
@@ -2541,8 +2567,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={closeAbout}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg w-full max-w-md my-4 animate-modal-content overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-start justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={closeAbout}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg w-full max-w-md my-auto animate-modal-content overflow-hidden" onClick={e => e.stopPropagation()}>
 
             {/* head: title and a corner dismiss, so the card does not end in a
                 full-width button that competes with the support actions */}
@@ -2632,11 +2658,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* PUBLISH MODAL */}
       {showPublishModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => {
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => {
           setShowPublishModal(false);
           setLinkCopied(false);
         })}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">anyone with this link can view your slate:</p>
             <div className="bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 mb-6 break-all text-sm text-blue-400">
@@ -2676,8 +2702,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* DONATE MODAL */}
       {showDonateModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => setShowDonateModal(false))}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => setShowDonateModal(false))}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">support justtype</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">enter an amount in EUR (minimum 1, recommended 3):</p>
             <input
@@ -2732,8 +2758,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* Already Subscribed Modal */}
       {showAlreadySubscribedModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => withViewTransition(() => setShowAlreadySubscribedModal(false))}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => setShowAlreadySubscribedModal(false))}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">{strings.subscription.alreadySubscribed.title}</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">
               {strings.subscription.alreadySubscribed.message}
@@ -2761,7 +2787,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* Export Modal */}
       {showExportMenu && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => setShowExportMenu(false)}>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowExportMenu(false)}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-6">export slate</h2>
             <div className="flex flex-col gap-3">

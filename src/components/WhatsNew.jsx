@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { PageHeader } from './PageHeader';
+import { HoverNote } from './HoverNote';
 import { strings } from '../strings';
 import { VERSION } from '../version';
 
@@ -97,7 +98,7 @@ export function WhatsNew() {
     <div className="wn-frame wn-frame-center" key="brand">
       <div className="wn-brand">
         <span className="wn-brand-type">{strings.app.logo}</span>
-        <span className="wn-caret" style={{ background: '#fff' }} />
+        <span className="wn-caret" style={{ background: 'var(--theme-accent)' }} />
       </div>
     </div>
     ),
@@ -160,8 +161,8 @@ export function WhatsNew() {
         .wn-unpub { position: relative; min-height: 1.6em; font-size: 0.85rem; }
         .wn-url { position: absolute; inset: 0; display: flex; align-items: center; color: var(--theme-text-muted); animation: wnUrl 8s infinite; }
         .wn-url-text { position: relative; white-space: nowrap; }
-        .wn-url-strike { position: absolute; left: 0; top: 50%; height: 1px; width: 0; background: #f06878; animation: wnStrike 8s infinite; }
-        .wn-private { position: absolute; inset: 0; display: flex; align-items: center; color: #3ecf8e; opacity: 0; animation: wnPrivate 8s infinite; }
+        .wn-url-strike { position: absolute; left: 0; top: 50%; height: 1px; width: 0; background: var(--theme-red); animation: wnStrike 8s infinite; }
+        .wn-private { position: absolute; inset: 0; display: flex; align-items: center; color: var(--theme-green); opacity: 0; animation: wnPrivate 8s infinite; }
         @keyframes wnUrl { 0%, 48% { opacity: 1; } 54%, 94% { opacity: 0; } 100% { opacity: 1; } }
         @keyframes wnStrike { 0%, 32% { width: 0; } 44%, 50% { width: 100%; } 54%, 100% { width: 0; } }
         @keyframes wnPrivate { 0%, 52% { opacity: 0; } 58%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
@@ -171,14 +172,14 @@ export function WhatsNew() {
         .wn-md-src, .wn-md-out { display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem; color: var(--theme-text-muted); }
         .wn-md-src { animation: wnMdSrc 8s infinite; }
         .wn-md-out { position: absolute; inset: 0; justify-content: center; opacity: 0; animation: wnMdOut 8s infinite; }
-        .wn-md-h { color: #fff; font-weight: 600; font-size: 1rem; }
+        .wn-md-h { color: var(--theme-accent); font-weight: 600; font-size: 1rem; }
         .wn-md-out b { color: var(--theme-text); }
         .wn-md-out code { background: var(--theme-bg-tertiary); padding: 0 4px; border-radius: 3px; font-size: 0.72rem; }
         @keyframes wnMdSrc { 0%, 42% { opacity: 1; } 50%, 92% { opacity: 0; } 100% { opacity: 1; } }
         @keyframes wnMdOut { 0%, 46% { opacity: 0; } 54%, 88% { opacity: 1; } 96%, 100% { opacity: 0; } }
 
         /* Brand: the wordmark types itself */
-        .wn-brand { display: flex; align-items: center; font-size: 1.3rem; font-weight: 500; color: #fff; }
+        .wn-brand { display: flex; align-items: center; font-size: 1.3rem; font-weight: 500; color: var(--theme-accent); }
         .wn-brand-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; animation: wnBrand 7s steps(11, end) infinite; }
         @keyframes wnBrand { 0%, 10% { width: 0; } 45% { width: 11ch; } 94% { width: 11ch; } 100% { width: 0; } }
 
@@ -218,7 +219,20 @@ export function WhatsNew() {
               <div className="wn-row-text">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-2">{String(i + 1).padStart(2, '0')}</p>
                 <h2 className="text-xl md:text-2xl text-white mb-3">{f.title}</h2>
-                <p className="text-sm text-[var(--theme-text-muted)] leading-relaxed">{f.body}</p>
+                <p className="text-sm text-[var(--theme-text-muted)] leading-relaxed">
+                  {f.fontPhrase && f.body.includes(f.fontPhrase)
+                    ? (() => {
+                        const [before, after] = f.body.split(f.fontPhrase);
+                        return (
+                          <>
+                            {before}
+                            <HoverNote note={f.fontNote}>{f.fontPhrase}</HoverNote>
+                            {after}
+                          </>
+                        );
+                      })()
+                    : f.body}
+                </p>
               </div>
             </article>
           ))}

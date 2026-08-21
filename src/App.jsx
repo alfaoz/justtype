@@ -1681,6 +1681,12 @@ export default function App() {
       {showWhatsNewModal && (
         <WhatsNewModal
           onClose={dismissWhatsNew}
+          onConfirm={() => {
+            dismissWhatsNew();
+            // Land the user on the two things the card just advertised rather
+            // than leaving them to go find them.
+            setTimeout(() => writerRef.current?.revealNewFeatures?.(), 260);
+          }}
           onTakeTour={() => {
             dismissWhatsNew();
             window.history.pushState({}, '', '/whats-new');

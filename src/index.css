@@ -91,13 +91,38 @@ body {
   }
 }
 
-/* The mobile sheet draws its own affordances (grab handle, chip indicator), so
-   the native bar on top of them read as a second, competing scrollbar. */
-.sheet-scroll {
+/* Suppress the browser's own scrollbar on containers that draw their own.
+   `display: none` alone is not enough on iOS Safari, which keeps painting an
+   overlay thumb; zeroing the dimensions and clearing the appearance is what
+   actually removes it. Without this the mobile sheet showed two bars stacked:
+   ours and Safari's. */
+.no-native-scrollbar {
   scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.sheet-scroll::-webkit-scrollbar {
+.no-native-scrollbar::-webkit-scrollbar {
   display: none;
+  width: 0 !important;
+  height: 0 !important;
+  -webkit-appearance: none;
+}
+
+/* Points at a control the user has just been told about (the v4 card's
+   "hell yeah!" lands here). Rings the target without moving it, and stops on
+   its own so it never becomes permanent chrome. */
+@keyframes featurePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(167, 139, 250, 0); }
+  50% { box-shadow: 0 0 0 5px rgba(167, 139, 250, 0.35); }
+}
+.feature-pulse {
+  border-radius: 5px;
+  animation: featurePulse 1.5s ease-in-out 4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .feature-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.35);
+  }
 }
 
 /* Mobile bottom sheet entrance */

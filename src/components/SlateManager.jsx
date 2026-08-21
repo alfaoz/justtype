@@ -28,6 +28,17 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
+  // Phones always get the list, whatever preference the desktop toggle saved.
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsNarrow(!mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
@@ -671,8 +682,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 </button>
               )}
 
-              {/* View Mode Toggle */}
-              <div className="flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
+              {/* View Mode Toggle (desktop only: both layouts are one column
+                  on a phone, so the control had nothing to switch) */}
+              <div className="hidden md:flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
                 <button
                   onClick={() => setViewMode('list')}
                   className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
@@ -793,7 +805,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         <div className="text-center py-16">
           <p className="text-[#666] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
         </div>
-      ) : viewMode === 'list' ? (
+      ) : effectiveViewMode === 'list' ? (
         /* List View */
         <div className="space-y-3">
           {filteredAndSortedSlates.map((slate) => {

@@ -9,7 +9,7 @@ import { withViewTransition } from '../viewTransition';
  * the two things that actually changed, offers the tour, and gets out of the
  * way. Dismissal is recorded per browser in localStorage.
  */
-export function WhatsNewModal({ onClose, onTakeTour }) {
+export function WhatsNewModal({ onClose, onTakeTour, onConfirm }) {
   const s = strings.whatsNewModal;
   const close = () => withViewTransition(onClose);
 
@@ -25,7 +25,6 @@ export function WhatsNewModal({ onClose, onTakeTour }) {
         onClick={(e) => e.stopPropagation()}
       >
         <style>{`
-          @keyframes wnmCaret { 0%, 45% { opacity: 1; } 50%, 100% { opacity: 0.25; } }
           @keyframes wnmSweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
           .wnm-sweep::after {
             content: '';
@@ -42,14 +41,14 @@ export function WhatsNewModal({ onClose, onTakeTour }) {
         {/* banner */}
         <div className="wnm-sweep relative overflow-hidden border-b border-[var(--theme-border)] bg-[var(--theme-bg)] px-6 py-8 text-center">
           <div className="relative z-10">
-            <div className="text-2xl text-[var(--theme-accent)] select-none">
+            <div className="text-2xl md:text-3xl text-[var(--theme-accent)] select-none whitespace-nowrap">
               {strings.app.logo}
-              <span
-                className="inline-block w-[2px] h-5 align-middle ml-1 bg-[var(--theme-accent)]"
-                style={{ animation: 'wnmCaret 1.1s steps(1) infinite' }}
-              />
+              <span className="text-sm md:text-base text-[var(--theme-accent)] ml-3">{s.version}</span>
             </div>
-            <div className="mt-2 text-xs tracking-[0.3em] uppercase text-[var(--theme-text-dim)] pl-[0.3em]">{s.version}</div>
+            {/* the motd, shared with the what's-new hero so the two never drift */}
+            <div className="mt-3 text-xs md:text-sm text-[var(--theme-text-muted)]">
+              {strings.whatsNew.heroTitle}
+            </div>
           </div>
         </div>
 
@@ -74,7 +73,7 @@ export function WhatsNewModal({ onClose, onTakeTour }) {
               {s.tour}
             </button>
             <button
-              onClick={close}
+              onClick={() => withViewTransition(onConfirm || onClose)}
               className="flex-1 h-11 bg-white text-black rounded text-sm font-medium hover:bg-[#e5e5e5] transition-colors"
             >
               {s.dismiss}
