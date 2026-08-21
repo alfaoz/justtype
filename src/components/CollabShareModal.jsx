@@ -5,6 +5,7 @@ import {
   fetchMembersAsMember, leaveSharedSlate, createInviteLink, revokeInviteLink, rotateDocKey
 } from '../collab';
 import { withViewTransition } from '../viewTransition';
+import { colorFor } from '../collabColors';
 
 // Owner-side sharing UI for a slate. All key material is generated and wrapped
 // in the browser (see src/collab.js); this component only orchestrates.
@@ -16,7 +17,10 @@ import { withViewTransition } from '../viewTransition';
 // path encrypts with the right key.
 // memberView: a collaborator (not the owner) opened this — show who's in
 // the group and offer leave; inviting/removing/turning off stay owner-only.
-export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose, memberView = false, sharedSlateId = null, onLeave }) {
+// embedded: rendered inside the collab side panel rather than as its own
+// modal, so the overlay + card chrome are dropped and the body flows into the
+// panel column. Everything else behaves identically.
+export function CollabShareModal({ slateNumber, userId, username, docKey, getCurrent, onDocKeyChange, onClose, memberView = false, sharedSlateId = null, onLeave, embedded = false }) {
   const close = () => withViewTransition(onClose);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const leaveTimerRef = useRef(null);
@@ -223,9 +227,15 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
   };
 
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={close}>
-      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg md:text-xl text-white mb-4">{strings.collab.modal.title}</h2>
+    <div
+      className={embedded ? 'contents' : 'fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4'}
+      onClick={embedded ? undefined : close}
+    >
+      <div
+        className={embedded ? 'w-full' : 'bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full'}
+        onClick={e => e.stopPropagation()}
+      >
+        {!embedded && <h2 className="text-lg md:text-xl text-white mb-4">{strings.collab.modal.title}</h2>}
 
         {memberView ? (
           <>
@@ -234,7 +244,12 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               <div className="flex flex-col gap-1">
                 {members.map((m) => (
                   <div key={m.username} className="flex items-center justify-between text-sm py-1">
-                    <span className="text-[var(--theme-text-muted)]">
+                    <span className="text-[var(--theme-text-muted)] flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: colorFor(m.username)[0] }}
+                        title={strings.collab.modal.colorHint}
+                      />
                       {m.username}{m.username === username ? ` (${strings.collab.modal.you})` : ''}
                       <span className="text-[var(--theme-text-dim)] ml-2">
                         {m.role === 'owner' ? strings.collab.modal.roleOwner : (m.status === 'pending' ? strings.collab.modal.statusPending : '')}
@@ -253,12 +268,14 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                 {confirmLeave ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
               </button>
               <div className="flex-1" />
-              <button
-                onClick={close}
-                className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
-              >
-                {strings.collab.modal.close}
-              </button>
+              {!embedded && (
+                <button
+                  onClick={close}
+                  className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+                >
+                  {strings.collab.modal.close}
+                </button>
+              )}
             </div>
           </>
         ) : !enabled ? (
@@ -273,12 +290,14 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               >
                 {busy ? strings.collab.modal.enabling : strings.collab.modal.enableButton}
               </button>
-              <button
-                onClick={close}
-                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
-              >
-                {strings.collab.modal.close}
-              </button>
+              {!embedded && (
+                <button
+                  onClick={close}
+                  className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+                >
+                  {strings.collab.modal.close}
+                </button>
+              )}
             </div>
           </>
         ) : (
@@ -308,7 +327,12 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               <div className="flex flex-col gap-1">
                 {members.map((m) => (
                   <div key={m.username} className="flex items-center justify-between text-sm py-1">
-                    <span className="text-[var(--theme-text-muted)]">
+                    <span className="text-[var(--theme-text-muted)] flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: colorFor(m.username)[0] }}
+                        title={strings.collab.modal.colorHint}
+                      />
                       {m.username}{m.username === username ? ` (${strings.collab.modal.you})` : ''}
                       <span className="text-[var(--theme-text-dim)] ml-2">
                         {m.role === 'owner' ? strings.collab.modal.roleOwner : (m.status === 'pending' ? strings.collab.modal.statusPending : '')}
@@ -325,6 +349,11 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                     )}
                   </div>
                 ))}
+                {confirmRemove && (
+                  <p className="text-[0.7rem] leading-snug" style={{ color: 'var(--theme-orange)' }}>
+                    {strings.collab.modal.rotationWarning}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -395,12 +424,14 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
                 {busy ? strings.collab.modal.disabling : (confirmDisable ? strings.collab.modal.disableConfirm : strings.collab.modal.disableButton)}
               </button>
               <div className="flex-1" />
-              <button
-                onClick={close}
-                className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
-              >
-                {strings.collab.modal.close}
-              </button>
+              {!embedded && (
+                <button
+                  onClick={close}
+                  className="border border-[var(--theme-border)] py-2 px-6 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+                >
+                  {strings.collab.modal.close}
+                </button>
+              )}
             </div>
           </>
         )}

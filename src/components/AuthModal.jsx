@@ -338,7 +338,9 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
       if (!isLogin) {
         setRegisteredEmail(email);
         setShowVerification(true);
-        setPendingAuthData(data);
+        // Marked so App can skip the "what's new in v4" card for an account
+        // that has never seen an older version.
+        setPendingAuthData({ ...data, isNewUser: true });
         setSuccess(data.message);
         e.target.reset();
       } else if (data.requiresVerification) {

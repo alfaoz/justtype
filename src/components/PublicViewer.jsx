@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { applyThemeVariables } from '../themes';
+import { ErrorPage } from './ErrorPage';
+import { PageHeader } from './PageHeader';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -164,22 +166,36 @@ export function PublicViewer() {
 
   if (error || !slate) {
     return (
-      <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center">
-          <div className="text-4xl md:text-5xl text-[var(--theme-text-dim)] mb-8 font-light">slate not found</div>
-          <p className="text-lg md:text-xl text-[var(--theme-text-muted)] mb-8 leading-relaxed">
-            {errorMessage || 'slate not found'}
-          </p>
-          <button
-            onClick={() => window.location.href = '/'}
-            className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] text-[var(--theme-accent)] px-8 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-all text-sm"
-          >
-            {strings.slateNotFound.button}
-          </button>
-        </div>
-      </div>
+      <ErrorPage
+        code="slate not found"
+        message={errorMessage || 'slate not found'}
+        buttonLabel={strings.slateNotFound.button}
+        onButtonClick={() => { window.location.href = '/'; }}
+      />
     );
   }
+
+  // One definition of the reader's controls, rendered twice: inline in the
+  // header on desktop, as a bottom bar on mobile.
+  const controlButtons = [
+    { key: 'theme', label: theme, onClick: toggleTheme },
+    { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
+    { key: 'view', label: strings.public.viewMode(viewMode), onClick: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
+    { key: 'copy', label: copied ? strings.public.copied : strings.public.copy, onClick: copyContent },
+  ];
+
+  const controls = (
+    <div className="text-sm flex items-center gap-3">
+      {controlButtons.map((c, i) => (
+        <React.Fragment key={c.key}>
+          {i > 0 && <span className="opacity-30">·</span>}
+          <button onClick={c.onClick} className="opacity-60 hover:opacity-100 transition-opacity">
+            {c.label}
+          </button>
+        </React.Fragment>
+      ))}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
@@ -194,35 +210,34 @@ export function PublicViewer() {
       `}</style>
 
       {/* HEADER */}
-      <header className="p-8 border-b border-[var(--theme-border-light)]">
-        <a href="/" className="text-xl font-medium text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] transition-colors">
-          + just type
-        </a>
-      </header>
+      <PageHeader right={<div className="hidden md:flex">{controls}</div>} />
 
       {/* SLATE CONTENT */}
-      <main className="max-w-3xl mx-auto p-8">
-        <div className="mb-8">
-          <h1 className="text-3xl text-[var(--theme-accent)] mb-4">{slate.title}</h1>
-          <div className="text-sm text-[var(--theme-text-dim)] flex gap-2 flex-wrap items-center">
-            <span>
-              {strings.public.byAuthor(slate.author)}
-              {slate.supporter_badge_visible && slate.supporter_tier && (
-                <span className="text-purple-400 font-medium ml-1.5">
-                  [{slate.supporter_tier === 'quarterly' ? 'supporter +' : 'supporter'}]
-                </span>
-              )}
-            </span>
-            <span>|</span>
+      <main className="max-w-3xl mx-auto px-6 md:px-8 py-10 md:py-12">
+        <div className="mb-10 md:mb-12">
+          <h1 className="text-3xl md:text-4xl text-[var(--theme-accent)] leading-tight mb-4">{slate.title}</h1>
+
+          {/* Byline first, on its own line: it is the one fact a reader
+              actually looks for. The rest is provenance, kept quieter. */}
+          <div className="text-sm text-[var(--theme-text-muted)] mb-3">
+            {strings.public.byAuthor(slate.author)}
+            {slate.supporter_badge_visible && slate.supporter_tier && (
+              <span className="text-purple-400 font-medium ml-1.5">
+                [{slate.supporter_tier === 'quarterly' ? 'supporter +' : 'supporter'}]
+              </span>
+            )}
+          </div>
+
+          <div className="text-xs text-[var(--theme-text-dim)] flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
-            <span>|</span>
+            <span className="opacity-40">·</span>
             <span>{strings.public.stats.words(slate.word_count)}</span>
-            <span>|</span>
+            <span className="opacity-40">·</span>
             <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
-            <span>|</span>
+            <span className="opacity-40">·</span>
             <a
               href={`mailto:hi@alfaoz.dev?subject=Report slate: ${encodeURIComponent(slate.title)}&body=Share ID: ${window.location.pathname.split('/s/')[1]}%0A%0AReason for report:%0A`}
-              className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
+              className="hover:text-[var(--theme-accent)] transition-colors"
             >
               {strings.public.report}
             </a>
@@ -243,41 +258,25 @@ export function PublicViewer() {
       </main>
 
       {/* FOOTER */}
-      <footer className="p-8 text-center border-t border-[var(--theme-border-light)] mt-16">
+      <footer className="p-8 pb-24 md:pb-8 text-center border-t border-[var(--theme-border-light)] mt-16">
         <div className="text-sm opacity-50">
           created with <a href="/" className="hover:text-[var(--theme-accent)] transition-colors">just type</a>
         </div>
       </footer>
 
-      {/* FIXED SETTINGS CONTROLS - bottom left */}
-      <div className="fixed bottom-6 left-6 md:bottom-8 md:left-8 text-sm flex items-center gap-3 z-50">
-        <button
-          onClick={toggleTheme}
-          className="opacity-50 hover:opacity-100 transition-opacity"
-        >
-          {theme}
-        </button>
-        <span className="opacity-30">·</span>
-        <button
-          onClick={cyclePunto}
-          className="opacity-50 hover:opacity-100 transition-opacity"
-        >
-          {getPuntoLabel()}
-        </button>
-        <span className="opacity-30">·</span>
-        <button
-          onClick={() => setViewMode(viewMode === 'rich' ? 'plain' : 'rich')}
-          className="opacity-50 hover:opacity-100 transition-opacity"
-        >
-          {strings.public.viewMode(viewMode)}
-        </button>
-        <span className="opacity-30">·</span>
-        <button
-          onClick={copyContent}
-          className="opacity-50 hover:opacity-100 transition-opacity"
-        >
-          {copied ? strings.public.copied : strings.public.copy}
-        </button>
+      {/* CONTROLS - a real bar on mobile, folded into the header on desktop */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--theme-bg)] border-t border-[var(--theme-border-light)] pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-stretch justify-between px-2 h-12">
+          {controlButtons.map((c) => (
+            <button
+              key={c.key}
+              onClick={c.onClick}
+              className="flex-1 min-w-0 text-xs text-[var(--theme-text-muted)] active:text-[var(--theme-accent)] transition-colors px-1 truncate"
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

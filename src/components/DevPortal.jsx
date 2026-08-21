@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { PageHeader } from './PageHeader';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 
@@ -323,7 +324,7 @@ function highlightCode(code) {
     if (m.index > last) out.push(code.slice(last, m.index));
     const t = m[0];
     let cls;
-    if (t.startsWith('//') || t.startsWith('#')) cls = 'text-[#666] italic';
+    if (t.startsWith('//') || t.startsWith('#')) cls = 'text-[var(--theme-text-dim)] italic';
     else if (t[0] === "'" || t[0] === '"' || t[0] === '`') cls = 'text-green-400';
     else if (/^(true|false|null|None|True|False)$/.test(t)) cls = 'text-orange-400';
     else if (/^(0x|\d)/.test(t)) cls = 'text-orange-400';
@@ -339,17 +340,17 @@ function highlightCode(code) {
 
 function Shell({ children }) {
   return (
-    <div className="min-h-screen bg-[#111111] text-[#d4d4d4] overflow-y-auto">
-      <header className="border-b border-[#222] sticky top-0 bg-[#111111] z-30">
-        <div className="max-w-5xl mx-auto px-5 h-14 flex items-center justify-between">
+    <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] overflow-y-auto">
+      <PageHeader
+        sticky
+        right={
           <div className="flex items-baseline gap-3">
-            <a href="/" className="text-sm text-[#808080] hover:text-white transition-colors">← justtype</a>
-            <span className="text-[#333]">/</span>
-            <span className="text-sm text-white">developers</span>
+            <span className="text-xs text-[var(--theme-text-dim)]">developers</span>
+            <span className="text-[var(--theme-border)]">/</span>
+            <span className="text-[11px] tracking-[0.2em] uppercase text-[var(--theme-text-dim)]">api v1</span>
           </div>
-          <span className="text-[11px] tracking-[0.2em] uppercase text-[#666]">api v1</span>
-        </div>
-      </header>
+        }
+      />
       <main className="max-w-5xl mx-auto px-5 py-10">{children}</main>
     </div>
   );
@@ -364,36 +365,36 @@ function CodeBlock({ code }) {
     }).catch(() => {});
   };
   return (
-    <div className="relative group rounded-xl border border-[#333] bg-[#0a0a0a] overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[#222]">
+    <div className="relative group rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg)] overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--theme-border-light)]">
         <div className="flex gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#333]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[var(--theme-bg-tertiary)]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[var(--theme-bg-tertiary)]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[var(--theme-bg-tertiary)]" />
         </div>
         <button
           onClick={copy}
-          className="text-xs px-2.5 py-1 rounded-md bg-[#1a1a1a] text-[#a0a0a0] hover:text-white border border-[#333] transition-colors"
+          className="text-xs px-2.5 py-1 rounded-md bg-[var(--theme-bg-secondary)] text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] border border-[var(--theme-border)] transition-colors"
         >
           {copied ? strings.dev.copied : strings.dev.copy}
         </button>
       </div>
-      <pre className="p-4 overflow-x-auto text-xs leading-relaxed text-[#d4d4d4] whitespace-pre">{highlightCode(code)}</pre>
+      <pre className="p-4 overflow-x-auto text-xs leading-relaxed text-[var(--theme-text)] whitespace-pre">{highlightCode(code)}</pre>
     </div>
   );
 }
 
 function Chip({ children }) {
   return (
-    <span className="text-[11px] px-2 py-0.5 rounded-md bg-[#222] text-[#a0a0a0] font-mono">{children}</span>
+    <span className="text-[11px] px-2 py-0.5 rounded-md bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-muted)] font-mono">{children}</span>
   );
 }
 
 function Field({ label, hint, children }) {
   return (
     <label className="block">
-      <span className="text-xs text-[#808080] mb-1.5 flex items-baseline gap-2">
-        {label}{hint && <span className="text-[#666]">{hint}</span>}
+      <span className="text-xs text-[var(--theme-text-muted)] mb-1.5 flex items-baseline gap-2">
+        {label}{hint && <span className="text-[var(--theme-text-dim)]">{hint}</span>}
       </span>
       {children}
     </label>
@@ -401,8 +402,8 @@ function Field({ label, hint, children }) {
 }
 
 const inputClass =
-  'w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-3.5 py-2.5 text-sm text-white ' +
-  'placeholder:text-[#666] focus:outline-none focus:border-[#666] transition-colors';
+  'w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded-lg px-3.5 py-2.5 text-sm text-[var(--theme-accent)] ' +
+  'placeholder:text-[var(--theme-text-dim)] focus:outline-none focus:border-[var(--theme-text-dim)] transition-colors';
 
 // justtype-style centered modal. Closes on overlay click or Escape.
 function Modal({ title, subtitle, onClose, children, maxWidth = 'max-w-md' }) {
@@ -417,11 +418,11 @@ function Modal({ title, subtitle, onClose, children, maxWidth = 'max-w-md' }) {
       onClick={onClose}
     >
       <div
-        className={`bg-[#1a1a1a] border border-[#333] rounded-xl p-6 w-full ${maxWidth} animate-[modalContentIn_0.18s_ease-out] max-h-[90vh] overflow-y-auto`}
+        className={`bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-6 w-full ${maxWidth} animate-[modalContentIn_0.18s_ease-out] max-h-[90vh] overflow-y-auto`}
         onClick={(e) => e.stopPropagation()}
       >
-        {title && <h2 className="text-lg text-white mb-1">{title}</h2>}
-        {subtitle && <p className="text-sm text-[#808080] mb-5 leading-relaxed">{subtitle}</p>}
+        {title && <h2 className="text-lg text-[var(--theme-accent)] mb-1">{title}</h2>}
+        {subtitle && <p className="text-sm text-[var(--theme-text-muted)] mb-5 leading-relaxed">{subtitle}</p>}
         {children}
       </div>
     </div>
@@ -429,9 +430,9 @@ function Modal({ title, subtitle, onClose, children, maxWidth = 'max-w-md' }) {
 }
 
 const ROLE_STYLE = {
-  owner: 'bg-white/10 text-white border-white/20',
+  owner: 'bg-white/10 text-[var(--theme-accent)] border-white/20',
   editor: 'bg-blue-400/10 text-blue-300 border-blue-400/20',
-  viewer: 'bg-[#222] text-[#a0a0a0] border-[#333]'
+  viewer: 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-muted)] border-[var(--theme-border)]'
 };
 
 function RoleBadge({ role }) {
@@ -541,9 +542,9 @@ export function DevPortal({ token, username, onLogin }) {
     return (
       <Shell>
         <div className="text-center py-24">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[#1a1a1a] border border-[#333] mb-6 text-xl">{'</>'}</div>
-          <h1 className="text-2xl text-white mb-3">{strings.dev.title}</h1>
-          <p className="text-[#a0a0a0] mb-8 max-w-md mx-auto leading-relaxed">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] mb-6 text-xl">{'</>'}</div>
+          <h1 className="text-2xl text-[var(--theme-accent)] mb-3">{strings.dev.title}</h1>
+          <p className="text-[var(--theme-text-muted)] mb-8 max-w-md mx-auto leading-relaxed">
             {joinToken ? strings.dev.join.gate : strings.dev.gate.message}
           </p>
           <button onClick={onLogin} className="bg-white text-black px-6 py-3 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
@@ -559,17 +560,17 @@ export function DevPortal({ token, username, onLogin }) {
   return (
     <Shell>
       <div className="mb-8">
-        <h1 className="text-3xl text-white tracking-tight mb-2">{strings.dev.title}</h1>
-        <p className="text-[#a0a0a0]">{strings.dev.subtitle}</p>
+        <h1 className="text-3xl text-[var(--theme-accent)] tracking-tight mb-2">{strings.dev.title}</h1>
+        <p className="text-[var(--theme-text-muted)]">{strings.dev.subtitle}</p>
       </div>
 
-      <div className="inline-flex gap-1 p-1 bg-[#1a1a1a] border border-[#333] rounded-lg mb-8">
+      <div className="inline-flex gap-1 p-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg mb-8">
         {tabs.map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
             className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-              tab === id ? 'bg-[#222] text-white' : 'text-[#808080] hover:text-[#d4d4d4]'
+              tab === id ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-accent)]' : 'text-[var(--theme-text-muted)] hover:text-[var(--theme-text)]'
             }`}
           >
             {label}
@@ -646,41 +647,41 @@ function JoinModal({ token, onClose, onJoined }) {
   return (
     <Modal title={loading ? j.title : (invite ? j.heading(invite.app_name) : j.title)} onClose={onClose}>
       {loading ? (
-        <p className="text-sm text-[#808080]">{strings.dev.loading}</p>
+        <p className="text-sm text-[var(--theme-text-muted)]">{strings.dev.loading}</p>
       ) : !invite ? (
         <>
           <p className="text-sm text-red-400 mb-5">{error || j.invalid}</p>
-          <button onClick={onClose} className="w-full border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] text-sm transition-colors">
+          <button onClick={onClose} className="w-full border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2.5 rounded-lg hover:bg-[var(--theme-bg-tertiary)] text-sm transition-colors">
             {strings.dev.apps.access.close}
           </button>
         </>
       ) : invite.is_owner ? (
         <>
-          <p className="text-sm text-[#a0a0a0] mb-5">{j.isOwner}</p>
+          <p className="text-sm text-[var(--theme-text-muted)] mb-5">{j.isOwner}</p>
           <button onClick={onJoined} className="w-full bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
             {strings.dev.apps.access.close}
           </button>
         </>
       ) : invite.already_member ? (
         <>
-          <p className="text-sm text-[#a0a0a0] mb-5">{j.alreadyMember}</p>
+          <p className="text-sm text-[var(--theme-text-muted)] mb-5">{j.alreadyMember}</p>
           <button onClick={onJoined} className="w-full bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
             {strings.dev.apps.access.close}
           </button>
         </>
       ) : (
         <>
-          <p className="text-sm text-[#a0a0a0] mb-3 leading-relaxed">{j.body(invite.owner_username, invite.role)}</p>
+          <p className="text-sm text-[var(--theme-text-muted)] mb-3 leading-relaxed">{j.body(invite.owner_username, invite.role)}</p>
           <div className="flex items-center gap-2 mb-1">
             <RoleBadge role={invite.role} />
-            <span className="text-xs text-[#666]">{j.roleNote[invite.role]}</span>
+            <span className="text-xs text-[var(--theme-text-dim)]">{j.roleNote[invite.role]}</span>
           </div>
           {error && <p className="text-red-400 text-xs mt-3">{error}</p>}
           <div className="flex gap-3 mt-6">
             <button onClick={accept} disabled={accepting} className="flex-1 bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
               {accepting ? j.accepting : j.accept}
             </button>
-            <button onClick={onClose} disabled={accepting} className="flex-1 border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+            <button onClick={onClose} disabled={accepting} className="flex-1 border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2.5 rounded-lg hover:bg-[var(--theme-bg-tertiary)] disabled:opacity-50 text-sm transition-colors">
               {j.decline}
             </button>
           </div>
@@ -723,8 +724,8 @@ function DocsTab({ onWizard }) {
     <div className="grid md:grid-cols-[180px_minmax(0,1fr)] gap-10 lg:gap-14">
       <nav className="hidden md:block">
         <div className="sticky top-20">
-          <div className="text-[11px] uppercase tracking-wider text-[#666] mb-3 px-3">{d.onThisPage}</div>
-          <div className="space-y-0.5 border-l border-[#222]">
+          <div className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-3 px-3">{d.onThisPage}</div>
+          <div className="space-y-0.5 border-l border-[var(--theme-border-light)]">
             {navItems.map(([id, label]) => (
               <a
                 key={id}
@@ -732,8 +733,8 @@ function DocsTab({ onWizard }) {
                 onClick={() => setActive(id)}
                 className={`block pl-3 -ml-px py-1.5 border-l text-sm transition-colors ${
                   active === id
-                    ? 'border-white text-white'
-                    : 'border-transparent text-[#808080] hover:text-[#d4d4d4]'
+                    ? 'border-white text-[var(--theme-accent)]'
+                    : 'border-transparent text-[var(--theme-text-muted)] hover:text-[var(--theme-text)]'
                 }`}
               >
                 {label}
@@ -745,71 +746,71 @@ function DocsTab({ onWizard }) {
 
       <div className="min-w-0 text-sm leading-relaxed space-y-14 pb-20">
         <section id="intro" className="scroll-mt-20">
-          <h2 className="text-2xl text-white tracking-tight mb-3">{d.what.title}</h2>
-          <p className="text-[#a0a0a0]">{d.what.body}</p>
-          <div className="mt-4 rounded-xl border border-[#333] bg-[#1a1a1a] px-4 py-3 text-sm text-[#a0a0a0]">
+          <h2 className="text-2xl text-[var(--theme-accent)] tracking-tight mb-3">{d.what.title}</h2>
+          <p className="text-[var(--theme-text-muted)]">{d.what.body}</p>
+          <div className="mt-4 rounded-xl border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] px-4 py-3 text-sm text-[var(--theme-text-muted)]">
             {d.specCallout}{' '}
             <a href={d.specUrl} target="_blank" rel="noopener" className="text-blue-400 hover:underline break-all">{d.specUrl}</a>
           </div>
         </section>
 
         <section id="quickstart" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-3">{d.quickstart.title}</h2>
-          <p className="text-[#a0a0a0] mb-5">{d.quickstart.body}</p>
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-3">{d.quickstart.title}</h2>
+          <p className="text-[var(--theme-text-muted)] mb-5">{d.quickstart.body}</p>
           <ol className="space-y-3 mb-6">
             {d.flow.steps.map((s, i) => (
               <li key={i} className="flex gap-3.5">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
-                <span className="text-[#a0a0a0]">{s}</span>
+                <span className="shrink-0 w-6 h-6 rounded-full bg-[var(--theme-bg-tertiary)] border border-[var(--theme-border)] text-[var(--theme-text)] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+                <span className="text-[var(--theme-text-muted)]">{s}</span>
               </li>
             ))}
           </ol>
           <CodeBlock code={quickstartCode} />
-          <button onClick={onWizard} className="mt-4 w-full text-left bg-[#1a1a1a] border border-[#333] rounded-xl px-4 py-3 hover:bg-[#222] transition-colors group flex items-center justify-between">
-            <span className="text-[#d4d4d4] text-sm">{strings.dev.docs.wizardHint}</span>
-            <span className="text-[#666] group-hover:text-white transition-colors">→</span>
+          <button onClick={onWizard} className="mt-4 w-full text-left bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl px-4 py-3 hover:bg-[var(--theme-bg-tertiary)] transition-colors group flex items-center justify-between">
+            <span className="text-[var(--theme-text)] text-sm">{strings.dev.docs.wizardHint}</span>
+            <span className="text-[var(--theme-text-dim)] group-hover:text-[var(--theme-accent)] transition-colors">→</span>
           </button>
         </section>
 
         <section id="scopes" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-4">{d.scopes.title}</h2>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl px-5 divide-y divide-[#222]">
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-4">{d.scopes.title}</h2>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl px-5 divide-y divide-[var(--theme-border-light)]">
             {SCOPE_OPTIONS.map(([id, label]) => (
               <div key={id} className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-4 py-3">
                 <code className="text-blue-400 text-xs shrink-0 sm:w-44">{id}</code>
-                <span className="text-[#a0a0a0]">{label}</span>
+                <span className="text-[var(--theme-text-muted)]">{label}</span>
               </div>
             ))}
           </div>
           <div className="mt-4 rounded-xl border border-[#2a3a2a] bg-green-400/5 px-5 py-4">
             <h3 className="text-sm text-green-300 mb-2">{d.scopes.recommendedTitle}</h3>
-            <p className="text-[#a0a0a0] text-sm leading-relaxed mb-2">{d.scopes.recommendedBody}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm leading-relaxed mb-2">{d.scopes.recommendedBody}</p>
             <code className="block text-green-300/90 text-xs bg-[#0f140f] border border-[#1f2a1f] rounded px-3 py-2 break-all">{d.scopes.recommendedBundle}</code>
-            <p className="text-[#666] text-xs mt-2">{d.scopes.recommendedNote}</p>
+            <p className="text-[var(--theme-text-dim)] text-xs mt-2">{d.scopes.recommendedNote}</p>
           </div>
         </section>
 
         <section id="endpoints" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-4">{d.endpoints.title}</h2>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-4">{d.endpoints.title}</h2>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl divide-y divide-[var(--theme-border-light)]">
             {d.endpoints.list.map(([method, path, desc], i) => (
               <div key={i} className="px-5 py-3 font-mono text-xs">
                 <div className="flex items-baseline gap-3">
-                  <span className={`font-semibold w-12 shrink-0 ${METHOD_COLOR[method] || 'text-[#a0a0a0]'}`}>{method}</span>
-                  <code className="text-[#d4d4d4] break-all">{path}</code>
+                  <span className={`font-semibold w-12 shrink-0 ${METHOD_COLOR[method] || 'text-[var(--theme-text-muted)]'}`}>{method}</span>
+                  <code className="text-[var(--theme-text)] break-all">{path}</code>
                 </div>
-                <div className="text-[#666] pl-[3.75rem] mt-1">{desc}</div>
+                <div className="text-[var(--theme-text-dim)] pl-[3.75rem] mt-1">{desc}</div>
               </div>
             ))}
           </div>
 
-          <h3 className="text-base text-white tracking-tight mt-8 mb-2">{d.responses.title}</h3>
-          <p className="text-[#a0a0a0] mb-3">{d.responses.body}</p>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-xl divide-y divide-[#222]">
+          <h3 className="text-base text-[var(--theme-accent)] tracking-tight mt-8 mb-2">{d.responses.title}</h3>
+          <p className="text-[var(--theme-text-muted)] mb-3">{d.responses.body}</p>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl divide-y divide-[var(--theme-border-light)]">
             {d.responses.items.map(([path, shape], i) => (
               <div key={i} className="px-4 py-3">
                 <code className="text-blue-400 text-xs break-all">{path}</code>
-                <pre className="text-[#a0a0a0] text-xs mt-1.5 whitespace-pre-wrap break-all font-mono leading-relaxed">{shape}</pre>
+                <pre className="text-[var(--theme-text-muted)] text-xs mt-1.5 whitespace-pre-wrap break-all font-mono leading-relaxed">{shape}</pre>
               </div>
             ))}
           </div>
@@ -818,66 +819,66 @@ function DocsTab({ onWizard }) {
             <h3 className="text-sm text-orange-300 mb-2">{d.gotchas.title}</h3>
             <ul className="space-y-2">
               {d.gotchas.points.map((p, i) => (
-                <li key={i} className="flex gap-2.5 text-[#a0a0a0] text-xs leading-relaxed">
+                <li key={i} className="flex gap-2.5 text-[var(--theme-text-muted)] text-xs leading-relaxed">
                   <span className="text-orange-400/70 shrink-0">⚠</span><span>{p}</span>
                 </li>
               ))}
             </ul>
           </div>
 
-          <h3 className="text-base text-white tracking-tight mt-6 mb-2">{d.errors.title}</h3>
+          <h3 className="text-base text-[var(--theme-accent)] tracking-tight mt-6 mb-2">{d.errors.title}</h3>
           <ul className="space-y-2">
             {d.errors.points.map((p, i) => (
-              <li key={i} className="flex gap-2.5 text-[#a0a0a0] text-xs leading-relaxed">
-                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              <li key={i} className="flex gap-2.5 text-[var(--theme-text-muted)] text-xs leading-relaxed">
+                <span className="text-[var(--theme-text-dim)] shrink-0">—</span><span>{p}</span>
               </li>
             ))}
           </ul>
         </section>
 
         <section id="delegation" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-3">{d.delegation.title}</h2>
-          <p className="text-[#a0a0a0] mb-4">{d.delegation.body}</p>
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-3">{d.delegation.title}</h2>
+          <p className="text-[var(--theme-text-muted)] mb-4">{d.delegation.body}</p>
           <ol className="space-y-3 mb-6">
             {d.delegation.steps.map((s, i) => (
               <li key={i} className="flex gap-3.5">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-[#222] border border-[#333] text-[#d4d4d4] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
-                <span className="text-[#a0a0a0]">{s}</span>
+                <span className="shrink-0 w-6 h-6 rounded-full bg-[var(--theme-bg-tertiary)] border border-[var(--theme-border)] text-[var(--theme-text)] text-xs flex items-center justify-center mt-0.5">{i + 1}</span>
+                <span className="text-[var(--theme-text-muted)]">{s}</span>
               </li>
             ))}
           </ol>
           <CodeBlock code={DECRYPT_SNIPPET} />
-          <h3 className="text-base text-white tracking-tight mt-8 mb-3">{d.delegation.writeTitle}</h3>
-          <p className="text-[#a0a0a0] mb-4">{d.delegation.write}</p>
+          <h3 className="text-base text-[var(--theme-accent)] tracking-tight mt-8 mb-3">{d.delegation.writeTitle}</h3>
+          <p className="text-[var(--theme-text-muted)] mb-4">{d.delegation.write}</p>
           <CodeBlock code={WRITE_SNIPPET} />
-          <p className="text-[#666] text-xs mt-3">{d.delegation.note}</p>
+          <p className="text-[var(--theme-text-dim)] text-xs mt-3">{d.delegation.note}</p>
 
-          <h3 className="text-base text-white tracking-tight mt-10 mb-3">{d.delegation.dropTitle}</h3>
-          <p className="text-[#a0a0a0] mb-4">{d.delegation.drop}</p>
+          <h3 className="text-base text-[var(--theme-accent)] tracking-tight mt-10 mb-3">{d.delegation.dropTitle}</h3>
+          <p className="text-[var(--theme-text-muted)] mb-4">{d.delegation.drop}</p>
           <CodeBlock code={DROP_SNIPPET} />
           <ul className="space-y-2 mt-4">
             {d.delegation.dropPoints.map((p, i) => (
-              <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
-                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              <li key={i} className="flex gap-2.5 text-[var(--theme-text-muted)]">
+                <span className="text-[var(--theme-text-dim)] shrink-0">—</span><span>{p}</span>
               </li>
             ))}
           </ul>
         </section>
 
         <section id="tokens" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-3">{d.tokens.title}</h2>
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-3">{d.tokens.title}</h2>
           <ul className="space-y-2">
             {d.tokens.points.map((p, i) => (
-              <li key={i} className="flex gap-2.5 text-[#a0a0a0]">
-                <span className="text-[#666] shrink-0">—</span><span>{p}</span>
+              <li key={i} className="flex gap-2.5 text-[var(--theme-text-muted)]">
+                <span className="text-[var(--theme-text-dim)] shrink-0">—</span><span>{p}</span>
               </li>
             ))}
           </ul>
         </section>
 
         <section id="encryption" className="scroll-mt-20">
-          <h2 className="text-xl text-white tracking-tight mb-3">{d.encryption.title}</h2>
-          <p className="text-[#a0a0a0]">{d.encryption.body}</p>
+          <h2 className="text-xl text-[var(--theme-accent)] tracking-tight mb-3">{d.encryption.title}</h2>
+          <p className="text-[var(--theme-text-muted)]">{d.encryption.body}</p>
         </section>
       </div>
     </div>
@@ -895,15 +896,15 @@ function ScopeChecklist({ scopes, toggleScope }) {
             key={id}
             onClick={() => toggleScope(id)}
             className={`w-full text-left flex items-start gap-3 rounded-lg px-3 py-2.5 border transition-colors ${
-              on ? 'border-[#333] bg-[#0a0a0a]' : 'border-transparent hover:bg-[#0a0a0a]'
+              on ? 'border-[var(--theme-border)] bg-[var(--theme-bg)]' : 'border-transparent hover:bg-[var(--theme-bg)]'
             }`}
           >
             <span className={`shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
-              on ? 'bg-white text-black border-white' : 'border-[#666] text-transparent'
+              on ? 'bg-white text-black border-white' : 'border-[var(--theme-text-dim)] text-transparent'
             }`}>✓</span>
-            <span className="text-sm text-[#a0a0a0]">
+            <span className="text-sm text-[var(--theme-text-muted)]">
               <code className="text-blue-400">{id}</code>
-              <span className="block text-xs text-[#666] mt-0.5">{label}</span>
+              <span className="block text-xs text-[var(--theme-text-dim)] mt-0.5">{label}</span>
             </span>
           </button>
         );
@@ -916,8 +917,8 @@ function ScopeChecklist({ scopes, toggleScope }) {
 function SectionHeader({ label, count }) {
   return (
     <div className="flex items-baseline gap-2 mb-3">
-      <span className="text-[11px] uppercase tracking-wider text-[#666]">{label}</span>
-      {count != null && <span className="text-[11px] text-[#444]">{count}</span>}
+      <span className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)]">{label}</span>
+      {count != null && <span className="text-[11px] text-[var(--theme-text-dim)]">{count}</span>}
     </div>
   );
 }
@@ -934,14 +935,14 @@ function CopyRow({ label, value, hint }) {
   return (
     <button
       onClick={copy}
-      className="w-full text-left flex items-center justify-between gap-2 bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 hover:border-[#666] transition-colors group"
+      className="w-full text-left flex items-center justify-between gap-2 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded-lg px-3 py-2 hover:border-[var(--theme-text-dim)] transition-colors group"
       title={hint}
     >
       <span className="min-w-0">
-        {label && <span className="block text-[10px] uppercase tracking-wider text-[#555] mb-0.5">{label}</span>}
-        <code className="font-mono text-xs text-[#a0a0a0] break-all">{value}</code>
+        {label && <span className="block text-[10px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-0.5">{label}</span>}
+        <code className="font-mono text-xs text-[var(--theme-text-muted)] break-all">{value}</code>
       </span>
-      <span className="text-[10px] text-[#666] group-hover:text-white shrink-0">
+      <span className="text-[10px] text-[var(--theme-text-dim)] group-hover:text-[var(--theme-accent)] shrink-0">
         {copied ? strings.dev.copied : strings.dev.copy}
       </span>
     </button>
@@ -953,17 +954,17 @@ function AppCard({ app, onEdit, onManageAccess, onDelete }) {
   const isOwner = app.role === 'owner';
   const canEdit = isOwner || app.role === 'editor';
   return (
-    <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 transition-colors hover:border-[#3a3a3a]">
+    <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-5 transition-colors hover:border-[var(--theme-border)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-white truncate">{app.name}</span>
+            <span className="text-[var(--theme-accent)] truncate">{app.name}</span>
             <RoleBadge role={app.role} />
           </div>
           {app.website ? (
-            <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-blue-400 break-all">{app.website}</a>
+            <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--theme-text-dim)] hover:text-blue-400 break-all">{app.website}</a>
           ) : !isOwner && app.owner_username ? (
-            <span className="text-xs text-[#666]">{a.sharedBy(app.owner_username)}</span>
+            <span className="text-xs text-[var(--theme-text-dim)]">{a.sharedBy(app.owner_username)}</span>
           ) : null}
         </div>
       </div>
@@ -975,17 +976,17 @@ function AppCard({ app, onEdit, onManageAccess, onDelete }) {
       <div className="flex flex-wrap gap-1.5 mt-3">
         {app.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
       </div>
-      <div className="text-xs text-[#666] mt-3 break-all">
+      <div className="text-xs text-[var(--theme-text-dim)] mt-3 break-all">
         {a.redirectsLabel}: {app.redirect_uris.join(', ')}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-[#222]">
+      <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-[var(--theme-border-light)]">
         {canEdit && (
-          <button onClick={() => onEdit(app)} className="text-xs text-[#d4d4d4] border border-[#333] rounded-lg px-3 py-1.5 hover:bg-[#222] transition-colors">
+          <button onClick={() => onEdit(app)} className="text-xs text-[var(--theme-text)] border border-[var(--theme-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--theme-bg-tertiary)] transition-colors">
             {a.edit}
           </button>
         )}
-        <button onClick={() => onManageAccess(app)} className="text-xs text-[#d4d4d4] border border-[#333] rounded-lg px-3 py-1.5 hover:bg-[#222] transition-colors">
+        <button onClick={() => onManageAccess(app)} className="text-xs text-[var(--theme-text)] border border-[var(--theme-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--theme-bg-tertiary)] transition-colors">
           {a.manageAccess}
         </button>
         {isOwner && (
@@ -994,7 +995,7 @@ function AppCard({ app, onEdit, onManageAccess, onDelete }) {
           </button>
         )}
         {!canEdit && (
-          <span className="text-[11px] text-[#555] ml-auto">{a.viewOnlyNote}</span>
+          <span className="text-[11px] text-[var(--theme-text-dim)] ml-auto">{a.viewOnlyNote}</span>
         )}
       </div>
     </div>
@@ -1020,13 +1021,13 @@ function DeleteAppModal({ app, onClose, onDeleted }) {
   };
   return (
     <Modal title={a.deleteModal.title} onClose={onClose}>
-      <p className="text-sm text-[#a0a0a0] mb-6 leading-relaxed">{a.deleteModal.message(app.name)}</p>
+      <p className="text-sm text-[var(--theme-text-muted)] mb-6 leading-relaxed">{a.deleteModal.message(app.name)}</p>
       {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
       <div className="flex gap-3">
-        <button onClick={del} disabled={busy} className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm transition-colors">
+        <button onClick={del} disabled={busy} className="flex-1 bg-red-600 text-[var(--theme-accent)] px-4 py-2.5 rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm transition-colors">
           {busy ? a.deleteModal.deleting : a.deleteModal.confirm}
         </button>
-        <button onClick={onClose} disabled={busy} className="flex-1 border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+        <button onClick={onClose} disabled={busy} className="flex-1 border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2.5 rounded-lg hover:bg-[var(--theme-bg-tertiary)] disabled:opacity-50 text-sm transition-colors">
           {a.deleteModal.cancel}
         </button>
       </div>
@@ -1079,7 +1080,7 @@ function EditAppModal({ app, onClose, onSaved }) {
           <textarea value={redirects} onChange={(e) => setRedirects(e.target.value)} placeholder={a.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
         </Field>
         <div>
-          <p className="text-xs text-[#808080] mb-2">{a.scopesLabel}</p>
+          <p className="text-xs text-[var(--theme-text-muted)] mb-2">{a.scopesLabel}</p>
           <ScopeChecklist scopes={scopes} toggleScope={toggleScope} />
         </div>
         {error && <p className="text-red-400 text-xs">{error}</p>}
@@ -1087,7 +1088,7 @@ function EditAppModal({ app, onClose, onSaved }) {
           <button type="submit" disabled={busy} className="bg-white text-black px-4 py-2.5 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
             {busy ? a.saving : a.save}
           </button>
-          <button type="button" onClick={onClose} disabled={busy} className="border border-[#333] text-[#d4d4d4] px-4 py-2.5 rounded-lg hover:bg-[#222] disabled:opacity-50 text-sm transition-colors">
+          <button type="button" onClick={onClose} disabled={busy} className="border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2.5 rounded-lg hover:bg-[var(--theme-bg-tertiary)] disabled:opacity-50 text-sm transition-colors">
             {a.cancel}
           </button>
         </div>
@@ -1179,7 +1180,7 @@ function AccessManager({ app, currentUsername, onClose, onChanged }) {
   return (
     <Modal title={ax.title} subtitle={ax.subtitle(app.name)} onClose={onClose} maxWidth="max-w-lg">
       {loading ? (
-        <p className="text-sm text-[#808080]">{strings.dev.loading}</p>
+        <p className="text-sm text-[var(--theme-text-muted)]">{strings.dev.loading}</p>
       ) : (
         <div className="space-y-6">
           {/* team */}
@@ -1202,22 +1203,22 @@ function AccessManager({ app, currentUsername, onClose, onChanged }) {
                 />
               ))}
               {(!team?.collaborators || team.collaborators.length === 0) && (
-                <p className="text-xs text-[#666] py-1">{ax.empty}</p>
+                <p className="text-xs text-[var(--theme-text-dim)] py-1">{ax.empty}</p>
               )}
             </div>
           </div>
 
           {/* invite links (owner only) */}
           {isOwner ? (
-            <div className="pt-2 border-t border-[#222]">
+            <div className="pt-2 border-t border-[var(--theme-border-light)]">
               <SectionHeader label={ax.inviteHeading} />
-              <p className="text-xs text-[#666] mb-3 leading-relaxed">{ax.inviteBody}</p>
+              <p className="text-xs text-[var(--theme-text-dim)] mb-3 leading-relaxed">{ax.inviteBody}</p>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-[#808080] shrink-0">{ax.inviteRoleLabel}</span>
-                <div className="inline-flex gap-1 p-1 bg-[#0a0a0a] border border-[#333] rounded-lg">
+                <span className="text-xs text-[var(--theme-text-muted)] shrink-0">{ax.inviteRoleLabel}</span>
+                <div className="inline-flex gap-1 p-1 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded-lg">
                   {['editor', 'viewer'].map((r) => (
                     <button key={r} onClick={() => setInviteRole(r)}
-                      className={`px-3 py-1 text-xs rounded-md transition-colors ${inviteRole === r ? 'bg-[#222] text-white' : 'text-[#808080] hover:text-[#d4d4d4]'}`}>
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${inviteRole === r ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-accent)]' : 'text-[var(--theme-text-muted)] hover:text-[var(--theme-text)]'}`}>
                       {r === 'editor' ? ax.roleEditor : ax.roleViewer}
                     </button>
                   ))}
@@ -1228,23 +1229,23 @@ function AccessManager({ app, currentUsername, onClose, onChanged }) {
                 </button>
               </div>
               {invites.length === 0 ? (
-                <p className="text-xs text-[#555]">{ax.noLinks}</p>
+                <p className="text-xs text-[var(--theme-text-dim)]">{ax.noLinks}</p>
               ) : (
                 <div className="space-y-2">
                   {invites.map((inv) => (
-                    <div key={inv.token} className="bg-[#0a0a0a] border border-[#333] rounded-lg p-2.5">
+                    <div key={inv.token} className="bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded-lg p-2.5">
                       <div className="flex items-center gap-2 mb-2">
                         <RoleBadge role={inv.role} />
-                        <span className="text-[11px] text-[#666]">{ax.linkRole(inv.role)}</span>
+                        <span className="text-[11px] text-[var(--theme-text-dim)]">{ax.linkRole(inv.role)}</span>
                         <button onClick={() => revokeLink(inv.token)} disabled={busyToken === inv.token}
                           className="ml-auto text-[11px] text-red-400/80 hover:text-red-300 disabled:opacity-50 transition-colors">
                           {busyToken === inv.token ? ax.revoking : ax.revokeLink}
                         </button>
                       </div>
                       <div className="flex items-center gap-2">
-                        <code className="flex-1 min-w-0 truncate text-[11px] text-[#808080] font-mono">{inviteUrl(inv.token)}</code>
+                        <code className="flex-1 min-w-0 truncate text-[11px] text-[var(--theme-text-muted)] font-mono">{inviteUrl(inv.token)}</code>
                         <button onClick={() => copyLink(inv.token)}
-                          className="text-[11px] px-2 py-1 rounded-md bg-[#1a1a1a] border border-[#333] text-[#a0a0a0] hover:text-white transition-colors shrink-0">
+                          className="text-[11px] px-2 py-1 rounded-md bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] transition-colors shrink-0">
                           {copiedToken === inv.token ? ax.copiedLink : ax.copyLink}
                         </button>
                       </div>
@@ -1254,13 +1255,13 @@ function AccessManager({ app, currentUsername, onClose, onChanged }) {
               )}
             </div>
           ) : (
-            <p className="text-xs text-[#555] pt-2 border-t border-[#222]">{ax.ownerOnly}</p>
+            <p className="text-xs text-[var(--theme-text-dim)] pt-2 border-t border-[var(--theme-border-light)]">{ax.ownerOnly}</p>
           )}
 
           {error && <p className="text-red-400 text-xs">{error}</p>}
 
           <div className="flex justify-end">
-            <button onClick={onClose} className="text-sm border border-[#333] text-[#d4d4d4] px-4 py-2 rounded-lg hover:bg-[#222] transition-colors">
+            <button onClick={onClose} className="text-sm border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2 rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors">
               {ax.close}
             </button>
           </div>
@@ -1273,13 +1274,13 @@ function AccessManager({ app, currentUsername, onClose, onChanged }) {
 function MemberRow({ username, role, isYou, onRemove, removing, removeLabel }) {
   const ax = strings.dev.apps.access;
   return (
-    <div className="flex items-center gap-3 bg-[#0a0a0a] border border-[#222] rounded-lg px-3 py-2">
-      <span className="w-7 h-7 rounded-full bg-[#222] border border-[#333] flex items-center justify-center text-xs text-[#a0a0a0] shrink-0 uppercase">
+    <div className="flex items-center gap-3 bg-[var(--theme-bg)] border border-[var(--theme-border-light)] rounded-lg px-3 py-2">
+      <span className="w-7 h-7 rounded-full bg-[var(--theme-bg-tertiary)] border border-[var(--theme-border)] flex items-center justify-center text-xs text-[var(--theme-text-muted)] shrink-0 uppercase">
         {(username || '?')[0]}
       </span>
       <span className="min-w-0">
-        <span className="text-sm text-white">@{username}</span>
-        {isYou && <span className="text-[11px] text-[#666] ml-1.5">({ax.you})</span>}
+        <span className="text-sm text-[var(--theme-accent)]">@{username}</span>
+        {isYou && <span className="text-[11px] text-[var(--theme-text-dim)] ml-1.5">({ax.you})</span>}
       </span>
       <span className="ml-auto flex items-center gap-2 shrink-0">
         <RoleBadge role={role} />
@@ -1301,7 +1302,7 @@ function AppsTab(p) {
   const [accessApp, setAccessApp] = useState(null);
 
   if (p.loadingApps) {
-    return <p className="text-[#666] text-sm">{strings.dev.loading}</p>;
+    return <p className="text-[var(--theme-text-dim)] text-sm">{strings.dev.loading}</p>;
   }
 
   const owned = p.apps.filter((x) => x.role === 'owner');
@@ -1313,18 +1314,18 @@ function AppsTab(p) {
   return (
     <div className="space-y-8">
       {p.newSecret && (
-        <div className="bg-[#1a1a1a] border border-orange-400/40 rounded-xl p-4">
-          <div className="text-sm text-white mb-1">{a.secretTitle}</div>
-          <div className="text-xs text-[#a0a0a0] mb-3">{a.secretBody}</div>
-          <code className="block bg-[#0a0a0a] border border-[#333] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
-          <button onClick={p.dismissSecret} className="mt-3 text-xs text-[#808080] hover:text-white">{a.secretDismiss}</button>
+        <div className="bg-[var(--theme-bg-secondary)] border border-orange-400/40 rounded-xl p-4">
+          <div className="text-sm text-[var(--theme-accent)] mb-1">{a.secretTitle}</div>
+          <div className="text-xs text-[var(--theme-text-muted)] mb-3">{a.secretBody}</div>
+          <code className="block bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded-lg px-3 py-2 text-xs text-orange-400 break-all">{p.newSecret.secret}</code>
+          <button onClick={p.dismissSecret} className="mt-3 text-xs text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)]">{a.secretDismiss}</button>
         </div>
       )}
 
       {/* empty state — no apps at all */}
       {p.apps.length === 0 && !p.showCreate && (
-        <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-8 text-center">
-          <p className="text-[#a0a0a0] text-sm mb-4">{a.empty}</p>
+        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-8 text-center">
+          <p className="text-[var(--theme-text-muted)] text-sm mb-4">{a.empty}</p>
           <button onClick={() => p.setShowCreate(true)} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] text-sm transition-colors">
             {a.createButton}
           </button>
@@ -1361,16 +1362,16 @@ function AppsTab(p) {
       {!p.showCreate ? (
         (p.apps.length > 0) && (
           <div className="flex flex-wrap gap-3">
-            <button onClick={() => p.setShowCreate(true)} className="text-sm text-white border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
+            <button onClick={() => p.setShowCreate(true)} className="text-sm text-[var(--theme-accent)] border border-[var(--theme-border)] rounded-lg px-4 py-2 hover:bg-[var(--theme-bg-tertiary)] transition-colors">
               {a.createButton}
             </button>
-            <button onClick={p.goWizard} className="text-sm text-[#a0a0a0] border border-[#333] rounded-lg px-4 py-2 hover:bg-[#222] transition-colors">
+            <button onClick={p.goWizard} className="text-sm text-[var(--theme-text-muted)] border border-[var(--theme-border)] rounded-lg px-4 py-2 hover:bg-[var(--theme-bg-tertiary)] transition-colors">
               {a.openWizard}
             </button>
           </div>
         )
       ) : (
-        <form onSubmit={p.createApp} className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 space-y-4">
+        <form onSubmit={p.createApp} className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-5 space-y-4">
           <Field label={a.nameLabel}>
             <input type="text" value={p.name} onChange={(e) => p.setName(e.target.value)} placeholder={a.namePlaceholder} maxLength={80} className={inputClass} autoFocus />
           </Field>
@@ -1381,7 +1382,7 @@ function AppsTab(p) {
             <textarea value={p.redirects} onChange={(e) => p.setRedirects(e.target.value)} placeholder={a.redirectsPlaceholder} rows={2} className={`${inputClass} font-mono`} />
           </Field>
           <div>
-            <p className="text-xs text-[#808080] mb-2">{a.scopesLabel}</p>
+            <p className="text-xs text-[var(--theme-text-muted)] mb-2">{a.scopesLabel}</p>
             <ScopeChecklist scopes={p.scopes} toggleScope={p.toggleScope} />
           </div>
           {p.createError && <p className="text-red-400 text-xs">{p.createError}</p>}
@@ -1389,7 +1390,7 @@ function AppsTab(p) {
             <button type="submit" disabled={p.creating} className="bg-white text-black px-4 py-2 rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 text-sm transition-colors">
               {p.creating ? a.creating : a.create}
             </button>
-            <button type="button" onClick={() => p.setShowCreate(false)} className="border border-[#333] text-[#d4d4d4] px-4 py-2 rounded-lg hover:bg-[#222] text-sm transition-colors">
+            <button type="button" onClick={() => p.setShowCreate(false)} className="border border-[var(--theme-border)] text-[var(--theme-text)] px-4 py-2 rounded-lg hover:bg-[var(--theme-bg-tertiary)] text-sm transition-colors">
               {a.cancel}
             </button>
           </div>
@@ -1428,12 +1429,12 @@ function Stepper({ step, labels, onJump }) {
             >
               <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border transition-colors ${
                 state === 'done' ? 'bg-white text-black border-white'
-                  : state === 'current' ? 'border-white text-white'
-                  : 'border-[#333] text-[#666]'
+                  : state === 'current' ? 'border-white text-[var(--theme-accent)]'
+                  : 'border-[var(--theme-border)] text-[var(--theme-text-dim)]'
               }`}>{n}</span>
-              <span className={`text-xs ${state === 'future' ? 'text-[#666]' : 'text-[#d4d4d4]'}`}>{label}</span>
+              <span className={`text-xs ${state === 'future' ? 'text-[var(--theme-text-dim)]' : 'text-[var(--theme-text)]'}`}>{label}</span>
             </button>
-            {n < labels.length && <span className="flex-1 h-px bg-[#333]" />}
+            {n < labels.length && <span className="flex-1 h-px bg-[var(--theme-bg-tertiary)]" />}
           </React.Fragment>
         );
       })}
@@ -1452,20 +1453,20 @@ function WizardTab(p) {
       {p.wizStep === 1 && (
         <div className="space-y-4">
           <div>
-            <h2 className="text-lg text-white">{w.step1.title}</h2>
-            <p className="text-[#a0a0a0] text-sm mt-1">{w.step1.body}</p>
+            <h2 className="text-lg text-[var(--theme-accent)]">{w.step1.title}</h2>
+            <p className="text-[var(--theme-text-muted)] text-sm mt-1">{w.step1.body}</p>
           </div>
           {p.apps.length === 0 ? (
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-5 text-sm text-[#a0a0a0]">
-              {w.step1.noApps} <button onClick={p.goApps} className="text-white underline hover:text-blue-400">{w.step1.goCreate}</button>
+            <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-5 text-sm text-[var(--theme-text-muted)]">
+              {w.step1.noApps} <button onClick={p.goApps} className="text-[var(--theme-accent)] underline hover:text-blue-400">{w.step1.goCreate}</button>
             </div>
           ) : (
             <div className="space-y-2.5">
               {p.apps.map((a) => (
                 <button key={a.client_id} onClick={() => { p.setWizAppId(a.client_id); p.setWizStep(2); }}
-                  className={`w-full text-left bg-[#1a1a1a] border rounded-xl p-4 hover:border-[#666] transition-colors ${p.wizAppId === a.client_id ? 'border-white' : 'border-[#333]'}`}>
-                  <div className="text-white text-sm">{a.name}</div>
-                  <div className="font-mono text-xs text-[#666] mt-1 break-all">{a.client_id}</div>
+                  className={`w-full text-left bg-[var(--theme-bg-secondary)] border rounded-xl p-4 hover:border-[var(--theme-text-dim)] transition-colors ${p.wizAppId === a.client_id ? 'border-white' : 'border-[var(--theme-border)]'}`}>
+                  <div className="text-[var(--theme-accent)] text-sm">{a.name}</div>
+                  <div className="font-mono text-xs text-[var(--theme-text-dim)] mt-1 break-all">{a.client_id}</div>
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {a.scopes.map((s) => <Chip key={s}>{s}</Chip>)}
                   </div>
@@ -1479,15 +1480,15 @@ function WizardTab(p) {
       {p.wizStep === 2 && (
         <div className="space-y-4">
           <div>
-            <h2 className="text-lg text-white">{w.step2.title}</h2>
-            <p className="text-[#a0a0a0] text-sm mt-1">{w.step2.body}</p>
+            <h2 className="text-lg text-[var(--theme-accent)]">{w.step2.title}</h2>
+            <p className="text-[var(--theme-text-muted)] text-sm mt-1">{w.step2.body}</p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {LANGUAGES.map(([id, label, desc]) => (
               <button key={id} onClick={() => { p.setWizLang(id); p.setWizStep(3); }}
-                className={`text-left bg-[#1a1a1a] border rounded-xl p-4 hover:border-[#666] transition-colors ${p.wizLang === id ? 'border-white' : 'border-[#333]'}`}>
-                <div className="text-white text-sm">{label}</div>
-                <div className="text-xs text-[#666] mt-1">{desc}</div>
+                className={`text-left bg-[var(--theme-bg-secondary)] border rounded-xl p-4 hover:border-[var(--theme-text-dim)] transition-colors ${p.wizLang === id ? 'border-white' : 'border-[var(--theme-border)]'}`}>
+                <div className="text-[var(--theme-accent)] text-sm">{label}</div>
+                <div className="text-xs text-[var(--theme-text-dim)] mt-1">{desc}</div>
               </button>
             ))}
           </div>
@@ -1501,25 +1502,25 @@ function WizardTab(p) {
         return (
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg text-white">{w.step3.title}</h2>
-              <p className="text-[#a0a0a0] text-sm mt-1">{w.step3.body}</p>
+              <h2 className="text-lg text-[var(--theme-accent)]">{w.step3.title}</h2>
+              <p className="text-[var(--theme-text-muted)] text-sm mt-1">{w.step3.body}</p>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-4 text-sm space-y-2">
+            <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-xl p-4 text-sm space-y-2">
               <div className="flex justify-between gap-3">
-                <span className="text-[#666]">{w.step3.appLabel}</span>
-                <span className="text-white">{selectedApp?.name}</span>
+                <span className="text-[var(--theme-text-dim)]">{w.step3.appLabel}</span>
+                <span className="text-[var(--theme-accent)]">{selectedApp?.name}</span>
               </div>
               <div className="flex justify-between gap-3">
-                <span className="text-[#666]">{strings.dev.apps.redirectsLabel}</span>
-                <span className="text-[#a0a0a0] break-all text-right">{redirectUri}</span>
+                <span className="text-[var(--theme-text-dim)]">{strings.dev.apps.redirectsLabel}</span>
+                <span className="text-[var(--theme-text-muted)] break-all text-right">{redirectUri}</span>
               </div>
               <div className="flex justify-between gap-3">
-                <span className="text-[#666]">{strings.dev.apps.scopesLabel}</span>
-                <span className="text-[#a0a0a0] break-all text-right">{scopeStr}</span>
+                <span className="text-[var(--theme-text-dim)]">{strings.dev.apps.scopesLabel}</span>
+                <span className="text-[var(--theme-text-muted)] break-all text-right">{scopeStr}</span>
               </div>
             </div>
             <CodeBlock code={code} />
-            <p className="text-[#666] text-xs">{w.step3.note}</p>
+            <p className="text-[var(--theme-text-dim)] text-xs">{w.step3.note}</p>
           </div>
         );
       })()}

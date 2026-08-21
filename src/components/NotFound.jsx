@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { strings } from '../strings';
+import { ErrorPage } from './ErrorPage';
 
 export function NotFound() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    // Get the current pathname
-    const pathname = window.location.pathname;
+    // Show the address the way the user typed it: an un-decoded pathname turns
+    // a stray non-ascii character into noise like "/%C4%B1ahskjdhs".
+    let pathname = window.location.pathname;
+    try { pathname = decodeURIComponent(pathname); } catch (e) { /* keep raw */ }
 
     // Pick a random message from the array
     const messages = strings.notFound.messages;
@@ -22,19 +25,11 @@ export function NotFound() {
   };
 
   return (
-    <div className="h-screen bg-[#111111] text-[#a0a0a0] font-mono selection:bg-[#333333] selection:text-white flex items-center justify-center p-4">
-      <div className="max-w-md w-full text-center">
-        <div className="text-6xl md:text-8xl text-[#333] mb-8 font-light">404</div>
-        <p className="text-lg md:text-xl text-[#808080] mb-8 leading-relaxed">
-          {message}
-        </p>
-        <button
-          onClick={handleBackHome}
-          className="bg-[#1a1a1a] border border-[#333] text-white px-8 py-3 rounded hover:bg-[#222] hover:border-[#444] transition-all text-sm"
-        >
-          {strings.notFound.button}
-        </button>
-      </div>
-    </div>
+    <ErrorPage
+      code="404"
+      message={message}
+      buttonLabel={strings.notFound.button}
+      onButtonClick={handleBackHome}
+    />
   );
 }

@@ -6,6 +6,7 @@ import { AuthModal } from './components/AuthModal';
 import { Account } from './components/Account';
 import { ManageSubscription } from './components/ManageSubscription';
 import { NotFound } from './components/NotFound';
+import { WhatsNewModal } from './components/WhatsNewModal';
 import { CommandPalette } from './components/CommandPalette';
 import { CliPair } from './components/CliPair';
 import { Cli } from './components/Cli';
@@ -28,6 +29,10 @@ import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 
+// Carries the release it announces, so a future version announces itself by
+// bumping this one constant.
+const WHATS_NEW_SEEN_KEY = 'justtype-whats-new-seen-v4';
+
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
   // Token state is now just a marker - actual auth is via HttpOnly cookie
@@ -42,6 +47,7 @@ export default function App() {
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
   const [emailVerified, setEmailVerified] = useState(localStorage.getItem('justtype-email-verified') === 'true');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showWhatsNewModal, setShowWhatsNewModal] = useState(false);
   const [resumeVerifyEmail, setResumeVerifyEmail] = useState(null);
   // OAuth login gate: when a logged-out user is sent to /login?gate=... from an
   // OAuth authorize request, we open the auth modal and bounce back to consent
@@ -85,6 +91,27 @@ export default function App() {
     const themeToApply = themeExists(savedTheme) ? savedTheme : 'light';
     applyThemeVariables(themeToApply);
   }, []);
+
+  // First open on v4 for someone who already had an account: say what changed,
+  // once. Signed-in only (there is nothing to announce to a visitor who has
+  // never used the old version), writer view only (so it never lands on top of
+  // /join, /verify or an auth flow), and recorded per browser.
+  useEffect(() => {
+    if (!token || token === 'checking') return;
+    if (view !== 'writer') return;
+    try {
+      if (localStorage.getItem(WHATS_NEW_SEEN_KEY)) return;
+    } catch (e) {
+      return; // storage unavailable: never nag, since we could not remember
+    }
+    const t = setTimeout(() => setShowWhatsNewModal(true), 700);
+    return () => clearTimeout(t);
+  }, [token, view]);
+
+  const dismissWhatsNew = () => {
+    try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+    setShowWhatsNewModal(false);
+  };
 
   // Drop box: once the user is unlocked (master key present in IndexedDB), make
   // sure they have a published keypair so apps can drop encrypted slates to them,
@@ -625,6 +652,11 @@ export default function App() {
 
     // Show recovery key modal if provided (new signup or migration)
     if (authData.recoveryPhrase) {
+      // A fresh signup has no "before" to compare against, so the v4
+      // announcement would be meaningless noise on their very first slate.
+      if (authData.isNewUser) {
+        try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+      }
       setPendingRecoveryPhrase(authData.recoveryPhrase);
     } else {
       // Check if recovery key was never shown (previous migration)
@@ -710,6 +742,17 @@ export default function App() {
     setView('writer');
     setZenMode(false); // Reset zen mode when switching slates
     window.history.pushState({}, '', `/slate/${slate.slate_number}`);
+  };
+
+  const handleOpenAsNewSlate = async (text) => {
+    // If the current slate would prompt a republish, let the normal flow own
+    // that decision rather than silently seeding content into the wrong slate.
+    if (writerRef.current?.needsRepublish?.()) {
+      handleNewSlate();
+      return;
+    }
+    await handleNewSlate();
+    setTimeout(() => writerRef.current?.setContent?.(text), 0);
   };
 
   const handleNewSlate = async () => {
@@ -875,6 +918,18 @@ export default function App() {
       case 'SHARE':
         if (writerRef.current) {
           writerRef.current.openPublishMenu?.();
+        }
+        break;
+
+      case 'COLLAB':
+        if (writerRef.current) {
+          writerRef.current.openCollab?.();
+        }
+        break;
+
+      case 'HISTORY':
+        if (writerRef.current) {
+          writerRef.current.openHistory?.();
         }
         break;
 
@@ -1229,6 +1284,7 @@ export default function App() {
             onLogin={() => setShowAuthModal(true)}
             onZenModeChange={setZenMode}
             onOpenAuthModal={() => setShowAuthModal(true)}
+            onOpenAsNewSlate={handleOpenAsNewSlate}
           />
         )}
         {view === 'slates' && (
@@ -1258,6 +1314,7 @@ export default function App() {
             onZenModeChange={setZenMode}
             onOpenAuthModal={() => setShowAuthModal(true)}
             sharedSlateId={sharedSlateId}
+            onOpenAsNewSlate={handleOpenAsNewSlate}
           />
         )}
         {view === 'account' && (
@@ -1621,6 +1678,17 @@ export default function App() {
         />
       )}
 
+      {showWhatsNewModal && (
+        <WhatsNewModal
+          onClose={dismissWhatsNew}
+          onTakeTour={() => {
+            dismissWhatsNew();
+            window.history.pushState({}, '', '/whats-new');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+        />
+      )}
+
       {/* Command Palette */}
       <CommandPalette
         isOpen={showCommandPalette}
@@ -1628,7 +1696,8 @@ export default function App() {
         context={{
           view,
           token,
-          currentSlate
+          currentSlate,
+          isCollab: !!(currentSlate?.is_collab || sharedSlateId)
         }}
         onExecute={handleCommandExecute}
       />

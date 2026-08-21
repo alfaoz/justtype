@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { PageHeader } from './PageHeader';
 import { strings } from '../strings';
 import { API_URL } from '../config';
 
@@ -70,11 +71,7 @@ export function Status() {
 
   return (
     <div className="min-h-screen font-mono flex flex-col" style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text-muted)' }}>
-      <header className="p-8 border-b" style={{ borderColor: 'var(--theme-border-light)' }}>
-        <a href="/" className="text-lg md:text-xl font-medium transition-colors" style={{ color: 'var(--theme-text-dim)' }} onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-accent)'} onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}>
-          + just type
-        </a>
-      </header>
+      <PageHeader label="status" />
 
       <main className="max-w-2xl mx-auto p-4 md:p-8 flex-grow w-full">
         <h1 className="text-xl mb-2" style={{ color: 'var(--theme-accent)' }}>{s.title}</h1>

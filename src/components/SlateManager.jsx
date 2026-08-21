@@ -909,7 +909,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     </span>
                   )}
                   {!!slate.is_collab && (
-                    <span className="text-xs px-2 py-0.5 rounded border text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
+                    <span className="text-xs px-2 py-0.5 rounded border text-violet-400 border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
                       {strings.collab.badge}
                     </span>
                   )}
@@ -1069,7 +1069,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     </span>
                   )}
                   {!!slate.is_collab && (
-                    <span className="text-xs px-2 py-0.5 rounded border text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
+                    <span className="text-xs px-2 py-0.5 rounded border text-violet-400 border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
                       {strings.collab.badge}
                     </span>
                   )}

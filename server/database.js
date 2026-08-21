@@ -1061,10 +1061,16 @@ try {
       b2_file_id TEXT NOT NULL,
       author_id INTEGER,
       created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      label TEXT,
       UNIQUE (slate_id, epoch, version)
     );
     CREATE INDEX IF NOT EXISTS idx_collab_checkpoints_slate ON collab_checkpoints(slate_id, created_at);
   `);
+  // `label` names a version and pins it: labelled checkpoints are exempt from
+  // MAX_CHECKPOINTS pruning. Added after the table shipped, so guard the ALTER.
+  try {
+    db.exec('ALTER TABLE collab_checkpoints ADD COLUMN label TEXT');
+  } catch (e) { /* column already present */ }
   console.log('✓ Collab checkpoints table initialized');
 } catch (err) {
   console.error('Database migration error:', err);

@@ -74,6 +74,33 @@ export const commands = {
     action: 'SHARE',
     cli: 'justtype share'
   },
+  collab: {
+    id: 'collab',
+    aliases: ['share with', 'invite', 'people', 'collaborate'],
+    title: 'collab',
+    description: 'start or manage collaboration on this slate',
+    icon: '&',
+    category: 'actions',
+    shortcut: null,
+    context: ['writer'],
+    requiresAuth: true,
+    action: 'COLLAB',
+    cli: 'justtype collab'
+  },
+  history: {
+    id: 'history',
+    aliases: ['version history', 'versions', 'checkpoints'],
+    title: 'history',
+    description: 'browse and restore earlier versions',
+    icon: '~',
+    category: 'actions',
+    shortcut: null,
+    context: ['writer'],
+    requiresAuth: true,
+    requiresCollab: true,
+    action: 'HISTORY',
+    cli: 'justtype history'
+  },
   export: {
     id: 'export',
     aliases: ['download', 'save as', 'v'],
@@ -278,6 +305,9 @@ export function searchCommands(query, context = {}) {
 
     // Check slate requirement
     if (cmd.requiresSlate && !context.currentSlate) return false;
+
+    // Collab-only commands (version history) stay hidden on ordinary slates
+    if (cmd.requiresCollab && !context.isCollab) return false;
 
     return true;
   });

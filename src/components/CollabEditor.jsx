@@ -12,6 +12,7 @@ import { strings } from '../strings';
 import { wrapKey, unwrapKey } from '../crypto';
 import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates, requestCollabJoin } from '../collabSync';
 import { API_URL } from '../config';
+import { colorFor } from '../collabColors';
 
 // Collaborative editor surface for a shared slate. Owns the whole Yjs
 // lifecycle so callers stay simple: build the Y.Doc from the encrypted
@@ -35,17 +36,6 @@ const SNAPSHOT_EVERY = 64;
 // checkpoints at a human cadence even when the log grows slowly.
 const CHECKPOINT_MS = 5 * 60 * 1000;
 
-// Caret colors per user, picked by username hash: [solid, translucent]
-const CURSOR_COLORS = [
-  ['#4a9eff', '#4a9eff44'], ['#b478f0', '#b478f044'], ['#3ecf8e', '#3ecf8e44'],
-  ['#f0a848', '#f0a84844'], ['#f06878', '#f0687844'], ['#48c8d8', '#48c8d844'],
-  ['#d8b448', '#d8b44844'], ['#78b0f0', '#78b0f044'],
-];
-const colorFor = (name) => {
-  let h = 0;
-  for (const ch of String(name || '')) h = (h * 31 + ch.codePointAt(0)) >>> 0;
-  return CURSOR_COLORS[h % CURSOR_COLORS.length];
-};
 
 const bytesToBase64 = (bytes) => {
   let bin = '';

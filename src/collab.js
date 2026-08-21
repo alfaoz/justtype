@@ -229,6 +229,10 @@ export function fetchCheckpoints(slateId) {
   return api(`/collab/slates/${slateId}/checkpoints`);
 }
 
+export function labelCheckpoint(slateId, checkpointId, label) {
+  return api(`/collab/slates/${slateId}/checkpoints/${checkpointId}`, { method: 'PATCH', body: { label } });
+}
+
 export async function fetchCheckpointState(slateId, checkpointId, docKey) {
   const data = await api(`/collab/slates/${slateId}/checkpoints/${checkpointId}`);
   return unwrapKey(data.payload, docKey); // raw Y.Doc update bytes

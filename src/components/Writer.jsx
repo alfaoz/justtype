@@ -5,18 +5,146 @@ import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
-import { CollabShareModal } from './CollabShareModal';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
+import { useEscape } from '../useEscape';
 
-// Rich (live preview) editor loads on demand so plain-mode writers never pay for it
-const TiptapEditor = React.lazy(() => import('./LivePreviewEditor'));
+// The rich editor and the collab editor are separate chunks: they are
+// content-hashed, so a deploy that only touches app code leaves the ~500 kB of
+// CodeMirror sitting in the browser cache untouched. Each is fetched exactly
+// once per page load, whoever asks first.
+let editorChunk = null;
+const loadEditorChunk = () => (editorChunk ||= import('./LivePreviewEditor'));
+let collabChunk = null;
+const loadCollabChunk = () => (collabChunk ||= import('./CollabEditor'));
+
+// Whether this visitor is likely to open a rich editor at all. Signed-in users
+// may have rich slates waiting; anyone whose local draft is rich certainly
+// does. For a first-time anonymous visitor (plain textarea, no slates) there is
+// nothing to preload, so they are not charged for it.
+const richEditorLikely = () => {
+  try {
+    return localStorage.getItem('justtype-draft-mode') === 'wysiwyg'
+      || !!localStorage.getItem('justtype-username');
+  } catch (e) {
+    return false;
+  }
+};
+
+// Timing is the whole point. A rich slate renders its editor the moment the
+// slate metadata lands, which is a network round trip after boot; starting the
+// chunk here (module parse, i.e. before that request even goes out) means it has
+// normally resolved by then, React.lazy renders synchronously, and the
+// "loading rich editor..." fallback never paints. The old code warmed these from
+// requestIdleCallback, which routinely lost that race.
+if (typeof window !== 'undefined') {
+  if (richEditorLikely()) {
+    loadEditorChunk();
+    loadCollabChunk();
+  } else if ('requestIdleCallback' in window) {
+    requestIdleCallback(() => loadEditorChunk(), { timeout: 5000 });
+  }
+}
+
+const TiptapEditor = React.lazy(() => loadEditorChunk());
 // Collaborative editor (yjs + remote carets) — its own on-demand chunk
-const CollabEditorLazy = React.lazy(() => import('./CollabEditor'));
-// Version history browser (also carries yjs) — loaded only when opened
-const CollabHistoryLazy = React.lazy(() => import('./CollabHistoryModal'));
+const CollabEditorLazy = React.lazy(() => loadCollabChunk());
+// Collab side panel (people + version history; carries yjs) — on demand, and
+// rare enough that it is never prefetched.
+const CollabPanelLazy = React.lazy(() => import('./CollabPanel'));
+
+/** A link inside the about card: white, and always a new tab so the modal (and
+ *  whatever is unsaved behind it) is never navigated away from. */
+function AboutLink({ href, children }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-[var(--theme-accent)] hover:underline underline-offset-2 transition-colors"
+    >
+      {children}
+    </a>
+  );
+}
+
+/**
+ * A horizontally scrolling row with its own scroll indicator.
+ *
+ * Native scrollbars are invisible on iOS and auto-hiding elsewhere, so a row
+ * that continues past the edge looks like a row that simply got cut off. This
+ * draws a thumb whose width is the visible fraction and whose position tracks
+ * scrollLeft, which is the same technique the desktop settings strip uses.
+ */
+function ScrollRow({ children, className = '' }) {
+  const ref = useRef(null);
+  const [bar, setBar] = useState(null); // { width, left } as percentages, or null when it all fits
+
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const { scrollWidth, clientWidth, scrollLeft } = el;
+    if (scrollWidth <= clientWidth + 1) {
+      setBar((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const width = Math.max(14, (clientWidth / scrollWidth) * 100);
+    const left = (scrollLeft / (scrollWidth - clientWidth)) * (100 - width);
+    setBar((prev) =>
+      prev && Math.abs(prev.left - left) < 0.5 && Math.abs(prev.width - width) < 0.5 ? prev : { width, left }
+    );
+  }, []);
+
+  useEffect(() => {
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [measure]);
+
+  return (
+    <div className={className}>
+      <div ref={ref} onScroll={measure} className="flex gap-2 overflow-x-auto settings-strip">
+        {children}
+      </div>
+      <div className="h-[3px] mt-2 rounded-full bg-[var(--theme-border)]/40 overflow-hidden" style={{ opacity: bar ? 1 : 0 }}>
+        <div
+          className="h-full rounded-full bg-[var(--theme-text-dim)] transition-[margin] duration-75"
+          style={{ width: `${bar ? bar.width : 0}%`, marginLeft: `${bar ? bar.left : 0}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** A labelled row in the mobile sheet: full-width target, optional right-hand value. */
+function SheetRow({ label, value, accent, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full h-12 px-4 bg-[var(--theme-bg)] active:bg-[var(--theme-bg-tertiary)] transition-colors flex items-center justify-between text-left text-sm"
+    >
+      <span className="text-[var(--theme-text)]">{label}</span>
+      {value && <span className={accent || 'text-[var(--theme-text-dim)]'}>{value}</span>}
+    </button>
+  );
+}
+
+/**
+ * Placeholder for a rich editor chunk that has not resolved yet. It renders the
+ * document as plain text with the editor's own padding, width and type scale, so
+ * when the real editor mounts the words do not move. Beats a spinner: on a fast
+ * connection this is never seen at all, and on a slow one the user can already
+ * read their slate.
+ */
+function EditorSkeleton({ text, punto }) {
+  return (
+    <div className={`w-full max-w-3xl p-8 leading-relaxed whitespace-pre-wrap punto-${punto}`}>
+      {text || ''}
+    </div>
+  );
+}
 
 // Live re-sync (push): re-wrap the just-saved plaintext to every app that should
 // hold a copy of this slate — apps with an explicit grant AND apps the user gave
@@ -83,8 +211,12 @@ async function pullAppEdits(slateNumber, masterKey) {
   }
 }
 
-export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null }, ref) => {
+export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null, onOpenAsNewSlate }, ref) => {
   const [content, setContent] = useState('');
+  // Mirrors `content` for effects that must see the value as of *now* rather
+  // than as of the render they closed over (see the slate-load effect below).
+  const contentRef = useRef('');
+  contentRef.current = content;
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('ready');
   const [zenMode, setZenMode] = useState(false);
@@ -96,6 +228,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const [editorMode, setEditorModeState] = useState('plain'); // 'plain' | 'wysiwyg' — a per-document setting
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  // Drag-to-dismiss for the mobile sheet: how far it has been pulled down, and
+  // whether a finger is currently on it (which turns the snap transition off so
+  // the sheet tracks the finger exactly).
+  const [sheetDrag, setSheetDrag] = useState({ y: 0, dragging: false });
+  const sheetDragRef = useRef({ startY: 0, y: 0, dragging: false });
+  // pointerup is followed by a click; a drag that snapped back must not also
+  // register as a tap on the handle (which would close the sheet anyway).
+  const sheetTapSuppressed = useRef(false);
+  // Swipe-up-to-open on the collapsed pill, so the sheet answers the same
+  // gesture that dismisses it.
+  const triggerSwipeRef = useRef({ startY: 0, active: false });
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishModalUrl, setPublishModalUrl] = useState('');
@@ -118,8 +261,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // the collab editor, and to re-run the shared load after a rotation.
   const [collabKeyGen, setCollabKeyGen] = useState(0);
   const [collabReloadKey, setCollabReloadKey] = useState(0);
-  const [showCollabModal, setShowCollabModal] = useState(false);
-  const [showCollabHistory, setShowCollabHistory] = useState(false);
+  // null | 'people' | 'history' — the collab side panel and which tab it shows
+  const [collabPanel, setCollabPanel] = useState(null);
   // Live handle into the collab editor ({ replaceText }) for history restores
   const collabApiRef = useRef(null);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
@@ -154,7 +297,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [mobileTab, setMobileTab] = useState('write'); // 'write' | 'settings' | 'more'
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   const themeFileInputRef = useRef(null);
@@ -241,6 +383,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           const draft = JSON.parse(savedDraft);
           if (draft.content && draft.content.trim()) {
             setContent(draft.content);
+            contentRef.current = draft.content;
             if (draft.title) setTitle(draft.title);
             draftRestoredRef.current = true;
             setHasUnsavedChanges(true);
@@ -362,9 +505,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (currentSlate && token) {
       setIsLoading(true);
       loadSlate(currentSlate.slate_number);
-    } else if (!currentSlate && !content.trim()) {
+    } else if (!currentSlate && !contentRef.current.trim()) {
       // Only clear content if there's no current slate AND no content
-      // This prevents clearing user's work when they log in after writing
+      // This prevents clearing user's work when they log in after writing,
+      // and (via the ref) a restored local draft from being wiped by this
+      // effect running later in the same commit.
       setContent('');
       setTitle('');
       setHasUnsavedChanges(false);
@@ -1012,12 +1157,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setEditorModeState(localStorage.getItem('justtype-draft-mode') === 'wysiwyg' ? 'wysiwyg' : 'plain');
       setCollabDocKey(null);
       setCollabSlateDbId(null);
-      setShowCollabModal(false);
+      setCollabPanel(null);
     },
     // Command palette methods
     saveSlate: () => saveSlate(),
     toggleEditorMode: () => toggleEditorMode(),
     openPublishMenu: () => setShowPublishMenu(true),
+    openCollab: () => openCollab(),
+    openHistory: () => setCollabPanel('history'),
     exportAs: (format) => {
       switch (format) {
         case 'txt': exportToTxt(); break;
@@ -1029,6 +1176,104 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setTheme: (themeId) => setTheme(themeId),
     setFocusMode: (mode) => setFocusMode(mode)
   }));
+
+  // The sheet's grab handle behaves like a native one: it follows the finger
+  // down, snaps back if you let go early, and dismisses past a third of its
+  // height. Upward drags are clamped so it cannot be pulled off the top.
+  const SHEET_DISMISS_PX = 90;
+  const beginSheetDrag = (e) => {
+    sheetDragRef.current = { startY: e.clientY, y: 0, dragging: true };
+    setSheetDrag({ y: 0, dragging: true });
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const moveSheetDrag = (e) => {
+    if (!sheetDragRef.current.dragging) return;
+    const raw = e.clientY - sheetDragRef.current.startY;
+    // Downward the sheet tracks the finger exactly. Upward there is nothing to
+    // reveal, so it resists: a damped, capped rubber band that springs back.
+    const y = raw >= 0 ? raw : Math.max(-56, raw * 0.35);
+    sheetDragRef.current.y = y;
+    setSheetDrag({ y, dragging: true });
+  };
+  const endSheetDrag = () => {
+    if (!sheetDragRef.current.dragging) return;
+    const travelled = sheetDragRef.current.y;
+    sheetDragRef.current.dragging = false;
+    sheetTapSuppressed.current = Math.abs(travelled) > 4;
+    setSheetDrag({ y: 0, dragging: false });
+    if (travelled > SHEET_DISMISS_PX) setShowMobileMenu(false);
+  };
+
+  const openSheet = () => {
+    setSheetDrag({ y: 0, dragging: false });
+    setShowMobileMenu(true);
+  };
+  const beginTriggerSwipe = (e) => {
+    triggerSwipeRef.current = { startY: e.clientY, active: true };
+  };
+  const moveTriggerSwipe = (e) => {
+    if (!triggerSwipeRef.current.active) return;
+    if (triggerSwipeRef.current.startY - e.clientY > 24) {
+      triggerSwipeRef.current.active = false;
+      openSheet();
+    }
+  };
+  const endTriggerSwipe = () => {
+    triggerSwipeRef.current.active = false;
+  };
+
+  const closeAbout = () => withViewTransition(() => setShowAboutModal(false));
+  // Escape closes whatever overlay is on top. The hook keeps a stack, so a
+  // confirm layered over the collab panel dismisses only itself.
+  useEscape(showAboutModal, closeAbout);
+  useEscape(showDonateModal, () => withViewTransition(() => setShowDonateModal(false)));
+  useEscape(showPublishModal, () => withViewTransition(() => { setShowPublishModal(false); setLinkCopied(false); }));
+  useEscape(showAlreadySubscribedModal, () => setShowAlreadySubscribedModal(false));
+  useEscape(showExportMenu, () => setShowExportMenu(false));
+  useEscape(showMobileMenu, () => setShowMobileMenu(false));
+  useEscape(showPublishMenu, () => setShowPublishMenu(false));
+
+  // Subscribing from the about card: bounce anonymous users to sign-in, and
+  // send existing quarterly supporters to the "you already have this" card
+  // rather than a second checkout.
+  const handleSubscribeClick = async () => {
+    if (!token) {
+      setShowAboutModal(false);
+      onOpenAuthModal();
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/account/storage`, { credentials: 'include' });
+      const data = await response.json();
+      if (response.ok && data.supporterTier === 'quarterly') {
+        setShowAboutModal(false);
+        setShowAlreadySubscribedModal(true);
+        return;
+      }
+    } catch (err) {
+      console.error('Failed to check subscription:', err);
+    }
+    handleStripeCheckout('quarterly');
+  };
+
+  // Opening collab on a slate that was never saved: the slate has to exist
+  // server-side before anyone can be invited to it, so save it first and only
+  // then open the panel. Shared slates already exist by definition.
+  async function openCollab(tab = 'people') {
+    if (!token) { onLogin(); return; }
+    if (!currentSlate && !isShared) {
+      if (!content.trim()) {
+        // saveSlate() refuses an empty slate and returns null, which would look
+        // like the button doing nothing at all.
+        setStatus(strings.collab.needsContent);
+        setTimeout(() => setStatus('ready'), 2500);
+        return;
+      }
+      const saved = await saveSlate();
+      if (!saved) return;
+    }
+    setCollabPanel(tab);
+  }
 
   const saveSlate = async () => {
     if (isShared) return null; // shared slates persist through the collab relay
@@ -1157,6 +1402,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       onLogin();
       return;
     }
+
+    // Collab slates cannot be made public yet. Every UI path is greyed out;
+    // this is the backstop for the command palette and any future caller.
+    // Scoped to the FIRST publish so a slate that was public before it became
+    // collaborative can still sync or unpublish its existing copy.
+    if (collabDocKey && !shareUrl && !wasPublishedBeforeEdit) return;
 
     // If no current slate, save first
     // If there are unsaved changes, save first (but keep using currentSlate for the ID)
@@ -1513,18 +1764,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         </div>
       )}
 
-      {/* WRITING AREA */}
-      <main key={contentFadeKey} className={`flex-grow flex justify-center w-full bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
+      {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
+          instead of covering the text you are comparing against) */}
+      <div className="flex-grow flex min-h-0 w-full">
+      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
         {collabDocKey && collabSlateDbId ? (
           // Collaborative slate: one live CM6 surface for BOTH modes (remote
           // carets need it); `editorMode` only toggles the live preview.
-          <React.Suspense
-            fallback={
-              <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
-                {strings.writer.editorMode.loading}
-              </div>
-            }
-          >
+          <React.Suspense fallback={<EditorSkeleton text={loadedContentRef.current} punto={punto} />}>
             <CollabEditorLazy
               key={`ce-${collabSlateDbId}-${collabKeyGen}`}
               slateId={collabSlateDbId}
@@ -1541,13 +1788,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             />
           </React.Suspense>
         ) : editorMode === 'wysiwyg' ? (
-          <React.Suspense
-            fallback={
-              <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
-                {strings.writer.editorMode.loading}
-              </div>
-            }
-          >
+          <React.Suspense fallback={<EditorSkeleton text={content} punto={punto} />}>
             <TiptapEditor
               content={content}
               onChange={setContent}
@@ -1566,6 +1807,54 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           />
         )}
       </main>
+
+      {collabPanel && (currentSlate || isShared) && (
+        <React.Suspense fallback={null}>
+          <CollabPanelLazy
+            tab={collabPanel}
+            onTabChange={setCollabPanel}
+            onClose={() => setCollabPanel(null)}
+            canHistory={!!(collabDocKey && collabSlateDbId)}
+            slateId={collabSlateDbId}
+            docKey={collabDocKey}
+            currentText={content}
+            onRestore={(text) => {
+              if (collabApiRef.current) collabApiRef.current.replaceText(text);
+              setCollabPanel(null);
+            }}
+            onOpenAsNewSlate={(text) => {
+              setCollabPanel(null);
+              if (onOpenAsNewSlate) onOpenAsNewSlate(text);
+            }}
+            shareProps={{
+              slateNumber: currentSlate ? currentSlate.slate_number : null,
+              userId,
+              username: localStorage.getItem('justtype-username'),
+              docKey: collabDocKey,
+              memberView: isShared,
+              sharedSlateId,
+              onLeave: () => {
+                setCollabPanel(null);
+                window.history.pushState({}, '', '/slates');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              },
+              getCurrent: () => ({
+                content,
+                title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
+              }),
+              onDocKeyChange: (key, slateDbId) => {
+                loadedContentRef.current = content;
+                setCollabDocKey(key);
+                setCollabKeyGen((g) => g + 1);
+                // undefined = key rotation, same slate; null = collab disabled
+                setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
+              },
+              onClose: () => setCollabPanel(null),
+            }}
+          />
+        </React.Suspense>
+      )}
+      </div>
 
       {/* DESKTOP FOOTER */}
       <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
@@ -1753,13 +2042,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 >
                   {strings.writer.editorMode.label(editorMode)}
                 </button>
-                {token && (currentSlate || isShared) && (
+                {token && (
                   <>
                     <span className="opacity-30">·</span>
                     <button
-                      onClick={() => setShowCollabModal(true)}
+                      onClick={() => openCollab('people')}
                       className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                      style={{ color: 'var(--theme-accent)' }}
+                      style={{ color: collabDocKey ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
                     >
                       {strings.collab.menuButton}
                     </button>
@@ -1769,7 +2058,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   <>
                     <span className="opacity-30">·</span>
                     <button
-                      onClick={() => setShowCollabHistory(true)}
+                      onClick={() => setCollabPanel('history')}
                       className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
                       style={{ color: 'var(--theme-accent)' }}
                     >
@@ -1794,12 +2083,25 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                           style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
                         >
                           {!shareUrl && !wasPublishedBeforeEdit && (
-                            <button
-                              onClick={handlePublish}
-                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                            >
-                              make public
-                            </button>
+                            collabDocKey ? (
+                              // Collab slates cannot be published yet. Greyed and
+                              // inert; the label swaps on hover instead of a
+                              // native tooltip, matching the inline `sure?` style.
+                              <div
+                                className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
+                                title={strings.writer.collabState.publishBlockedHint}
+                              >
+                                <span className="group-hover:hidden">make public</span>
+                                <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={handlePublish}
+                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+                              >
+                                make public
+                              </button>
+                            )
                           )}
                           {shareUrl && (
                             <>
@@ -1922,11 +2224,28 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 )}
 
+                {/* Collab slate (owner): mirrors the `public` chip, one click
+                    to manage people. Both can show at once on a slate that was
+                    published before it became collaborative. */}
+                {!isShared && collabDocKey && (
+                  <button
+                    onClick={() => setCollabPanel('people')}
+                    className="text-sm text-violet-400 hover:text-white transition-colors duration-200"
+                    title={strings.writer.collabState.hint}
+                  >
+                    {strings.writer.collabState.label}
+                  </button>
+                )}
+
                 {/* Shared slate: who owns it, and whether we lost access */}
                 {isShared && sharedBy && !sharedRemoved && (
-                  <span className="text-sm text-[var(--theme-text-dim)]">
+                  <button
+                    onClick={() => setCollabPanel('people')}
+                    className="text-sm text-[var(--theme-text-dim)] hover:text-white transition-colors duration-200"
+                    title={strings.writer.collabState.sharedHint}
+                  >
                     {strings.collab.viewer.sharedBy(sharedBy)}
-                  </span>
+                  </button>
                 )}
                 {isShared && sharedRemoved && (
                   <span className="text-sm" style={{ color: 'var(--theme-red)' }}>
@@ -1990,368 +2309,323 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         </div>
       </footer>
 
-      {/* MOBILE FLOATING MENU BUTTON */}
+      {/* MOBILE TRIGGER
+          Was an anonymous three-dot circle. It is a pill now: it carries the
+          live word count, so the one number a writer wants on a phone is
+          visible without opening anything, and the target is far easier to hit
+          than a 24px glyph. Falls back to a plain menu glyph when the counter
+          is switched off. */}
       <button
-        onClick={() => setShowMobileMenu(!showMobileMenu)}
-        className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-[var(--theme-bg-tertiary)] border border-[var(--theme-border)] rounded-full flex items-center justify-center hover:bg-[var(--theme-bg-tertiary)] transition-all duration-300 shadow-2xl z-50"
+        onClick={openSheet}
+        onPointerDown={beginTriggerSwipe}
+        onPointerMove={moveTriggerSwipe}
+        onPointerUp={endTriggerSwipe}
+        onPointerCancel={endTriggerSwipe}
+        aria-label={strings.writer.mobile.open}
+        className={`md:hidden fixed right-4 z-40 flex items-center gap-2 h-11 px-4 rounded-full bg-[var(--theme-bg-secondary)]/90 backdrop-blur border border-[var(--theme-border)] text-[var(--theme-text-muted)] shadow-lg active:scale-95 transition-all duration-200 touch-none ${
+          showMobileMenu ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+        style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
       >
-        <svg className="w-6 h-6 text-[var(--theme-text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+        {showCounter && (
+          <span className="text-sm tabular-nums">{strings.writer.mobile.words(wordCount)}</span>
+        )}
+        {hasUnsavedChanges && token && (
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-400" aria-hidden="true" />
+        )}
+        <svg className="w-4 h-4 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
         </svg>
       </button>
 
-      {/* MOBILE BOTTOM SHEET - Tabbed Design */}
+      {/* MOBILE SHEET
+          One scrollable sheet instead of three tabs. The toggles at the top are
+          chips that flip in place without closing the sheet, so changing font
+          size is one tap rather than open -> tab -> row. */}
       {showMobileMenu && (
         <>
           <div
-            className="md:hidden fixed inset-0 bg-black/30 backdrop-blur-sm z-40"
+            className="md:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 animate-modal-overlay"
             onClick={() => setShowMobileMenu(false)}
           />
-          <div className="md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[60vh] flex flex-col">
-            {/* Tab Bar */}
-            <div className="flex border-b border-[var(--theme-border)] px-2 pt-3">
-              {['write', 'settings', 'more'].map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setMobileTab(tab)}
-                  className={`flex-1 py-2 text-sm transition-colors ${
-                    mobileTab === tab
-                      ? 'text-white border-b-2 border-white -mb-[1px]'
-                      : 'text-[var(--theme-text-dim)]'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
+          <div
+            className={`md:hidden fixed bottom-0 left-0 right-0 bg-[var(--theme-bg-secondary)] border-t border-[var(--theme-border)] rounded-t-2xl z-50 max-h-[80vh] flex flex-col ${
+              sheetDrag.dragging ? '' : 'animate-[sheetUp_0.26s_cubic-bezier(0.16,1,0.3,1)]'
+            }`}
+            style={{
+              transform: sheetDrag.y ? `translateY(${sheetDrag.y}px)` : undefined,
+              transition: sheetDrag.dragging ? 'none' : 'transform 0.24s cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+          >
+            {/* grab handle: drag it down to dismiss, or just tap it */}
+            <button
+              onClick={() => {
+                if (sheetTapSuppressed.current) { sheetTapSuppressed.current = false; return; }
+                setShowMobileMenu(false);
+              }}
+              onPointerDown={beginSheetDrag}
+              onPointerMove={moveSheetDrag}
+              onPointerUp={endSheetDrag}
+              onPointerCancel={endSheetDrag}
+              aria-label={strings.writer.mobile.close}
+              className="w-full pt-3 pb-3 flex justify-center shrink-0 cursor-grab active:cursor-grabbing touch-none"
+            >
+              <span className="block w-10 h-1 rounded-full bg-[var(--theme-text-dim)]" />
+            </button>
 
-            {/* Tab Content */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {/* Write Tab */}
-              {mobileTab === 'write' && (
-                <div className="flex flex-col gap-4">
-                  {/* Stats */}
-                  {showCounter && (
-                    <div className="flex gap-4 text-sm">
-                      <div className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg text-center">
-                        <div className="text-xl font-medium text-white">{wordCount}</div>
-                        <div className="text-xs text-[var(--theme-text-dim)]">words</div>
-                      </div>
-                      <div className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg text-center">
-                        <div className="text-xl font-medium text-white">{charCount}</div>
-                        <div className="text-xs text-[var(--theme-text-dim)]">chars</div>
-                      </div>
-                    </div>
-                  )}
+            <div
+              className="flex-1 overflow-y-auto sheet-scroll px-4 pb-4"
+              style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+            >
+              {/* counters */}
+              {showCounter && (
+                <div className="flex gap-3 mb-4">
+                  <div className="flex-1 py-3 rounded-lg bg-[var(--theme-bg)] text-center">
+                    <div className="text-xl text-white tabular-nums">{wordCount}</div>
+                    <div className="text-[11px] text-[var(--theme-text-dim)] mt-0.5">words</div>
+                  </div>
+                  <div className="flex-1 py-3 rounded-lg bg-[var(--theme-bg)] text-center">
+                    <div className="text-xl text-white tabular-nums">{charCount}</div>
+                    <div className="text-[11px] text-[var(--theme-text-dim)] mt-0.5">chars</div>
+                  </div>
+                </div>
+              )}
 
-                  {/* Status */}
-                  {status !== 'ready' && (
-                    <div className={`p-3 rounded-lg text-center text-sm ${
-                      status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
-                        ? 'text-orange-400'
-                        : 'text-green-500'
-                    }`}>
-                      {status}
-                    </div>
-                  )}
-
-                  {/* Save Button */}
+              {/* quick toggles: tapping one changes it in place */}
+              <ScrollRow className="mb-4">
+                {[
+                  { key: 'theme', label: theme, onClick: cycleTheme },
+                  { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
+                  { key: 'focus', label: getFocusLabel(), onClick: cycleFocus },
+                  { key: 'counter', label: showCounter ? strings.writer.mobile.counterOn : strings.writer.mobile.counterOff, onClick: () => setShowCounter(!showCounter) },
+                  { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode },
+                ].map((c) => (
                   <button
-                    onClick={() => {
-                      if (!token) {
-                        onLogin();
-                        setShowMobileMenu(false);
-                        return;
-                      }
-                      if (!hasUnsavedChanges && currentSlate) {
-                        setStatus('saved');
-                        setTimeout(() => setStatus('ready'), 2000);
-                        return;
-                      }
-                      saveSlate();
-                    }}
-                    className="p-4 bg-white text-black rounded-lg hover:bg-[#e5e5e5] transition-colors font-medium"
+                    key={c.key}
+                    onClick={c.onClick}
+                    className="shrink-0 h-9 px-3.5 rounded-full border border-[var(--theme-border)] bg-[var(--theme-bg)] text-sm text-[var(--theme-text-muted)] active:bg-[var(--theme-bg-tertiary)] active:text-white transition-colors whitespace-nowrap"
                   >
-                    {strings.writer.buttons.save}
+                    {c.label}
                   </button>
+                ))}
+              </ScrollRow>
 
-                  {/* Share section (owner only — shared slates publish via their owner) */}
-                  {token && !isShared && (
-                    <div className="flex flex-col gap-2">
-                      {/* Status indicator */}
-                      {(shareUrl || wasPublishedBeforeEdit) && (
-                        <div className={`text-sm text-center py-2 ${wasPublishedBeforeEdit ? 'text-orange-400' : 'text-blue-400'}`}>
-                          public{wasPublishedBeforeEdit ? ' · outdated' : ''}
+              {/* status */}
+              {status !== 'ready' && (
+                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${
+                  status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
+                    ? 'text-orange-400'
+                    : 'text-green-500'
+                }`}>
+                  {status}
+                </div>
+              )}
+
+              {/* primary action */}
+              <button
+                onClick={() => {
+                  if (!token) {
+                    onLogin();
+                    setShowMobileMenu(false);
+                    return;
+                  }
+                  if (isShared) {
+                    setShowMobileMenu(false);
+                    setShowExportMenu(true);
+                    return;
+                  }
+                  if (!hasUnsavedChanges && currentSlate) {
+                    setStatus('saved');
+                    setTimeout(() => setStatus('ready'), 2000);
+                    return;
+                  }
+                  saveSlate();
+                }}
+                className="w-full h-12 bg-white text-black rounded-lg active:bg-[#e5e5e5] transition-colors font-medium mb-4"
+              >
+                {isShared ? strings.writer.buttons.export : strings.writer.buttons.save}
+              </button>
+
+              {/* sharing (owner only — shared slates publish through their owner) */}
+              {token && !isShared && (
+                <div className="mb-4">
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)]">
+                      {strings.writer.mobile.sections.sharing}
+                    </span>
+                    {collabDocKey && <span className="text-[11px] text-violet-400">{strings.writer.collabState.label}</span>}
+                    {(shareUrl || wasPublishedBeforeEdit) && (
+                      <span className={`text-[11px] ${wasPublishedBeforeEdit ? 'text-orange-400' : 'text-blue-400'}`}>
+                        public{wasPublishedBeforeEdit ? ' · outdated' : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    {wasPublishedBeforeEdit && (
+                      <button
+                        onClick={handlePublish}
+                        className="flex-1 h-11 bg-orange-900/30 text-orange-400 rounded-lg active:bg-orange-900/50 transition-colors text-sm"
+                      >
+                        sync
+                      </button>
+                    )}
+
+                    {!shareUrl && !wasPublishedBeforeEdit && (
+                      collabDocKey ? (
+                        <div className="flex-1 h-11 flex items-center justify-center bg-[var(--theme-bg)] rounded-lg text-sm opacity-40 select-none">
+                          {strings.writer.collabState.publishBlocked}
                         </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        {/* Sync button when needed */}
-                        {wasPublishedBeforeEdit && (
-                          <button
-                            onClick={handlePublish}
-                            className="flex-1 p-3 bg-orange-900/30 text-orange-400 rounded-lg hover:bg-orange-900/50 transition-colors"
-                          >
-                            sync
-                          </button>
-                        )}
-
-                        {/* Share/Copy/Make Private */}
-                        {!shareUrl && !wasPublishedBeforeEdit && (
-                          <button
-                            onClick={handlePublish}
-                            className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                          >
-                            make public
-                          </button>
-                        )}
-                        {shareUrl && (
-                          <>
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(shareUrl);
-                                setStatus(strings.writer.status.linkCopied);
-                                setTimeout(() => setStatus('ready'), 2000);
-                              }}
-                              className="flex-1 p-3 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                            >
-                              copy link
-                            </button>
-                            <button
-                              onClick={handlePublish}
-                              className="p-3 bg-[var(--theme-bg-tertiary)] text-red-400 rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                            >
-                              private
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                      ) : (
+                        <button
+                          onClick={handlePublish}
+                          className="flex-1 h-11 bg-[var(--theme-bg)] rounded-lg active:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                        >
+                          make public
+                        </button>
+                      )
+                    )}
+                    {shareUrl && (
+                      <>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(shareUrl);
+                            setStatus(strings.writer.status.linkCopied);
+                            setTimeout(() => setStatus('ready'), 2000);
+                          }}
+                          className="flex-1 h-11 bg-[var(--theme-bg)] rounded-lg active:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                        >
+                          copy link
+                        </button>
+                        <button
+                          onClick={handlePublish}
+                          className="h-11 px-4 bg-[var(--theme-bg)] text-red-400 rounded-lg active:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                        >
+                          private
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Settings Tab */}
-              {mobileTab === 'settings' && (
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={cycleTheme}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                  >
-                    <span>theme</span>
-                    <span className="text-[var(--theme-text-dim)]">{theme}</span>
-                  </button>
-                  <button
-                    onClick={cyclePunto}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                  >
-                    <span>font size</span>
-                    <span className="text-[var(--theme-text-dim)]">{getPuntoLabel()}</span>
-                  </button>
-                  <button
-                    onClick={cycleFocus}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                  >
-                    <span>focus mode</span>
-                    <span className="text-[var(--theme-text-dim)]">{getFocusLabel()}</span>
-                  </button>
-                  <button
-                    onClick={() => setShowCounter(!showCounter)}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                  >
-                    <span>counter</span>
-                    <span className="text-[var(--theme-text-dim)]">{showCounter ? 'on' : 'off'}</span>
-                  </button>
-                  <button
-                    onClick={toggleEditorMode}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                  >
-                    <span>{strings.writer.editorMode.menuTitle}</span>
-                    <span className="text-[var(--theme-text-dim)]">{strings.writer.editorMode.value(editorMode)}</span>
-                  </button>
-                  {token && (currentSlate || isShared) && (
-                    <button
-                      onClick={() => {
-                        setShowMobileMenu(false);
-                        setShowCollabModal(true);
-                      }}
-                      className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                    >
-                      <span>{strings.collab.menuButton}</span>
-                      <span className="text-[var(--theme-text-dim)]">{collabDocKey ? 'on' : 'off'}</span>
-                    </button>
-                  )}
-                  {token && collabDocKey && collabSlateDbId && (
-                    <button
-                      onClick={() => {
-                        setShowMobileMenu(false);
-                        setShowCollabHistory(true);
-                      }}
-                      className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left flex justify-between"
-                    >
-                      <span>{strings.collab.history.button}</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* More Tab */}
-              {mobileTab === 'more' && (
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={() => {
-                      setShowMobileMenu(false);
-                      setShowExportMenu(true);
-                    }}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
-                  >
-                    export slate
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowAboutModal(true);
-                      setShowMobileMenu(false);
-                    }}
-                    className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
-                  >
-                    about justtype
-                  </button>
-                </div>
-              )}
+              {/* everything else, as plain labelled rows */}
+              <div className="rounded-lg overflow-hidden border border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
+                {token && (
+                  <SheetRow
+                    label={strings.collab.menuButton}
+                    value={collabDocKey ? 'on' : 'off'}
+                    accent={collabDocKey ? 'text-violet-400' : undefined}
+                    onClick={() => { setShowMobileMenu(false); openCollab('people'); }}
+                  />
+                )}
+                {token && collabDocKey && collabSlateDbId && (
+                  <SheetRow
+                    label={strings.collab.history.button}
+                    onClick={() => { setShowMobileMenu(false); setCollabPanel('history'); }}
+                  />
+                )}
+                <SheetRow
+                  label={strings.writer.mobile.exportSlate}
+                  onClick={() => { setShowMobileMenu(false); setShowExportMenu(true); }}
+                />
+                <SheetRow
+                  label={strings.writer.buttons.about}
+                  onClick={() => { setShowMobileMenu(false); setShowAboutModal(true); }}
+                />
+              </div>
             </div>
           </div>
         </>
       )}
 
-      {/* COLLAB SHARE MODAL */}
-      {showCollabModal && (currentSlate || isShared) && (
-        <CollabShareModal
-          slateNumber={currentSlate ? currentSlate.slate_number : null}
-          userId={userId}
-          username={localStorage.getItem('justtype-username')}
-          docKey={collabDocKey}
-          memberView={isShared}
-          sharedSlateId={sharedSlateId}
-          onLeave={() => {
-            setShowCollabModal(false);
-            window.history.pushState({}, '', '/slates');
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }}
-          getCurrent={() => ({
-            content,
-            title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
-          })}
-          onDocKeyChange={(key, slateDbId) => {
-            loadedContentRef.current = content;
-            setCollabDocKey(key);
-            setCollabKeyGen((g) => g + 1);
-            // undefined = key rotation, same slate; null = collab disabled
-            setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
-          }}
-          onClose={() => setShowCollabModal(false)}
-        />
-      )}
-
-      {/* COLLAB VERSION HISTORY */}
-      {showCollabHistory && collabDocKey && collabSlateDbId && (
-        <React.Suspense fallback={null}>
-          <CollabHistoryLazy
-            slateId={collabSlateDbId}
-            docKey={collabDocKey}
-            onRestore={(text) => {
-              if (collabApiRef.current) collabApiRef.current.replaceText(text);
-            }}
-            onClose={() => setShowCollabHistory(false)}
-          />
-        </React.Suspense>
-      )}
-
       {/* ABOUT MODAL */}
       {showAboutModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={() => withViewTransition(() => setShowAboutModal(false))}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full my-4 animate-modal-content" onClick={e => e.stopPropagation()}>
-            <h2 className="text-lg md:text-xl text-white mb-6">{strings.writer.about.title}</h2>
-            <div className="space-y-4 text-sm text-[var(--theme-text-muted)]">
-              <p>{strings.writer.about.description}</p>
-              <p className="text-xs">{strings.writer.about.encryption}</p>
-              <p className="text-xs">
-                read our <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.terms}</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.privacy}</a>, or learn more about the <a href="/project" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">{strings.writer.about.links.project}</a> on <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">github</a>. got thoughts? <button onClick={() => { setShowAboutModal(false); window.history.pushState({}, '', '/feedback'); window.dispatchEvent(new PopStateEvent('popstate')); }} className="text-white hover:underline transition-colors">send us feedback</button>.
-              </p>
-              <p className="text-xs">
-                by <a href="https://alfaoz.dev" target="_blank" rel="noopener noreferrer" className="text-white hover:underline transition-colors">alfaoz</a>
-              </p>
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-modal-overlay" onClick={closeAbout}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg w-full max-w-md my-4 animate-modal-content overflow-hidden" onClick={e => e.stopPropagation()}>
 
-              {/* Support Section - Subtle */}
-              <div className="pt-4 border-t border-[var(--theme-border)]">
-                <p className="text-xs text-[var(--theme-text-dim)] mb-3">
-                  justtype is free to use, but unfortunately it's not free to run. if you'd like to support development and help keep justtype running, as well as increase your storage{' '}
-                  <a
-                    href="/limits"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-white hover:underline transition-colors"
-                  >
-                    limits
-                  </a>
-                  , you can{' '}
-                  <button
-                    onClick={() => {
-                      setShowAboutModal(false);
-                      setShowDonateModal(true);
-                    }}
-                    className="text-white hover:underline transition-colors"
-                  >
-                    donate once
-                  </button>
-                  {' '}(any amount) or{' '}
-                  <button
-                    onClick={async () => {
-                      if (!token) {
-                        setShowAboutModal(false);
-                        onOpenAuthModal();
-                      } else {
-                        // Check if already subscribed
-                        try {
-                          const response = await fetch(`${API_URL}/account/storage`, {
-                            credentials: 'include'
-                          });
-                          const data = await response.json();
-                          if (response.ok && data.supporterTier === 'quarterly') {
-                            setShowAboutModal(false);
-                            setShowAlreadySubscribedModal(true);
-                          } else {
-                            handleStripeCheckout('quarterly');
-                          }
-                        } catch (err) {
-                          console.error('Failed to check subscription:', err);
-                          handleStripeCheckout('quarterly');
-                        }
-                      }
-                    }}
-                    className="text-white hover:underline transition-colors"
-                  >
-                    subscribe
-                  </button>
-                  {' '}(7 eur / 3 months).
+            {/* head: title and a corner dismiss, so the card does not end in a
+                full-width button that competes with the support actions */}
+            <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-5">
+              <div>
+                <h2 className="text-lg text-white">{strings.writer.about.title}</h2>
+                <p className="text-sm text-[var(--theme-text-muted)] mt-1.5 leading-relaxed">
+                  {strings.writer.about.description}
                 </p>
               </div>
+              <button
+                onClick={closeAbout}
+                aria-label={strings.writer.about.close}
+                className="shrink-0 -mr-1 -mt-1 w-8 h-8 rounded flex items-center justify-center text-[var(--theme-text-dim)] hover:text-white hover:bg-[var(--theme-bg-tertiary)] transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
 
-              <p className="text-xs text-[var(--theme-text-dim)] pt-2 border-t border-[var(--theme-border)]">
-                {strings.writer.about.version(VERSION)}
-                <span className="mx-1">·</span>
-                <VerifyBadge className="text-[var(--theme-text-dim)]">verify</VerifyBadge>
-                <span className="mx-1">·</span>
-                <a href="/status" className="text-[var(--theme-text-dim)] hover:text-white hover:underline transition-colors">status</a>
-                <span className="mx-1">·</span>
-                <a href="/dev" className="text-[var(--theme-text-dim)] hover:text-white hover:underline transition-colors">developers</a>
+            {/* the one fact worth pulling out of the prose */}
+            <div className="mx-6 mb-5 rounded border border-[var(--theme-border)] bg-[var(--theme-bg)] px-4 py-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <svg className="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+                <span className="text-xs text-green-500">{strings.writer.about.encryptionLabel}</span>
+              </div>
+              <p className="text-xs text-[var(--theme-text-dim)] leading-relaxed">{strings.writer.about.encryption}</p>
+            </div>
+
+            {/* the links, in prose */}
+            <div className="px-6 pb-5 space-y-3 text-xs text-[var(--theme-text-muted)] leading-relaxed">
+              <p>
+                read our <AboutLink href="/terms">{strings.writer.about.links.terms}</AboutLink> and{' '}
+                <AboutLink href="/privacy">{strings.writer.about.links.privacy}</AboutLink>, or learn more about{' '}
+                <AboutLink href="/project">{strings.writer.about.links.project}</AboutLink> on{' '}
+                <AboutLink href="https://github.com/alfaoz/justtype">{strings.writer.about.links.github}</AboutLink>.
+                got thoughts? <AboutLink href="/feedback">{strings.writer.about.links.feedback}</AboutLink>.
+              </p>
+              <p>
+                {strings.writer.about.byline}{' '}
+                <AboutLink href="https://alfaoz.dev">alfaoz</AboutLink>
               </p>
             </div>
-            <button
-              onClick={() => withViewTransition(() => setShowAboutModal(false))}
-              className="mt-6 w-full border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
-            >
-              {strings.writer.about.close}
-            </button>
+
+            {/* support */}
+            <div className="px-6 py-5 border-t border-[var(--theme-border)] bg-[var(--theme-bg)]">
+              <p className="text-xs text-[var(--theme-text-dim)] leading-relaxed mb-4">
+                {strings.writer.about.support.body}{' '}
+                <a href="/limits" target="_blank" rel="noopener noreferrer" className="text-[var(--theme-text-muted)] hover:text-white underline underline-offset-2 transition-colors">
+                  {strings.writer.about.support.limits}
+                </a>.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setShowAboutModal(false); setShowDonateModal(true); }}
+                  className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors"
+                >
+                  <span className="block text-xs">{strings.writer.about.support.donate}</span>
+                  <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
+                </button>
+                <button
+                  onClick={handleSubscribeClick}
+                  className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors"
+                >
+                  <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
+                  <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* colophon */}
+            <div className="px-6 py-3.5 border-t border-[var(--theme-border)] flex items-center gap-2 flex-wrap text-[11px] text-[var(--theme-text-dim)]">
+              <span className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</span>
+              <span className="opacity-40">·</span>
+              <VerifyBadge className="text-[var(--theme-text-dim)] hover:text-white transition-colors">verify</VerifyBadge>
+              <span className="opacity-40">·</span>
+              <a href="/status" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">status</a>
+              <span className="opacity-40">·</span>
+              <a href="/dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">developers</a>
+            </div>
           </div>
         </div>
       )}

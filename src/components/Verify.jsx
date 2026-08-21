@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { PageHeader } from './PageHeader';
 import { strings } from '../strings';
 
 const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
@@ -21,6 +22,7 @@ export function Verify() {
   const [error, setError] = useState(null);
   const [polling, setPolling] = useState(false);
   const [actionsStatus, setActionsStatus] = useState(null); // 'running' | 'completed' | 'failed' | null
+  const [expandedFiles, setExpandedFiles] = useState({}); // file name -> hashes shown
   const pollRef = useRef(null);
   const manifestRef = useRef(null);
 
@@ -146,6 +148,12 @@ export function Verify() {
   const actionsCompletedMismatch = serverOkGithubOff && actionsStatus === 'completed';
   const realMismatch = done && !serverMatch;
 
+  // How many files have actually been checked, for the one-line summary.
+  const matchedCount = manifestFiles && computedFiles
+    ? manifestFiles.filter((f) => f.hash === computedFiles[f.file] && (IS_BETA || (github && ghHashFor(f.file) === computedFiles[f.file]))).length
+    : 0;
+  const allExpanded = !!manifestFiles && manifestFiles.length > 0 && manifestFiles.every((f) => expandedFiles[f.file]);
+
   const toUnix = (iso) => Math.floor(new Date(iso).getTime() / 1000);
 
   const timeAgo = (iso) => {
@@ -166,11 +174,7 @@ export function Verify() {
 
   return (
     <div className="min-h-screen font-mono flex flex-col" style={{ backgroundColor: 'var(--theme-bg)', color: 'var(--theme-text-muted)' }}>
-      <header className="p-8 border-b" style={{ borderColor: 'var(--theme-border-light)' }}>
-        <a href="/" className="text-lg md:text-xl font-medium transition-colors" style={{ color: 'var(--theme-text-dim)' }} onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-accent)'} onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}>
-          + just type
-        </a>
-      </header>
+      <PageHeader label="verify" />
 
       <main className="max-w-2xl mx-auto p-4 md:p-8 flex-grow w-full">
         <h1 className="text-xl mb-2" style={{ color: 'var(--theme-accent)' }}>{strings.verify.title}</h1>
@@ -260,27 +264,49 @@ export function Verify() {
               </a>
             </div>
 
-            {/* One hash section per built file (entry bundles + lazy chunks) */}
-            {manifestFiles.map((f) => {
-              const fileServerOk = computedFiles && f.hash === computedFiles[f.file];
-              return (
-                <HashSection
-                  key={f.file}
-                  label={
-                    f.file === manifest.jsFile ? strings.verify.jsBundle :
-                    f.file === manifest.cssFile ? strings.verify.cssBundle :
-                    strings.verify.chunk
-                  }
-                  file={f.file}
-                  server={f.hash}
-                  gh={ghHashFor(f.file)}
-                  ghError={githubError}
-                  computed={computedFiles?.[f.file]}
-                  allMatch={IS_BETA ? fileServerOk : (fileServerOk && github && ghHashFor(f.file) === computedFiles[f.file])}
-                  beta={IS_BETA}
-                />
-              );
-            })}
+            {/* One collapsed row per built file (entry bundles + lazy chunks).
+                The count is the answer most people came for; the hashes are
+                there for anyone who wants to check the work. */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm" style={{ color: 'var(--theme-accent)' }}>
+                  {strings.verify.filesMatched(matchedCount, manifestFiles.length)}
+                </span>
+                <button
+                  onClick={() => setExpandedFiles(allExpanded ? {} : Object.fromEntries(manifestFiles.map((f) => [f.file, true])))}
+                  className="text-xs transition-colors"
+                  style={{ color: 'var(--theme-text-dim)' }}
+                  onMouseOver={(e) => e.currentTarget.style.color = 'var(--theme-accent)'}
+                  onMouseOut={(e) => e.currentTarget.style.color = 'var(--theme-text-dim)'}
+                >
+                  {allExpanded ? strings.verify.collapseAll : strings.verify.expandAll}
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {manifestFiles.map((f) => {
+                  const fileServerOk = computedFiles && f.hash === computedFiles[f.file];
+                  return (
+                    <HashSection
+                      key={f.file}
+                      label={
+                        f.file === manifest.jsFile ? strings.verify.jsBundle :
+                        f.file === manifest.cssFile ? strings.verify.cssBundle :
+                        strings.verify.chunk
+                      }
+                      file={f.file}
+                      server={f.hash}
+                      gh={ghHashFor(f.file)}
+                      ghError={githubError}
+                      computed={computedFiles?.[f.file]}
+                      allMatch={IS_BETA ? fileServerOk : (fileServerOk && github && ghHashFor(f.file) === computedFiles[f.file])}
+                      beta={IS_BETA}
+                      expanded={!!expandedFiles[f.file]}
+                      onToggle={() => setExpandedFiles((prev) => ({ ...prev, [f.file]: !prev[f.file] }))}
+                    />
+                  );
+                })}
+              </div>
+            </div>
 
             {/* GitHub actions source */}
             <div className="pt-2 border-t" style={{ borderColor: 'var(--theme-border-light)' }}>
@@ -345,8 +371,7 @@ cat dist/build-manifest.json`}
               <p className="text-sm mb-2" style={{ color: 'var(--theme-accent)' }}>{strings.verify.localVerify.title}</p>
               <p className="text-xs mb-3" style={{ color: 'var(--theme-text-dim)' }}>{strings.verify.localVerify.description}</p>
               <pre className="text-xs font-mono rounded p-4 overflow-x-auto leading-6" style={{ color: 'var(--theme-text-muted)', backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border-light)' }}>
-{`curl -s ${window.location.origin}/assets/${manifest.jsFile} | sha256sum
-curl -s ${window.location.origin}/assets/${manifest.cssFile} | sha256sum`}
+{manifestFiles.map(f => `curl -s ${window.location.origin}/assets/${f.file} | sha256sum`).join('\n')}
               </pre>
             </div>
 
@@ -367,7 +392,7 @@ curl -s ${window.location.origin}/assets/${manifest.cssFile} | sha256sum`}
   );
 }
 
-function HashSection({ label, file, server, gh, ghError, computed, allMatch, beta }) {
+function HashSection({ label, file, server, gh, ghError, computed, allMatch, beta, expanded, onToggle }) {
   const s = strings.verify.sources;
 
   const Row = ({ source, hash, ref }) => {
@@ -383,7 +408,7 @@ function HashSection({ label, file, server, gh, ghError, computed, allMatch, bet
     };
 
     return (
-      <div className="flex items-center justify-between py-2 last:border-0" style={{ borderBottom: '1px solid var(--theme-border-light)' }}>
+      <div className="flex items-start justify-between gap-4 py-2 last:border-0" style={{ borderBottom: '1px solid var(--theme-border-light)' }}>
         <span className="text-xs w-16 shrink-0" style={{ color: 'var(--theme-text-dim)' }}>{source}</span>
         <code
           className={`text-xs font-mono break-all text-right ${pending ? 'animate-pulse' : ''}`}
@@ -395,22 +420,41 @@ function HashSection({ label, file, server, gh, ghError, computed, allMatch, bet
     );
   };
 
+  const resolved = server && computed && (beta || gh);
+
+  // Collapsed by default. Every file used to print three full sha256 lines, so
+  // a six-chunk build was eighteen lines of hex before you could tell whether
+  // anything was wrong. The verdict is the headline; the hashes are the
+  // evidence, one click away.
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-sm" style={{ color: 'var(--theme-accent)' }}>{label}</span>
-        {server && computed && (beta || gh) && (
-          <span className="text-xs" style={{ color: allMatch ? 'var(--theme-green)' : 'var(--theme-red)' }}>
-            {allMatch ? '\u2713' : '\u2717'}
-          </span>
-        )}
-      </div>
-      <p className="text-xs mb-2 font-mono" style={{ color: 'var(--theme-text-dim)' }}>{file}</p>
-      <div>
-        <Row source={s.server} hash={server} ref={computed} />
-        {!beta && <Row source={s.github} hash={ghError ? 'unavailable' : gh} ref={server} />}
-        <Row source={s.computed} hash={computed} ref={server} />
-      </div>
+    <div className="border rounded" style={{ borderColor: 'var(--theme-border-light)' }}>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <span
+          className="text-xs w-3 shrink-0"
+          style={{ color: !resolved ? 'var(--theme-text-dim)' : allMatch ? 'var(--theme-green)' : 'var(--theme-red)' }}
+        >
+          {!resolved ? '\u00b7' : allMatch ? '\u2713' : '\u2717'}
+        </span>
+        <code className="text-xs font-mono truncate" style={{ color: 'var(--theme-text-muted)' }}>{file}</code>
+        <span className="text-xs ml-auto shrink-0 hidden sm:inline" style={{ color: 'var(--theme-text-dim)' }}>{label}</span>
+        <svg
+          className={`w-3 h-3 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          style={{ color: 'var(--theme-text-dim)' }}
+          fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-2 border-t" style={{ borderColor: 'var(--theme-border-light)' }}>
+          <Row source={s.server} hash={server} ref={computed} />
+          {!beta && <Row source={s.github} hash={ghError ? 'unavailable' : gh} ref={server} />}
+          <Row source={s.computed} hash={computed} ref={server} />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { PageHeader } from './PageHeader';
 import { strings } from '../strings';
 import { VERSION } from '../version';
 
@@ -32,10 +33,11 @@ export function WhatsNew() {
     return () => io.disconnect();
   }, []);
 
-  // One looping demo per feature, in the same order as s.features:
-  // collab, version history, unpublish, markdown, new justtype.
-  const visuals = [
-    // 01 · collab: same two-line typing loop as the hero
+  // One looping demo per feature, keyed by the feature's `id` so the copy in
+  // strings.js can be reordered freely without silently pairing the wrong demo
+  // with the wrong paragraph.
+  const visuals = {
+    collab: (
     <div className="wn-frame" key="collab">
       <div className="wn-line">
         <span className="wn-type wn-type-a">{s.demo.lineA}</span>
@@ -45,9 +47,10 @@ export function WhatsNew() {
         <span className="wn-type wn-type-b">{s.demo.lineB}</span>
         <span className="wn-caret" data-user={s.demo.userB} style={{ background: '#3ecf8e' }} />
       </div>
-    </div>,
+    </div>
+    ),
 
-    // 02 · version history: cycling checkpoint highlight + synced preview
+    history: (
     <div className="wn-frame" key="history">
       <div className="wn-hist">
         <div className="wn-hist-list">
@@ -61,9 +64,10 @@ export function WhatsNew() {
           ))}
         </div>
       </div>
-    </div>,
+    </div>
+    ),
 
-    // 03 · unpublish: the public link gets struck out, private takes over
+    unpublish: (
     <div className="wn-frame" key="unpublish">
       <div className="wn-unpub">
         <span className="wn-url">
@@ -71,9 +75,10 @@ export function WhatsNew() {
         </span>
         <span className="wn-private">{d.unpublish.after}</span>
       </div>
-    </div>,
+    </div>
+    ),
 
-    // 04 · markdown: source crossfades into rendered
+    markdown: (
     <div className="wn-frame" key="markdown">
       <div className="wn-md">
         <div className="wn-md-src">
@@ -85,16 +90,18 @@ export function WhatsNew() {
           <div><b>bold</b>, <i>italic</i>, <code>code</code></div>
         </div>
       </div>
-    </div>,
+    </div>
+    ),
 
-    // 05 · a new justtype: the wordmark types itself
+    brand: (
     <div className="wn-frame wn-frame-center" key="brand">
       <div className="wn-brand">
         <span className="wn-brand-type">{strings.app.logo}</span>
         <span className="wn-caret" style={{ background: '#fff' }} />
       </div>
-    </div>,
-  ];
+    </div>
+    ),
+  };
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
@@ -122,10 +129,12 @@ export function WhatsNew() {
 
         /* Collab card: two collaborators typing on loop */
         .wn-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; }
-        .wn-type-a { animation: wnTypeA 9s steps(17, end) infinite; }
-        .wn-type-b { animation: wnTypeB 9s steps(19, end) infinite; }
-        @keyframes wnTypeA { 0%, 8% { width: 0; } 34% { width: 17ch; } 94% { width: 17ch; } 100% { width: 0; } }
-        @keyframes wnTypeB { 0%, 40% { width: 0; } 68% { width: 19ch; } 94% { width: 19ch; } 100% { width: 0; } }
+        /* Step count and end width are derived from the copy: hardcoding them
+           silently truncates the line the moment the demo text changes. */
+        .wn-type-a { animation: wnTypeA 9s steps(${s.demo.lineA.length}, end) infinite; }
+        .wn-type-b { animation: wnTypeB 9s steps(${s.demo.lineB.length}, end) infinite; }
+        @keyframes wnTypeA { 0%, 8% { width: 0; } 34% { width: ${s.demo.lineA.length}ch; } 94% { width: ${s.demo.lineA.length}ch; } 100% { width: 0; } }
+        @keyframes wnTypeB { 0%, 40% { width: 0; } 68% { width: ${s.demo.lineB.length}ch; } 94% { width: ${s.demo.lineB.length}ch; } 100% { width: 0; } }
         /* Steady bars, matching the real remote carets (they don't blink) */
         .wn-caret { position: relative; display: inline-block; width: 2px; height: 1.25em; margin-left: 1px; vertical-align: text-bottom; flex-shrink: 0; }
         .wn-caret[data-user]::after { content: attr(data-user); position: absolute; bottom: calc(100% + 4px); left: -2px; padding: 1px 5px; border-radius: 3px; font-size: 0.6rem; line-height: 1.4; color: #111; background: inherit; white-space: nowrap; }
@@ -187,30 +196,25 @@ export function WhatsNew() {
       `}</style>
 
       {/* header */}
-      <header className="p-4 md:p-8 flex justify-between items-center border-b border-[var(--theme-border-light)]">
-        <button type="button" onClick={goHome} className="text-lg md:text-xl font-medium text-[var(--theme-text-muted)] hover:text-white transition-colors select-none">
-          {strings.app.logo}
-        </button>
-        <span className="text-xs text-[var(--theme-text-dim)]">{s.pageTitle}</span>
-      </header>
+      <PageHeader label={s.pageTitle} onHome={goHome} />
 
       <main className="max-w-3xl mx-auto px-6 pb-24">
         {/* hero */}
-        <section className="pt-16 md:pt-24 pb-16 wn-fade-in">
-          <p className="text-xs tracking-widest text-[var(--theme-text-dim)] mb-4">{strings.app.logo} · {s.versionTag}</p>
-          <h1 className="text-4xl md:text-5xl text-white font-medium mb-5">
+        <section className="pt-16 md:pt-28 pb-16 md:pb-20 wn-fade-in">
+          <p className="text-base md:text-lg text-[var(--theme-accent)] mb-4 md:mb-6">{s.heroEyebrow}</p>
+          <h1 className="text-5xl md:text-7xl text-white font-medium leading-[1.05] tracking-tight mb-6 md:mb-8">
             {s.heroTitle.split('. ').map((part, i, arr) => (
               <span key={part} className="block">{i < arr.length - 1 ? `${part}.` : part}</span>
             ))}
           </h1>
-          <p className="text-sm md:text-base text-[var(--theme-text-muted)] leading-relaxed max-w-lg">{s.heroSub}</p>
+          <p className="text-sm md:text-base text-[var(--theme-text-muted)] leading-relaxed max-w-xl">{s.heroSub}</p>
         </section>
 
         {/* features */}
         <section ref={listRef} className="flex flex-col gap-14 md:gap-20">
           {s.features.map((f, i) => (
-            <article key={f.title} className={`wn-card wn-row ${i % 2 === 1 ? 'wn-row-flip' : ''}`}>
-              <div className="wn-row-visual">{visuals[i] || null}</div>
+            <article key={f.id} className={`wn-card wn-row ${i % 2 === 1 ? 'wn-row-flip' : ''}`}>
+              <div className="wn-row-visual">{visuals[f.id] || null}</div>
               <div className="wn-row-text">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-2">{String(i + 1).padStart(2, '0')}</p>
                 <h2 className="text-xl md:text-2xl text-white mb-3">{f.title}</h2>

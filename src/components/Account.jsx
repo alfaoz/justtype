@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useEscape } from '../useEscape';
 import JSZip from 'jszip';
 import { API_URL } from '../config';
 import { strings } from '../strings';
@@ -8,6 +9,57 @@ import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, de
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
 import { useToast } from './Toast';
+
+/**
+ * A labelled group of rows: one bordered card, rows divided inside it. Every
+ * settings block on this page uses it, so the page reads as three short lists
+ * instead of a stack of loose look-alike cards.
+ */
+function Section({ title, tone, children }) {
+  const border = tone === 'danger' ? 'border-red-900/50' : 'border-[var(--theme-border)]';
+  const divide = tone === 'danger' ? 'divide-red-900/50' : 'divide-[var(--theme-border)]';
+  return (
+    <section className="mb-6">
+      {title && (
+        <h2 className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-2 px-1">{title}</h2>
+      )}
+      <div className={`border ${border} rounded-lg overflow-hidden divide-y ${divide}`}>{children}</div>
+    </section>
+  );
+}
+
+/** A static fact inside a Section: label left, value and its actions right. */
+function InfoRow({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3.5 text-sm">
+      <span className="text-[var(--theme-text-dim)] shrink-0">{label}</span>
+      <div className="flex items-center gap-3 min-w-0 justify-end flex-wrap">{children}</div>
+    </div>
+  );
+}
+
+/** The header of an expandable row inside a Section. */
+function DisclosureHeader({ label, open, onToggle, tone }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`w-full flex items-center justify-between gap-4 px-4 py-3.5 text-sm transition-colors ${
+        tone === 'danger'
+          ? 'text-red-400 hover:bg-red-900/10'
+          : 'hover:bg-[var(--theme-bg-secondary)]'
+      }`}
+    >
+      <span className="text-left">{label}</span>
+      <span
+        className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-45' : ''} ${
+          tone === 'danger' ? '' : 'text-[var(--theme-text-dim)]'
+        }`}
+      >
+        +
+      </span>
+    </button>
+  );
+}
 
 export function Account({ token, username, userId, email, emailVerified, authProvider, onLogout, onForceLogout, onEmailUpdate, onUsernameUpdate, recoveryKeyPending, onRecoveryKeyShown, onRecoveryKeyAcknowledged }) {
   const [showToast, toastNode] = useToast();
@@ -79,6 +131,19 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [setPasswordConfirm, setSetPasswordConfirm] = useState('');
   const [newPasswordError, setNewPasswordError] = useState('');
   const [setPasswordStep, setSetPasswordStep] = useState('pin'); // 'pin' | 'password'
+
+  // Escape dismisses whichever card is on top. The success/error confirmations
+  // are included: they are the ones you most want to flick away.
+  useEscape(showEmailModal, () => setShowEmailModal(false));
+  useEscape(showUsernameModal, () => setShowUsernameModal(false));
+  useEscape(showLogoutEverywhereModal, () => setShowLogoutEverywhereModal(false));
+  useEscape(showDeleteAccountModal, () => setShowDeleteAccountModal(false));
+  useEscape(showLinkGoogleModal, () => setShowLinkGoogleModal(false));
+  useEscape(showLinkSuccessModal, () => setShowLinkSuccessModal(false));
+  useEscape(showLinkErrorModal, () => setShowLinkErrorModal(false));
+  useEscape(showUnlinkGoogleModal, () => setShowUnlinkGoogleModal(false));
+  useEscape(showUnlinkSuccessModal, () => setShowUnlinkSuccessModal(false));
+  useEscape(showSetPasswordModal, () => setShowSetPasswordModal(false));
   const [setPasswordPin, setSetPasswordPin] = useState(['', '', '', '', '', '']);
   const [verifiedSlateKey, setVerifiedSlateKey] = useState(null);
   const setPwPinRefs = useRef([]);
@@ -1000,7 +1065,43 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
-        <h1 className="text-xl md:text-2xl text-white mb-8">{strings.account.title}</h1>
+        {/* identity */}
+        <div className="mb-8">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2.5 flex-wrap">
+              <h1 className="text-xl md:text-2xl text-[var(--theme-accent)] break-all">{username || strings.account.title}</h1>
+              <button
+                onClick={() => setShowUsernameModal(true)}
+                className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
+              >
+                change
+              </button>
+              {!loadingStorage && storageInfo && storageInfo.supporterTier && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded border text-purple-400 border-purple-400/30">
+                  {storageInfo.supporterTier === 'quarterly'
+                    ? strings.subscription.manage.plans.quarterly
+                    : strings.subscription.manage.plans.oneTime}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2.5 mt-1.5 text-xs flex-wrap">
+              <span className="text-[var(--theme-text-muted)] break-all">{email}</span>
+              {emailVerified ? (
+                <span className="text-green-400">verified</span>
+              ) : (
+                <span className="text-yellow-400">not verified</span>
+              )}
+              {authProvider === 'local' && (
+                <button
+                  onClick={() => setShowEmailModal(true)}
+                  className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
+                >
+                  change
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Password banner for Google-only users */}
         {authProvider === 'google' && !passwordBannerDismissed && (
@@ -1009,13 +1110,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             <div className="flex items-center gap-3 shrink-0">
               <button
                 onClick={() => setShowSetPasswordModal(true)}
-                className="text-white text-sm hover:text-yellow-400 transition-colors"
+                className="text-[var(--theme-accent)] text-sm hover:text-yellow-400 transition-colors"
               >
                 {strings.account.googleAuth.setPassword.button}
               </button>
               <button
                 onClick={dismissPasswordBanner}
-                className="text-[#666] hover:text-white transition-colors text-xs"
+                className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
               >
                 {strings.account.googleAuth.setPassword.dismiss}
               </button>
@@ -1023,48 +1124,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           </div>
         )}
 
-        {/* Main Info - Clean text-based layout */}
-        <div className="mb-8 space-y-4 text-sm">
-          {/* Username */}
-          <div className="flex items-center justify-between py-3 border-b border-[#222]">
-            <span className="text-[#666]">username:</span>
-            <div className="flex items-center gap-3">
-              <span className="text-white">{username}</span>
-              <button
-                onClick={() => setShowUsernameModal(true)}
-                className="text-[#666] hover:text-white transition-colors text-xs"
-              >
-                change
-              </button>
-            </div>
-          </div>
-
-          {/* Email */}
-          <div className="flex items-center justify-between py-3 border-b border-[#222]">
-            <span className="text-[#666]">email:</span>
-            <div className="flex items-center gap-3">
-              <span className="text-white">{email}</span>
-              {emailVerified ? (
-                <span className="text-green-400 text-xs">verified</span>
-              ) : (
-                <span className="text-yellow-400 text-xs">not verified</span>
-              )}
-              {authProvider === 'local' && (
-                <button
-                  onClick={() => setShowEmailModal(true)}
-                  className="text-[#666] hover:text-white transition-colors text-xs"
-                >
-                  change
-                </button>
-              )}
-            </div>
-          </div>
-
+        <Section title={strings.account.sections.account}>
           {/* Sign in method */}
-          <div className="flex items-center justify-between py-3 border-b border-[#222]">
-            <span className="text-[#666]">sign in method:</span>
-            <div className="flex items-center gap-3">
-              <span className="text-white">
+          <InfoRow label="sign in method">
+              <span className="text-[var(--theme-accent)]">
                 {authProvider === 'google'
                   ? 'google'
                   : authProvider === 'both'
@@ -1074,7 +1137,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               {authProvider === 'local' && (
                 <button
                   onClick={() => setShowLinkGoogleModal(true)}
-                  className="text-[#666] hover:text-white transition-colors text-xs"
+                  className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
                 >
                   + link google
                 </button>
@@ -1082,7 +1145,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               {authProvider === 'google' && (
                 <button
                   onClick={() => setShowSetPasswordModal(true)}
-                  className="text-[#666] hover:text-white transition-colors text-xs"
+                  className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
                 >
                   {strings.account.googleAuth.setPassword.button}
                 </button>
@@ -1096,15 +1159,12 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   {requestingUnlink ? 'sending...' : 'unlink google'}
                 </button>
               )}
-            </div>
-          </div>
+          </InfoRow>
 
           {/* Plan */}
           {!loadingStorage && storageInfo && (
-            <div className="flex items-center justify-between py-3 border-b border-[#222]">
-              <span className="text-[#666]">current plan:</span>
-              <div className="flex items-center gap-3">
-                <span className="text-white">
+            <InfoRow label="current plan">
+                <span className="text-[var(--theme-accent)]">
                   {storageInfo.supporterTier === 'quarterly'
                     ? strings.subscription.manage.plans.quarterly
                     : storageInfo.supporterTier === 'one_time'
@@ -1114,7 +1174,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {storageInfo.supporterTier === 'quarterly' && (
                   <button
                     onClick={() => window.location.href = '/manage-subscription'}
-                    className="text-[#666] hover:text-white transition-colors text-xs"
+                    className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
                   >
                     manage
                   </button>
@@ -1122,19 +1182,17 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {!storageInfo.supporterTier && (
                   <button
                     onClick={() => window.location.href = '/?donate=quarterly'}
-                    className="text-[#666] hover:text-white transition-colors text-xs"
+                    className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
                   >
                     upgrade
                   </button>
                 )}
-              </div>
-            </div>
+            </InfoRow>
           )}
 
           {/* Supporter badge toggle */}
           {!loadingStorage && storageInfo && storageInfo.supporterTier && (
-            <div className="flex items-center justify-between py-3 border-b border-[#222]">
-              <span className="text-[#666]">supporter badge:</span>
+            <InfoRow label="supporter badge">
               <button
                 onClick={async () => {
                   const newValue = !storageInfo.supporterBadgeVisible;
@@ -1152,59 +1210,37 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     console.error('Badge visibility update error:', err);
                   }
                 }}
-                className="text-white hover:opacity-70 transition-opacity"
+                className="text-[var(--theme-accent)] hover:opacity-70 transition-opacity"
               >
                 {storageInfo.supporterBadgeVisible ? 'visible' : 'hidden'}
               </button>
-            </div>
+            </InfoRow>
           )}
-        </div>
-
-        {/* Quick Actions Row */}
-        <div className="flex flex-wrap gap-3 mb-8 text-sm">
-          <button
-            onClick={onLogout}
-            className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors"
-          >
-            sign out
-          </button>
-          <button
-            onClick={exportSlates}
-            disabled={exportingSlates}
-            className="px-4 py-2 border border-[#333] rounded hover:bg-[#222] transition-colors disabled:opacity-50"
-          >
-            {exportingSlates
-              ? strings.account.export.exporting
-              : (exportConfirmArmed ? strings.account.export.confirm : strings.account.export.button)
-            }
-          </button>
-          {exportMessage && (
-            <span className={`px-4 py-2 ${
-              exportMessageKind === 'success' ? 'text-green-400' :
-              exportMessageKind === 'error' ? 'text-red-400' :
-              'text-[#666]'
-            }`}>
-              {exportMessage}
-            </span>
-          )}
-        </div>
+        </Section>
 
         {/* Upgrade prompt for free users */}
         {!loadingStorage && storageInfo && !storageInfo.supporterTier && (
-          <div className="mb-8 p-4 bg-[#1a1a1a] border border-[#333] rounded">
-            <p className="text-sm text-[#666] mb-3">support justtype and get more storage</p>
-            <div className="flex gap-3 text-sm">
+          <div className="mb-6 border border-[var(--theme-border)] rounded-lg px-4 py-4 bg-[var(--theme-bg-secondary)]">
+            <p className="text-xs text-[var(--theme-text-dim)] leading-relaxed mb-4">
+              {strings.writer.about.support.body}{' '}
+              <a href="/limits" target="_blank" rel="noopener noreferrer" className="text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] underline underline-offset-2 transition-colors">
+                {strings.writer.about.support.limits}
+              </a>.
+            </p>
+            <div className="flex gap-2">
               <button
                 onClick={() => window.location.href = '/?donate=one_time'}
-                className="px-4 py-2 bg-[#222] hover:bg-[#333] rounded transition-colors"
+                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
               >
-                donate once
+                <span className="block text-xs">{strings.writer.about.support.donate}</span>
+                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
               </button>
               <button
                 onClick={() => window.location.href = '/?donate=quarterly'}
-                className="px-4 py-2 bg-white text-black hover:bg-[#e5e5e5] rounded transition-colors"
+                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
               >
-                subscribe
+                <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
+                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
               </button>
             </div>
           </div>
@@ -1214,23 +1250,23 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         {!loadingStorage && storageInfo && storageInfo.inGracePeriod && (
           <div className="mb-8 p-4 bg-red-900/20 border border-red-500/50 rounded">
             <p className="text-sm text-red-400 mb-2">storage grace period active</p>
-            <p className="text-xs text-[#a0a0a0] mb-3">
+            <p className="text-xs text-[var(--theme-text-muted)] mb-3">
               {storageInfo.gracePeriodDaysRemaining} days remaining to reduce storage or slates will be deleted.
             </p>
-            <a href="/slates" className="text-xs text-white hover:underline">manage slates →</a>
+            <a href="/slates" className="text-xs text-[var(--theme-accent)] hover:underline">manage slates →</a>
           </div>
         )}
 
         {/* Storage Warning */}
         {!loadingStorage && storageInfo && storageInfo.percentage >= 80 && storageInfo.supporterTier !== 'quarterly' && (
-          <div className="mb-8 p-4 bg-[#1a1a1a] border border-[#333] rounded">
+          <div className="mb-8 p-4 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded">
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-[#666]">storage</span>
+              <span className="text-[var(--theme-text-dim)]">storage</span>
               <span className={storageInfo.percentage >= 100 ? 'text-red-400' : 'text-orange-400'}>
                 {storageInfo.percentage.toFixed(5)}%
               </span>
             </div>
-            <div className="w-full bg-[#111] rounded-full h-1.5 overflow-hidden">
+            <div className="w-full bg-[var(--theme-bg)] rounded-full h-1.5 overflow-hidden">
               <div
                 className={`h-full ${storageInfo.percentage >= 100 ? 'bg-red-500' : 'bg-orange-500'}`}
                 style={{ width: `${Math.min(storageInfo.percentage, 100)}%` }}
@@ -1239,27 +1275,24 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           </div>
         )}
 
-        {/* Collapsible Sections */}
-        <div className="space-y-4">
+        <Section title={strings.account.sections.security}>
           {/* Password Section - Only for local/both auth */}
           {(authProvider === 'local' || authProvider === 'both') && (
-            <div className="border border-[#333] rounded">
-              <button
-                onClick={() => setShowPasswordSection(!showPasswordSection)}
-                className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
-              >
-                <span>change password</span>
-                <span className="text-[#666]">{showPasswordSection ? '−' : '+'}</span>
-              </button>
+            <div>
+              <DisclosureHeader
+                label={<>change password</>}
+                open={showPasswordSection}
+                onToggle={() => setShowPasswordSection(!showPasswordSection)}
+              />
               {showPasswordSection && (
-                <div className="p-4 border-t border-[#333]">
+                <div className="px-4 pb-4 -mt-1">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
                       type="password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
                       placeholder="current password"
-                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-2 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                       required
                     />
                     <input
@@ -1267,7 +1300,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="new password"
-                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-2 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                       required
                     />
                     <input
@@ -1275,7 +1308,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="confirm new password"
-                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-2 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                       required
                     />
                     {passwordError && <p className="text-red-400 text-xs">{passwordError}</p>}
@@ -1302,24 +1335,22 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
           {/* Recovery Key Section - Only for local/both auth */}
           {(authProvider === 'local' || authProvider === 'both') && (
-            <div className={`border rounded ${recoveryKeyPending ? 'border-yellow-500/30' : 'border-[#333]'}`}>
-              <button
-                onClick={() => setShowRecoverySection(!showRecoverySection)}
-                className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
-              >
-                <span>{strings.auth.recoveryKey.regenerate.title}</span>
-                <span className="text-[#666]">{showRecoverySection ? '−' : '+'}</span>
-              </button>
+            <div className={recoveryKeyPending ? 'bg-yellow-500/5' : ''}>
+              <DisclosureHeader
+                label={<>{strings.auth.recoveryKey.regenerate.title}</>}
+                open={showRecoverySection}
+                onToggle={() => setShowRecoverySection(!showRecoverySection)}
+              />
               {showRecoverySection && (
-                <div className="p-4 border-t border-[#333]">
-                  <p className="text-[#888] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
+                <div className="px-4 pb-4 -mt-1">
+                  <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
                     <input
                       type="password"
                       value={recoveryPassword}
                       onChange={(e) => setRecoveryPassword(e.target.value)}
                       placeholder={strings.auth.recoveryKey.regenerate.passwordRequired}
-                      className="w-full bg-[#111] border border-[#333] rounded px-4 py-2 focus:outline-none focus:border-[#666] text-white text-sm"
+                      className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-2 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                       required
                     />
                     {recoveryError && <p className="text-red-400 text-xs">{recoveryError}</p>}
@@ -1357,53 +1388,51 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           )}
 
           {/* Sessions Section */}
-          <div className="border border-[#333] rounded">
-            <button
-              onClick={() => setShowSessions(!showSessions)}
-              className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
-            >
-              <span>sessions {!loadingSessions && sessions.length > 0 && `(${sessions.length})`}</span>
-              <span className="text-[#666]">{showSessions ? '−' : '+'}</span>
-            </button>
+          <div>
+            <DisclosureHeader
+                label={<>sessions {!loadingSessions && sessions.length > 0 && `(${sessions.length})`}</>}
+                open={showSessions}
+                onToggle={() => setShowSessions(!showSessions)}
+              />
             {showSessions && (
-              <div className="p-4 border-t border-[#333]">
+              <div className="px-4 pb-4 -mt-1">
                 {loadingSessions ? (
-                  <p className="text-[#666] text-sm">loading...</p>
+                  <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
                 ) : (
                   <div className="space-y-3">
                     {sessions.slice(0, 5).map((session, idx) => (
                       <div
                         key={idx}
                         className={`p-3 rounded text-sm ${
-                          session.is_current === 1 ? 'bg-blue-950/20 border border-blue-500/30' : 'bg-[#111]'
+                          session.is_current === 1 ? 'bg-blue-950/20 border border-blue-500/30' : 'bg-[var(--theme-bg)]'
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-white">{session.device || 'unknown device'}</span>
+                          <span className="text-[var(--theme-accent)]">{session.device || 'unknown device'}</span>
                           {session.is_current === 1 && (
                             <span className="text-blue-400 text-xs">current</span>
                           )}
                         </div>
-                        <div className="text-xs text-[#666] mt-1">
+                        <div className="text-xs text-[var(--theme-text-dim)] mt-1">
                           {formatSessionDate(session.last_activity)}
                           {session.ip_address && ` · ${formatIpAddress(session.ip_address)}`}
                         </div>
                       </div>
                     ))}
                     {sessions.length > 5 && (
-                      <p className="text-xs text-[#666]">+ {sessions.length - 5} more sessions</p>
+                      <p className="text-xs text-[var(--theme-text-dim)]">+ {sessions.length - 5} more sessions</p>
                     )}
 
-                    <div className="pt-3 border-t border-[#333]">
+                    <div className="pt-3 border-t border-[var(--theme-border)]">
                       <label className="flex items-center gap-2 text-sm cursor-pointer">
                         <input
                           type="checkbox"
                           checked={trackIpAddress}
                           onChange={toggleIpTracking}
                           disabled={togglingIpTracking}
-                          className="w-4 h-4 rounded border-[#666] bg-[#111] text-blue-500 focus:ring-0"
+                          className="w-4 h-4 rounded border-[var(--theme-text-dim)] bg-[var(--theme-bg)] text-blue-500 focus:ring-0"
                         />
-                        <span className="text-[#a0a0a0]">track IP addresses</span>
+                        <span className="text-[var(--theme-text-muted)]">track IP addresses</span>
                       </label>
                     </div>
 
@@ -1420,28 +1449,29 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             )}
           </div>
 
+        </Section>
+
+        <Section title={strings.account.sections.connections}>
           {/* Connected Apps Section */}
-          <div className="border border-[#333] rounded">
-            <button
-              onClick={() => setShowConnectedApps(!showConnectedApps)}
-              className="w-full flex items-center justify-between p-4 text-sm hover:bg-[#1a1a1a] transition-colors"
-            >
-              <span>{strings.account.connectedApps.title} {!loadingApps && connectedApps.length > 0 && `(${connectedApps.length})`}</span>
-              <span className="text-[#666]">{showConnectedApps ? '−' : '+'}</span>
-            </button>
+          <div>
+            <DisclosureHeader
+                label={<>{strings.account.connectedApps.title} {!loadingApps && connectedApps.length > 0 && `(${connectedApps.length})`}</>}
+                open={showConnectedApps}
+                onToggle={() => setShowConnectedApps(!showConnectedApps)}
+              />
             {showConnectedApps && (
-              <div className="p-4 border-t border-[#333]">
+              <div className="px-4 pb-4 -mt-1">
                 {loadingApps ? (
-                  <p className="text-[#666] text-sm">{strings.account.connectedApps.loading}</p>
+                  <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
                 ) : connectedApps.length === 0 ? (
-                  <p className="text-[#666] text-sm">{strings.account.connectedApps.empty}</p>
+                  <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.empty}</p>
                 ) : (
                   <div className="space-y-3">
-                    <p className="text-xs text-[#666]">{strings.account.connectedApps.description}</p>
+                    <p className="text-xs text-[var(--theme-text-dim)]">{strings.account.connectedApps.description}</p>
                     {connectedApps.map((app) => (
-                      <div key={app.client_id} className="p-3 rounded text-sm bg-[#111]">
+                      <div key={app.client_id} className="p-3 rounded text-sm bg-[var(--theme-bg)]">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-white">{app.name}</span>
+                          <span className="text-[var(--theme-accent)]">{app.name}</span>
                           <button
                             onClick={() => revokeConnectedApp(app.client_id)}
                             disabled={revokingApp === app.client_id}
@@ -1451,31 +1481,31 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                           </button>
                         </div>
                         {app.website && (
-                          <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[#666] hover:text-[#888] break-all">{app.website}</a>
+                          <a href={app.website} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text-muted)] break-all">{app.website}</a>
                         )}
-                        <div className="text-xs text-[#666] mt-1">
+                        <div className="text-xs text-[var(--theme-text-dim)] mt-1">
                           {strings.account.connectedApps.canAccess}: {app.scopes.join(', ')}
                         </div>
                         {app.can_share && (
                           <div className="mt-2 flex items-center gap-3 flex-wrap">
                             <button
                               onClick={() => setShareApp({ client_id: app.client_id, name: app.name })}
-                              className="text-xs text-white border border-[#333] rounded px-3 py-1 hover:bg-[#1a1a1a] transition-colors"
+                              className="text-xs text-[var(--theme-accent)] border border-[var(--theme-border)] rounded px-3 py-1 hover:bg-[var(--theme-bg-secondary)] transition-colors"
                             >
                               {strings.account.connectedApps.shareSlates}
                             </button>
                             {app.share_all ? (
-                              <span className="text-xs text-[#888]">{strings.account.connectedApps.sharesAll}</span>
+                              <span className="text-xs text-[var(--theme-text-muted)]">{strings.account.connectedApps.sharesAll}</span>
                             ) : app.shared_count > 0 && (
-                              <span className="text-xs text-[#666]">{strings.account.connectedApps.sharedCount(app.shared_count)}</span>
+                              <span className="text-xs text-[var(--theme-text-dim)]">{strings.account.connectedApps.sharedCount(app.shared_count)}</span>
                             )}
                             {app.device_count > 0 && (
-                              <span className="text-xs text-[#666]">{strings.account.connectedApps.deviceCount(app.device_count)}</span>
+                              <span className="text-xs text-[var(--theme-text-dim)]">{strings.account.connectedApps.deviceCount(app.device_count)}</span>
                             )}
                           </div>
                         )}
                         {!app.can_share && app.scopes.includes('slates:read:private') && (
-                          <div className="text-xs text-[#666] mt-2">{strings.account.connectedApps.noDeviceYet}</div>
+                          <div className="text-xs text-[var(--theme-text-dim)] mt-2">{strings.account.connectedApps.noDeviceYet}</div>
                         )}
                       </div>
                     ))}
@@ -1495,37 +1525,76 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             />
           )}
 
+          <a
+            href="/dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-between gap-4 px-4 py-3.5 text-sm hover:bg-[var(--theme-bg-secondary)] transition-colors"
+          >
+            <span>{strings.account.devPortal}</span>
+            <span className="text-[var(--theme-text-dim)]">↗</span>
+          </a>
+        </Section>
+
+        <Section tone="danger">
           {/* Danger Zone */}
-          <div className="border border-red-900/50 rounded">
-            <button
-              onClick={() => setShowDangerZone(!showDangerZone)}
-              className="w-full flex items-center justify-between p-4 text-sm hover:bg-red-900/10 transition-colors text-red-400"
-            >
-              <span>danger zone</span>
-              <span>{showDangerZone ? '−' : '+'}</span>
-            </button>
+          <div>
+            <DisclosureHeader
+                label={<>danger zone</>}
+                open={showDangerZone}
+                onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
+              />
             {showDangerZone && (
-              <div className="p-4 border-t border-red-900/50">
-                <p className="text-xs text-[#666] mb-3">
+              <div className="px-4 pb-4 -mt-1">
+                <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
                 </p>
                 <button
                   onClick={showDeleteAccountConfirmation}
                   disabled={deleting}
-                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
+                  className="px-4 py-2 bg-red-600 text-[var(--theme-accent)] rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
                 >
                   {deleting ? 'deleting...' : 'delete account'}
                 </button>
               </div>
             )}
           </div>
+        </Section>
+
+        {/* Account-level actions, kept apart from the settings lists above */}
+        <div className="flex flex-wrap items-center gap-3 pt-2 pb-10 text-sm">
+          <button
+            onClick={exportSlates}
+            disabled={exportingSlates}
+            className="px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors disabled:opacity-50"
+          >
+            {exportingSlates
+              ? strings.account.export.exporting
+              : (exportConfirmArmed ? strings.account.export.confirm : strings.account.export.button)
+            }
+          </button>
+          <button
+            onClick={onLogout}
+            className="px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors ml-auto"
+          >
+            sign out
+          </button>
+          {exportMessage && (
+            <span className={`w-full ${
+              exportMessageKind === 'success' ? 'text-green-400' :
+              exportMessageKind === 'error' ? 'text-red-400' :
+              'text-[var(--theme-text-dim)]'
+            }`}>
+              {exportMessage}
+            </span>
+          )}
         </div>
 
       {/* Email Change Modal */}
       {showEmailModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-6">{strings.account.emailChange.title}</h2>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-6">{strings.account.emailChange.title}</h2>
 
             {emailStep === 'input' ? (
               <form onSubmit={handleChangeEmail} className="space-y-4">
@@ -1535,7 +1604,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
                     placeholder={strings.account.emailChange.newEmailPlaceholder}
-                    className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                     required
                   />
                 </div>
@@ -1556,7 +1625,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       setNewEmail('');
                       setEmailError('');
                     }}
-                    className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                    className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                   >
                     {strings.account.emailChange.cancel}
                   </button>
@@ -1564,7 +1633,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               </form>
             ) : (
               <form onSubmit={handleVerifyEmail} className="space-y-4">
-                <p className="text-sm text-[#666]">{strings.account.emailChange.verifyInstructions(newEmail)}</p>
+                <p className="text-sm text-[var(--theme-text-dim)]">{strings.account.emailChange.verifyInstructions(newEmail)}</p>
                 <div>
                   <input
                     type="text"
@@ -1572,7 +1641,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     onChange={(e) => setVerificationCode(e.target.value)}
                     placeholder={strings.account.emailChange.codePlaceholder}
                     maxLength={6}
-                    className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm text-center tracking-widest"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm text-center tracking-widest"
                     required
                   />
                 </div>
@@ -1596,7 +1665,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       setEmailError('');
                       setEmailSuccess('');
                     }}
-                    className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                    className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                   >
                     {strings.account.emailChange.cancel}
                   </button>
@@ -1610,8 +1679,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Username Change Modal */}
       {showUsernameModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-6">{strings.account.usernameChange.title}</h2>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-6">{strings.account.usernameChange.title}</h2>
             <form onSubmit={handleChangeUsername} className="space-y-4">
               <div>
                 <input
@@ -1623,7 +1692,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     checkUsernameAvailability(val);
                   }}
                   placeholder={strings.account.usernameChange.placeholder}
-                  className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm"
                   required
                   autoFocus
                   maxLength={20}
@@ -1631,7 +1700,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {newUsername && newUsername !== username && (
                   <div className="mt-2 text-xs">
                     {checkingUsername ? (
-                      <span className="text-[#666]">checking...</span>
+                      <span className="text-[var(--theme-text-dim)]">checking...</span>
                     ) : usernameAvailable === true ? (
                       <span className="text-green-400">available</span>
                     ) : usernameAvailable === false ? (
@@ -1658,7 +1727,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     setUsernameAvailable(null);
                     setUsernameCheckReason('');
                   }}
-                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   cancel
                 </button>
@@ -1671,21 +1740,21 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Logout Everywhere Confirmation Modal */}
       {showLogoutEverywhereModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.sessions.everywhereModal.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.sessions.everywhereModal.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {strings.account.sessions.everywhereModal.message}
             </p>
             <div className="flex gap-3">
               <button
                 onClick={confirmLogoutEverywhere}
-                className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
+                className="flex-1 bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
               >
                 {strings.account.sessions.everywhereModal.confirm}
               </button>
               <button
                 onClick={cancelLogoutEverywhere}
-                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.sessions.everywhereModal.cancel}
               </button>
@@ -1697,12 +1766,12 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Delete Account Confirmation Modal */}
       {showDeleteAccountModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.danger.title}</h2>
-            <p className="text-sm text-[#666] mb-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.danger.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-4">
               {strings.account.danger.warning}
             </p>
-            <p className="text-sm text-[#666] mb-6">
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {strings.account.danger.confirmInstruction(username)}
             </p>
             <div className="space-y-4">
@@ -1711,7 +1780,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 value={deleteConfirmation}
                 onChange={(e) => setDeleteConfirmation(e.target.value)}
                 placeholder={strings.account.danger.confirmPlaceholder(username)}
-                className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-red-400 text-white text-sm"
+                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-red-400 text-[var(--theme-accent)] text-sm"
                 autoFocus
               />
               {deleteError && <p className="text-red-400 text-xs md:text-sm">{deleteError}</p>}
@@ -1719,13 +1788,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   onClick={confirmDeleteAccount}
                   disabled={!deleteConfirmation}
-                  className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {strings.account.danger.submit}
                 </button>
                 <button
                   onClick={cancelDeleteAccount}
-                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   {strings.account.danger.modal.cancel}
                 </button>
@@ -1738,9 +1807,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Link Google Confirmation Modal */}
       {showLinkGoogleModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.modal.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.googleAuth.link.modal.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {strings.account.googleAuth.link.modal.message}
             </p>
             <div className="flex gap-3">
@@ -1752,7 +1821,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               </button>
               <button
                 onClick={() => setShowLinkGoogleModal(false)}
-                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.googleAuth.link.modal.cancel}
               </button>
@@ -1764,9 +1833,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Link Google Success Modal */}
       {showLinkSuccessModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.success.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.googleAuth.link.success.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {strings.account.googleAuth.link.success.message}
             </p>
             <button
@@ -1785,9 +1854,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Link Google Error Modal */}
       {showLinkErrorModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.link.errors.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.googleAuth.link.errors.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {linkErrorMessage}
             </p>
             <button
@@ -1806,9 +1875,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Unlink Google Verification Modal */}
       {showUnlinkGoogleModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.modal.title}</h2>
-            <p className="text-sm text-[#666] mb-4">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.googleAuth.unlink.modal.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-4">
               {strings.account.googleAuth.unlink.modal.instructions}
             </p>
             {unlinkSuccess && <p className="text-green-400 text-xs md:text-sm mb-4">{unlinkSuccess}</p>}
@@ -1820,7 +1889,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   onChange={(e) => setUnlinkCode(e.target.value)}
                   placeholder={strings.account.googleAuth.unlink.modal.codePlaceholder}
                   maxLength={6}
-                  className="w-full bg-[#111111] border border-[#333] rounded px-4 py-3 focus:outline-none focus:border-[#666] text-white text-sm text-center tracking-widest"
+                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-accent)] text-sm text-center tracking-widest"
                   required
                   autoFocus
                 />
@@ -1842,7 +1911,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     setUnlinkError('');
                     setUnlinkSuccess('');
                   }}
-                  className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   {strings.account.googleAuth.unlink.modal.cancel}
                 </button>
@@ -1855,9 +1924,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Unlink Google Success Modal */}
       {showUnlinkSuccessModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.account.googleAuth.unlink.success.title}</h2>
-            <p className="text-sm text-[#666] mb-6">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-accent)] mb-4">{strings.account.googleAuth.unlink.success.title}</h2>
+            <p className="text-sm text-[var(--theme-text-dim)] mb-6">
               {strings.account.googleAuth.unlink.success.message}
             </p>
             <button
@@ -1876,11 +1945,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       {/* Set Password Modal */}
       {showSetPasswordModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-[modalOverlayIn_0.15s_ease-out]" onClick={() => { setShowSetPasswordModal(false); setSetPasswordStep('pin'); setSetPasswordPin(['','','','','','']); setNewPasswordError(''); setVerifiedSlateKey(null); }}>
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded p-6 md:p-8 max-w-sm w-full animate-[modalContentIn_0.15s_ease-out]" onClick={e => e.stopPropagation()}>
             {setPasswordStep === 'pin' ? (
               <>
-                <h2 className="text-lg text-white mb-2">{strings.account.googleAuth.setPassword.modal.pinTitle}</h2>
-                <p className="text-sm text-[#888] mb-6">{strings.account.googleAuth.setPassword.modal.pinMessage}</p>
+                <h2 className="text-lg text-[var(--theme-accent)] mb-2">{strings.account.googleAuth.setPassword.modal.pinTitle}</h2>
+                <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.account.googleAuth.setPassword.modal.pinMessage}</p>
                 <div className="flex gap-2 justify-center" onPaste={e => { e.preventDefault(); const d = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6); if (d.length === 6) { setSetPasswordPin(d.split('')); setTimeout(() => setPwPinRefs.current[5]?.focus(), 0); } }}>
                   {setPasswordPin.map((digit, i) => (
                     <input
@@ -1893,7 +1962,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       value={digit}
                       onChange={e => { if (!/^\d*$/.test(e.target.value)) return; const p = [...setPasswordPin]; p[i] = e.target.value.slice(-1); setSetPasswordPin(p); setNewPasswordError(''); e.target.value && i < 5 && setPwPinRefs.current[i + 1]?.focus(); }}
                       onKeyDown={e => { if (e.key === 'Backspace' && !setPasswordPin[i] && i > 0) { setPwPinRefs.current[i - 1]?.focus(); const p = [...setPasswordPin]; p[i - 1] = ''; setSetPasswordPin(p); } }}
-                      className="w-11 h-14 bg-[#111] border border-[#333] rounded text-center text-2xl text-white focus:border-[#666] focus:outline-none transition-colors"
+                      className="w-11 h-14 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded text-center text-2xl text-[var(--theme-accent)] focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     />
                   ))}
                 </div>
@@ -1908,8 +1977,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               </>
             ) : (
               <>
-                <h2 className="text-lg text-white mb-2">{strings.account.googleAuth.setPassword.modal.title}</h2>
-                <p className="text-sm text-[#888] mb-6">{strings.account.googleAuth.setPassword.modal.message}</p>
+                <h2 className="text-lg text-[var(--theme-accent)] mb-2">{strings.account.googleAuth.setPassword.modal.title}</h2>
+                <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.account.googleAuth.setPassword.modal.message}</p>
                 <form onSubmit={handleSetPassword} className="space-y-3">
                   <input
                     type="password"
@@ -1919,7 +1988,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     minLength={6}
                     required
                     autoFocus
-                    className="w-full bg-[#111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors rounded text-sm"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-[var(--theme-accent)] focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors rounded text-sm"
                   />
                   <input
                     type="password"
@@ -1928,14 +1997,14 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     placeholder={strings.account.googleAuth.setPassword.modal.confirmPlaceholder}
                     minLength={6}
                     required
-                    className="w-full bg-[#111] border border-[#333] px-4 py-2 text-white focus:border-[#666] focus:outline-none transition-colors rounded text-sm"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] px-4 py-2 text-[var(--theme-accent)] focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors rounded text-sm"
                   />
                   {newPasswordError && <p className="text-red-400 text-xs">{newPasswordError}</p>}
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
                       onClick={() => { setShowSetPasswordModal(false); setNewPasswordError(''); setSetPasswordNew(''); setSetPasswordConfirm(''); setSetPasswordStep('pin'); setSetPasswordPin(['','','','','','']); setVerifiedSlateKey(null); }}
-                      className="flex-1 border border-[#333] px-4 py-2 rounded hover:bg-[#222] transition-colors text-sm"
+                      className="flex-1 border border-[var(--theme-border)] px-4 py-2 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                     >
                       {strings.account.googleAuth.setPassword.modal.cancel}
                     </button>

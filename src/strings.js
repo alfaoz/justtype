@@ -25,12 +25,18 @@ const strings = {
       label: (mode) => `editor: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`,
       menuTitle: 'editor',
       value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
-      loading: 'loading rich editor...'
     },
     publicState: {
       current: 'public',
       outdated: 'private draft · sync',
       outdatedHint: 'your public copy is stale — click to update it'
+    },
+    collabState: {
+      label: 'collab',
+      hint: 'this slate is collaborative. click to manage people.',
+      sharedHint: 'shared with you. click to see who else is here.',
+      publishBlocked: 'coming soon',
+      publishBlockedHint: 'publishing a collab slate is not available yet.'
     },
     zenMode: {
       on: 'zen mode on',
@@ -51,6 +57,7 @@ const strings = {
       publish: 'publish',
       published: 'published',
       save: 'save',
+      export: 'export',
       exportTxt: 'export as txt',
       exportPdf: 'export as pdf'
     },
@@ -90,14 +97,39 @@ const strings = {
     about: {
       title: 'about justtype',
       description: 'minimalist writing app with cloud storage and sharing.',
-      encryption: 'your slates are encrypted with AES-256-GCM. private slates stay encrypted, published ones are public.',
+      encryption: 'your slates are locally encrypted with aes-256-gcm, before it gets to our servers.',
+      encryptionLabel: 'end to end encrypted',
+      byline: 'made by',
       links: {
-        terms: 'terms',
-        privacy: 'privacy',
-        project: 'project'
+        terms: 'terms of service',
+        privacy: 'privacy policy',
+        project: 'the justtype project',
+        github: 'github',
+        feedback: 'send us feedback'
+      },
+      support: {
+        title: 'support justtype',
+        body: "justtype is free to use, but it isn't free to run. chip in to keep it running and to raise your storage",
+        limits: 'limits',
+        donate: 'donate once',
+        donateHint: 'any amount',
+        subscribe: 'subscribe',
+        subscribeHint: '7 eur / 3 months'
       },
       version: (v) => `version ${v}`,
       close: 'close'
+    },
+    // mobile sheet
+    mobile: {
+      open: 'open menu',
+      close: 'close menu',
+      words: (n) => `${n} ${n === 1 ? 'word' : 'words'}`,
+      counterOn: 'counter on',
+      counterOff: 'counter off',
+      exportSlate: 'export slate',
+      sections: {
+        sharing: 'sharing'
+      }
     }
   },
 
@@ -187,6 +219,9 @@ const strings = {
   // e2ee collaborative slates
   collab: {
     menuButton: 'collab',
+    // Shown when collab is opened on a brand new slate with nothing in it: the
+    // slate has to be saved first, and an empty one cannot be.
+    needsContent: 'write something first',
     modal: {
       title: 'collab',
       explainer: 'collaboratively work on the same slate. invite people by their username or share a link, while staying end-to-end encrypted.',
@@ -206,6 +241,8 @@ const strings = {
       remove: 'remove',
       removeConfirm: 'sure?',
       removedRotated: 'removed. the slate key was rotated.',
+      colorHint: 'this is their colour on shared carets.',
+      rotationWarning: 'this re-keys the slate, which also clears version history.',
       revokedRotated: 'link revoked. the slate key was rotated.',
       link: {
         title: 'invite link',
@@ -232,7 +269,36 @@ const strings = {
       emptyDoc: '(empty)',
       by: (name) => `by ${name}`,
       restore: 'restore this version',
-      restoreConfirm: 'sure?'
+      restoreConfirm: 'sure?',
+      currentRow: 'current',
+      currentRowMeta: 'live',
+      legendSinceLast: 'what has changed since the most recent checkpoint.',
+      noChangesSinceLast: 'nothing has changed since the most recent checkpoint.',
+      comparePrev: 'vs previous',
+      compareCurrent: 'vs current',
+      textTab: 'full text',
+      noChangesPrev: 'this version is identical to the one before it.',
+      noChangesCurrent: 'nothing has changed since this version.',
+      diffTooBig: 'this version is too long to compare line by line. showing the full text instead.',
+      legendPrev: 'what changed in this version, against the checkpoint before it.',
+      legendCurrent: 'what changed between this version and the slate right now.',
+      noPrevious: 'this is the earliest version kept, so there is nothing before it to compare against.',
+      current: 'current',
+      pinned: 'pinned',
+      nameVersion: 'name this version',
+      namePlaceholder: 'name this version...',
+      nameSave: 'save',
+      nameClear: 'remove name',
+      naming: 'saving...',
+      openAsNew: 'open as a new slate',
+      openAsNewHint: 'opens this version as a fresh draft. this collab slate stays exactly as it is.'
+    },
+    panel: {
+      title: 'collab',
+      tabPeople: 'people',
+      tabHistory: 'history',
+      close: 'close panel',
+      historyUnavailable: 'version history appears once this slate is collaborative.'
     },
     join: {
       title: 'join a shared slate',
@@ -450,6 +516,13 @@ const strings = {
   // account settings
   account: {
     title: 'account settings',
+    devPortal: 'developer portal',
+    sections: {
+      account: 'account',
+      security: 'security',
+      connections: 'connections',
+      danger: 'danger zone'
+    },
     info: {
       title: 'account info',
       username: 'username:',
@@ -797,7 +870,9 @@ const strings = {
   feedback: {
     title: 'feedback',
     subtitle: (username) => `hey ${username}, what's on your mind?`,
-    placeholder: 'anything at all — bugs, ideas, or just say hi...',
+    placeholder: 'anything at all. bugs, ideas, or just say hi...',
+    hint: 'goes straight to alfaoz. no ticket queue, no bot.',
+    words: (n) => `${n} ${n === 1 ? 'word' : 'words'}`,
     emailLabel: 'reply to (optional)',
     emailPlaceholder: 'your email',
     submit: 'send',
@@ -943,6 +1018,9 @@ take care!
 
   // build verification
   verify: {
+    filesMatched: (matched, total) => `${matched} of ${total} files match`,
+    expandAll: 'show hashes',
+    collapseAll: 'hide hashes',
     title: 'verify build integrity',
     description: 'verify that the code running on this site matches the open-source repository.',
     verified: 'all sources match',
@@ -1315,14 +1393,29 @@ take care!
       }
     }
   },
+  // One-time announcement card for users arriving on v4 for the first time.
+  whatsNewModal: {
+    version: 'v4',
+    title: 'markdown and collab are here',
+    body: 'justtype just picked up the two things people asked for most. everything you already wrote is untouched.',
+    points: [
+      'write markdown and watch it format itself as you type',
+      'turn any slate collaborative and write together, live',
+      'still end to end encrypted, still just typing'
+    ],
+    tour: 'take the tour',
+    dismiss: 'hell yeah!'
+  },
+
   whatsNew: {
     pageTitle: "what's new",
     versionTag: 'v4',
-    heroTitle: 'write together. better than ever.',
-    heroSub: 'justtype v4 brings real-time collaboration to your slates, and markdown formatting when you want it to.',
+    heroEyebrow: 'v4 is here.',
+    heroTitle: 'write together. write it better.',
+    heroSub: 'markdown formatting whenever you want it, and real time collaboration on any slate. still end to end encrypted, still just typing.',
     demo: {
       lineA: 'ideas flow better',
-      lineB: "when they're shared",
+      lineB: "when they're together",
       userA: 'alfa',
       userB: 'beta'
     },
@@ -1336,22 +1429,27 @@ take care!
     },
     features: [
       {
+        id: 'markdown',
+        title: 'rich formatting with markdown',
+        body: 'we all know it, we all love it. write markdown and watch it format itself as you type, or keep every slate plain. it is a per slate setting, so nothing changes until you ask for it.'
+      },
+      {
+        id: 'collab',
         title: 'collab slates',
         body: 'turn any slate collaborative and write in the same document at the same time, while remaining fully end-to-end encrypted.'
       },
       {
+        id: 'history',
         title: 'version history',
         body: 'step back through earlier checkpoints of a collab slate, preview them, restore the one you want.'
       },
       {
+        id: 'unpublish',
         title: 'unpublish, completely',
         body: "take a published slate all the way back. long overdue, but it's here!"
       },
       {
-        title: 'rich formatting with markdown',
-        body: 'we all know it, we all love it. markdown is here when you need it.'
-      },
-      {
+        id: 'brand',
         title: 'a new justtype',
         body: 'a new default identity, a new font, a new justtype.'
       }

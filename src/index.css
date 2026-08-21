@@ -26,6 +26,18 @@
   --theme-font-code: 'IBM Plex Mono', monospace;
 }
 
+/* The page ground. Without an explicit background on html/body the browser
+   paints its own white behind the app, which shows up as a white band whenever
+   the viewport rubber-bands past the content (top, bottom, and sideways).
+   Painting html and body with the theme background makes the overscroll area
+   the same colour as the page in every theme. */
+html, body {
+  background-color: var(--theme-bg);
+  /* No horizontal rubber-band at all: nothing in the app scrolls sideways at
+     the document level, so the bounce could only ever reveal empty ground. */
+  overscroll-behavior-x: none;
+}
+
 /* Apply UI font to body and override Tailwind's font-mono */
 body {
   font-family: var(--theme-font-ui) !important;
@@ -58,6 +70,40 @@ body {
 }
 .animate-modal-content {
   animation: modal-content-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* iOS auto-zooms the page whenever a focused text field renders below 16px,
+   and it does not zoom back out when the keyboard closes, which leaves the
+   whole app scaled and the fixed chrome off-screen. Anything typeable is
+   therefore at least 16px on a phone. Pinch zoom stays available: fixing this
+   with `maximum-scale=1` would have taken that away. */
+@media (max-width: 767px) {
+  .punto-small,
+  .punto-base {
+    font-size: 16px !important;
+  }
+  input,
+  textarea,
+  select,
+  [contenteditable='true'],
+  .cm-content {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* The mobile sheet draws its own affordances (grab handle, chip indicator), so
+   the native bar on top of them read as a second, competing scrollbar. */
+.sheet-scroll {
+  scrollbar-width: none;
+}
+.sheet-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Mobile bottom sheet entrance */
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
 /* Transient toast pill (native-alert replacement) */
@@ -174,6 +220,99 @@ body {
 
 .animate-slide-in-right {
   animation: slide-in-right 0.3s ease-out;
+}
+
+/* ---- Collab side panel -------------------------------------------------
+   Desktop: the panel is a flex sibling of the editor, so it opens by
+   animating its own width. The inner column keeps a fixed width and the
+   wrapper clips it, otherwise the contents would reflow on every frame.
+   Mobile: it is a full-screen overlay, so it just slides in from the right.
+
+   No animation-fill-mode here on purpose: the resting state lives in the
+   base rule, so once the animation ends no transform is left applied. A
+   lingering transform would make the panel a containing block for any
+   position:fixed descendant (this bit us before with the settings strip). */
+.collab-panel {
+  overflow: hidden;
+  animation: collabPanelInMobile 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.collab-panel[data-closing='true'] {
+  animation: collabPanelOutMobile 0.2s cubic-bezier(0.55, 0.06, 0.68, 0.19) forwards;
+  pointer-events: none;
+}
+.collab-panel-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+@keyframes collabPanelInMobile {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes collabPanelOutMobile {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(100%); }
+}
+
+@media (min-width: 768px) {
+  .collab-panel {
+    width: 380px;
+    animation: collabPanelIn 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .collab-panel[data-closing='true'] {
+    animation: collabPanelOut 0.2s cubic-bezier(0.55, 0.06, 0.68, 0.19) forwards;
+  }
+  .collab-panel-inner { width: 380px; }
+
+  @keyframes collabPanelIn {
+    from { width: 0; opacity: 0; }
+    60%  { opacity: 1; }
+    to   { width: 380px; opacity: 1; }
+  }
+  @keyframes collabPanelOut {
+    from { width: 380px; opacity: 1; }
+    to   { width: 0; opacity: 0; }
+  }
+}
+
+/* Tab bodies are stacked and cross-fade. Both stay mounted so switching tabs
+   never refetches the checkpoint list or throws away a decrypted preview. */
+.collab-tabstack { position: relative; flex: 1; min-height: 0; }
+.collab-tabpanel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+  transform: translateX(10px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.collab-tabpanel.is-active {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collab-panel,
+  .collab-panel[data-closing='true'] { animation-duration: 0.01ms; }
+  .collab-tabpanel { transition-duration: 0.01ms; }
+}
+
+@keyframes fadeInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes fadeInFromLeft {

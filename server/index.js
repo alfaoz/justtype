@@ -893,7 +893,13 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
     }
-    // Don't cache JS/CSS files either (Vite handles hashing)
+    // Hashed build assets (dist/assets/name-<hash>.js/css): cache forever.
+    // Any change ships under a new filename, so immutable caching makes
+    // repeat editor-chunk loads instant instead of revalidating every open.
+    else if (filePath.includes(`${path.sep}assets${path.sep}`) && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+    // Any other JS/CSS (e.g. root sw.js) keeps revalidating
     else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }

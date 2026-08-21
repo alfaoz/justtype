@@ -712,8 +712,11 @@ function mountCollab(app, deps) {
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(slate_id, epoch, version) DO NOTHING
         `).run(slateId, epoch, coveredVersion, newFileId, req.user.id);
+        // Labelled ("named") checkpoints are pinned: they never fall off the
+        // end, otherwise a version the user deliberately named would vanish.
         prunedCheckpoints = db.prepare(`
-          SELECT id, b2_file_id FROM collab_checkpoints WHERE slate_id = ?
+          SELECT id, b2_file_id FROM collab_checkpoints
+          WHERE slate_id = ? AND (label IS NULL OR label = '')
           ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?
         `).all(slateId, MAX_CHECKPOINTS);
         for (const cp of prunedCheckpoints) {
@@ -746,7 +749,7 @@ function mountCollab(app, deps) {
       if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
       const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(req.params.slateId).e;
       const checkpoints = db.prepare(`
-        SELECT c.id, c.version, c.created_at, u.username AS author
+        SELECT c.id, c.version, c.created_at, c.label, u.username AS author
         FROM collab_checkpoints c LEFT JOIN users u ON u.id = c.author_id
         WHERE c.slate_id = ? AND c.epoch = ?
         ORDER BY c.created_at DESC, c.id DESC
@@ -755,6 +758,23 @@ function mountCollab(app, deps) {
     } catch (error) {
       console.error('Collab checkpoints list error:', error);
       res.status(500).json({ error: 'Failed to list checkpoints' });
+    }
+  });
+
+  // Name a version (or clear the name by sending an empty label). Any accepted
+  // member may do this, matching who is allowed to restore.
+  app.patch('/api/collab/slates/:slateId/checkpoints/:id', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
+    try {
+      if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const raw = typeof req.body?.label === 'string' ? req.body.label.trim().slice(0, 60) : '';
+      const label = raw === '' ? null : raw;
+      const result = db.prepare('UPDATE collab_checkpoints SET label = ? WHERE id = ? AND slate_id = ?')
+        .run(label, req.params.id, req.params.slateId);
+      if (result.changes === 0) return res.status(404).json({ error: 'Checkpoint not found' });
+      res.json({ success: true, label });
+    } catch (error) {
+      console.error('Collab checkpoint label error:', error);
+      res.status(500).json({ error: 'Failed to label checkpoint' });
     }
   });
 

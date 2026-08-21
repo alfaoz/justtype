@@ -54,6 +54,28 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Let Rollup split lazily-imported code on its own (that keeps the
+        // React.lazy boundaries intact), then fold the tiny leftover chunks
+        // into the chunk they always load with. Rollup only merges where it
+        // does not change loading semantics, so the editor/collab code stays
+        // off the critical path while the manifest stays short.
+        //
+        // Do NOT hand-write manualChunks for src/ components here: a shared
+        // leaf module (strings.js) gets hoisted into the named chunk, the
+        // entry then statically imports it, vite emits modulepreload, and
+        // editor+collab load eagerly on every page load.
+        //
+        // At 120 kB the shared yjs chunk (which rollup was naming after
+        // collabColors) folds into CollabPanel, taking the build from six
+        // hashed files to five: the app, its stylesheet, and the three chunks
+        // that genuinely load on demand. A collab session downloads the same
+        // total either way. After changing this, always re-check that
+        // dist/index.html still contains no `modulepreload` links.
+        experimentalMinChunkSize: 120000,
+      },
+    },
   },
   server: {
     port: 5173,
