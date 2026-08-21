@@ -69,6 +69,30 @@ class B2Storage {
     }
   }
 
+  /**
+   * Does this error mean our cached auth token is no longer good?
+   *
+   * 401 always does. 403 usually does too (a rotated or revoked application
+   * key answers with access_denied), and that case is what stranded the beta
+   * instance: the retry paths below only looked for 401, so a 403 left the
+   * dead token cached and every save failed until the process was restarted.
+   * The exception is a cap: B2 also uses 403 to say a storage/transaction cap
+   * was hit, and re-authorizing then would just double the load for nothing.
+   */
+  isStaleAuthError(error) {
+    const status = error?.response?.status;
+    if (status === 401) return true;
+    if (status !== 403) return false;
+    const code = error?.response?.data?.code || error?.message || '';
+    return !/cap_exceeded/i.test(code);
+  }
+
+  // Drop the cached token so the next authorize() actually talks to B2.
+  invalidateAuth() {
+    this.authorized = false;
+    this.authExpiry = null;
+  }
+
   async authorize() {
     // Check if we need to re-authorize (not authorized or token expiring soon)
     const now = Date.now();
@@ -134,10 +158,9 @@ class B2Storage {
       return response.data.fileId;
     } catch (error) {
       // If we get a 401, force re-authorization and retry once
-      if (error.response && error.response.status === 401) {
-        console.log('B2 auth expired, forcing re-authorization...');
-        this.authorized = false;
-        this.authExpiry = null;
+      if (this.isStaleAuthError(error)) {
+        console.log('B2 auth rejected, forcing re-authorization...');
+        this.invalidateAuth();
         await this.authorize();
 
         // Retry the upload
@@ -205,10 +228,9 @@ class B2Storage {
       return slateData.content;
     } catch (error) {
       // If we get a 401, force re-authorization and retry once
-      if (error.response && error.response.status === 401) {
-        console.log('B2 auth expired, forcing re-authorization...');
-        this.authorized = false;
-        this.authExpiry = null;
+      if (this.isStaleAuthError(error)) {
+        console.log('B2 auth rejected, forcing re-authorization...');
+        this.invalidateAuth();
         await this.authorize();
 
         // Retry the download
@@ -260,9 +282,8 @@ class B2Storage {
       b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
       return data;
     } catch (error) {
-      if (error.response && error.response.status === 401) {
-        this.authorized = false;
-        this.authExpiry = null;
+      if (this.isStaleAuthError(error)) {
+        this.invalidateAuth();
         await this.authorize();
         const response = await this.b2.downloadFileById({
           fileId: fileId,
@@ -280,18 +301,34 @@ class B2Storage {
   // Upload pre-encrypted blob to B2 (for E2E users)
   async uploadRawSlate(slateId, encryptedBuffer) {
     await this.authorize();
-    try {
+    const fileName = `${this.prefix}slates/${slateId}.enc`;
+
+    const put = async () => {
       const uploadUrlResponse = await this.b2.getUploadUrl({
         bucketId: this.bucketId,
       });
-      const fileName = `${this.prefix}slates/${slateId}.enc`;
-      const response = await this.b2.uploadFile({
+      return this.b2.uploadFile({
         uploadUrl: uploadUrlResponse.data.uploadUrl,
         uploadAuthToken: uploadUrlResponse.data.authorizationToken,
         fileName: fileName,
         data: encryptedBuffer,
         mime: 'application/octet-stream',
       });
+    };
+
+    try {
+      let response;
+      try {
+        response = await put();
+      } catch (error) {
+        // Same recovery the other upload paths have: a rejected token is
+        // dropped and the write is attempted once more with a fresh one.
+        if (!this.isStaleAuthError(error)) throw error;
+        console.log('B2 auth rejected, forcing re-authorization...');
+        this.invalidateAuth();
+        await this.authorize();
+        response = await put();
+      }
       b2Monitor.logClassC('uploadRawSlate', { slateId, bytes: encryptedBuffer.length });
       return response.data.fileId;
     } catch (error) {
@@ -321,10 +358,9 @@ class B2Storage {
       return true;
     } catch (error) {
       // If we get a 401, force re-authorization and retry once
-      if (error.response && error.response.status === 401) {
-        console.log('B2 auth expired, forcing re-authorization...');
-        this.authorized = false;
-        this.authExpiry = null;
+      if (this.isStaleAuthError(error)) {
+        console.log('B2 auth rejected, forcing re-authorization...');
+        this.invalidateAuth();
         await this.authorize();
 
         // Retry the delete

@@ -9,22 +9,7 @@
     <meta name="description" content="need to jot something down real quick? just start typing." />
     <meta name="theme-color" content="#050505" />
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-    <script>
-      // Paint the page ground from the stored theme before the bundle parses,
-      // otherwise the first frame (and any overscroll during it) flashes white.
-      (function () {
-        try {
-          var bg = { dark: '#050505', legacy: '#111111', light: '#faf9f7', sepia: '#f4ecd8', midnight: '#0a0a14' }[
-            localStorage.getItem('justtype-theme') || 'light'
-          ];
-          if (bg) {
-            document.documentElement.style.setProperty('--theme-bg', bg);
-            document.documentElement.style.backgroundColor = bg;
-            document.querySelector('meta[name="theme-color"]').setAttribute('content', bg);
-          }
-        } catch (e) {}
-      })();
-    </script>
+    <script src="/theme-preload.js"></script>
   </head>
   <body>
     <div id="root"></div>
