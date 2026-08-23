@@ -195,21 +195,26 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
         onClick={onOpen}
         className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]"
       >
+        {/* The title is the card: let it wrap to two lines instead of
+            truncating at twenty characters, and gather every piece of meta
+            at the bottom edge so the box has a top and a floor rather than
+            three stray lines. */}
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {isPinned && <PinGlyph />}
-            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">{title}</h3>
+          <div className="flex items-start gap-2 min-w-0 flex-1">
+            {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
+            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words flex-1">{title}</h3>
           </div>
           <SlateMenu slate={slate} {...menuProps} />
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} />
-        </div>
-
-        <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
-          <div className="flex items-center gap-3">{stats}</div>
-          <span>{formatDateShort(slate.updated_at)}</span>
+        <div className="mt-auto pt-4 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+          </div>
+          <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
+            <div className="flex items-center gap-3">{stats}</div>
+            <span>{formatDateShort(slate.updated_at)}</span>
+          </div>
         </div>
       </div>
     );
