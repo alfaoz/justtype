@@ -6,10 +6,244 @@ import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
+import { useEscape } from '../useEscape';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
 const MAX_TAGS_PER_SLATE = 20;
+
+const ALL_APPS = '__all__';
+
+const formatDateShort = (dateString) =>
+  new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+// The status vocabulary: one quiet lowercase word per state, coloured the way
+// the rest of the app already speaks (blue = public, orange = was public,
+// accent = shared with me). Private is the default state, so it stays dim.
+const statusFor = (slate) =>
+  slate.shared
+    ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
+    : slate.is_published
+      ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
+      : slate.published_at
+        ? { label: strings.slates.status.wasPublic, cls: 'text-[var(--theme-orange)]' }
+        : { label: strings.slates.status.private, cls: 'text-[var(--theme-text-dim)]' };
+
+const SORT_OPTIONS = [
+  { id: 'recent', label: strings.slates.sortOptions.recent },
+  { id: 'oldest', label: strings.slates.sortOptions.oldest },
+  { id: 'a-z', label: strings.slates.sortOptions.az },
+  { id: 'z-a', label: strings.slates.sortOptions.za },
+  { id: 'words', label: strings.slates.sortOptions.words },
+];
+
+/**
+ * One quiet line of text choices (sort, show, from app). The active option is
+ * underlined in the accent colour instead of sitting in a bordered chip, so
+ * five sort orders and two filters stop reading as a wall of buttons.
+ */
+function ChoiceRow({ label, options, value, onChange }) {
+  return (
+    <div className="flex items-center flex-wrap gap-x-3 gap-y-1">
+      <span className="text-[var(--theme-text-dim)] select-none">{label}</span>
+      {options.map(option => (
+        <button
+          key={option.id}
+          onClick={() => onChange(option.id)}
+          title={option.title}
+          className={`transition-colors max-w-[12rem] truncate ${
+            value === option.id
+              ? 'text-[var(--theme-text)] underline underline-offset-4 decoration-[var(--theme-accent)]'
+              : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The word-cluster a slate carries around: status, sync/collab/app markers and
+ * clickable tags. Plain coloured words instead of bordered chips; tags wear a
+ * # so they stay recognisable (and pressable) without a box around them.
+ * The parent supplies flex, gap and text size.
+ */
+function SlateBadges({ slate, onTagFilter, maxTags = 3 }) {
+  const tags = Array.isArray(slate.tags) ? slate.tags : [];
+  const visibleTags = tags.slice(0, maxTags);
+  const remaining = tags.length - visibleTags.length;
+  const status = statusFor(slate);
+
+  return (
+    <>
+      <span className={status.cls}>{status.label}</span>
+      {Boolean(slate.adoption_pending) && (
+        <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
+          {strings.slates.status.syncing}
+        </span>
+      )}
+      {Boolean(slate.is_collab) && (
+        <span className="text-violet-400">{strings.collab.badge}</span>
+      )}
+      {slate.source_app_name && (
+        <span
+          className="text-[var(--theme-green)]"
+          title={strings.slates.status.fromAppTitle.replace('{app}', slate.source_app_name)}
+        >
+          {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
+        </span>
+      )}
+      {visibleTags.map(tag => (
+        <button
+          key={tag}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onTagFilter(tag);
+          }}
+          className="text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors max-w-[8rem] truncate"
+          title={tag}
+        >
+          #{tag}
+        </button>
+      ))}
+      {remaining > 0 && <span className="text-[var(--theme-text-dim)]">+{remaining}</span>}
+    </>
+  );
+}
+
+const menuItemCls = (danger) =>
+  `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm ${
+    danger ? 'text-[var(--theme-red)]' : 'hover:text-[var(--theme-text)]'
+  }`;
+
+/**
+ * The three-dot menu both layouts share. Own slates get pin/tags/publish/
+ * delete; slates shared with me get the two-step leave.
+ */
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed }) {
+  const isPinned = Boolean(slate.pinned_at);
+  return (
+    <div className="relative flex items-center flex-shrink-0">
+      <button
+        onClick={onToggle}
+        className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
+        title={strings.slates.menu.more}
+      >
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+          <circle cx="8" cy="2" r="1.5"/>
+          <circle cx="8" cy="8" r="1.5"/>
+          <circle cx="8" cy="14" r="1.5"/>
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+          {slate.shared ? (
+            <button onClick={onLeave} className={menuItemCls(true)}>
+              {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
+            </button>
+          ) : (
+            <>
+              <button onClick={onPin} className={menuItemCls(false)}>
+                {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
+              </button>
+              <button onClick={onTags} className={menuItemCls(false)}>
+                {strings.slates.menu.tags}
+              </button>
+              <button onClick={onPublish} className={menuItemCls(false)}>
+                {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+              </button>
+              <button onClick={onDelete} className={menuItemCls(true)}>
+                {strings.slates.menu.delete}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PinGlyph = () => (
+  <svg className="w-3.5 h-3.5 text-[var(--theme-text-dim)] flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
+  </svg>
+);
+
+/**
+ * One slate, in either clothing. `row` is the ledger line the list is made of:
+ * title on the left, a quiet right-aligned meta column, hairline dividers
+ * between rows. `card` keeps the bordered box for the grid. Both are thin
+ * layouts over the same title/badges/menu pieces.
+ */
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
+  const isPinned = Boolean(slate.pinned_at);
+  const title = slate.title || strings.slates.untitled;
+  const stats = (
+    <>
+      <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
+      <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
+    </>
+  );
+
+  if (layout === 'card') {
+    return (
+      <div
+        onClick={onOpen}
+        className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {isPinned && <PinGlyph />}
+            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">{title}</h3>
+          </div>
+          <SlateMenu slate={slate} {...menuProps} />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+        </div>
+
+        <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
+          <div className="flex items-center gap-3">{stats}</div>
+          <span>{formatDateShort(slate.updated_at)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={onOpen}
+      className="flex items-start md:items-center gap-3 px-2 py-3.5 hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors"
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {isPinned && <PinGlyph />}
+          <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate">{title}</h3>
+        </div>
+        {/* On a phone the meta wraps under the title; on desktop it sits as a
+            right-aligned column so dates line up down the page. */}
+        <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+          {stats}
+          <span>{formatDateShort(slate.updated_at)}</span>
+        </div>
+      </div>
+
+      <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
+        <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+        {stats}
+        <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
+      </div>
+
+      <SlateMenu slate={slate} {...menuProps} />
+    </div>
+  );
+}
 
 export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
   const [slates, setSlates] = useState([]);
@@ -113,6 +347,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     } finally {
       setCollabBusyId(null);
       setLeaveConfirmId(null);
+    }
+  };
+
+  // Two-step leave from the row menu: first press arms "sure?", a second
+  // press within 3s actually leaves.
+  const handleLeaveClick = (slate, e) => {
+    e.stopPropagation();
+    clearTimeout(leaveTimerRef.current);
+    if (leaveConfirmId === slate.sharedSlateId) {
+      setOpenMenuId(null);
+      handleLeaveShared(slate.sharedSlateId);
+    } else {
+      setLeaveConfirmId(slate.sharedSlateId);
+      leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
     }
   };
 
@@ -314,6 +562,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setTagsSaving(false);
   };
 
+  useEscape(deleteModal.show, cancelDelete);
+  useEscape(tagsModal.show, closeTagsEditor);
+
   const normalizeTag = (raw) => raw.trim().toLowerCase();
 
   const addTagFromInput = () => {
@@ -495,16 +746,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setOpenMenuId(openMenuId === id ? null : id);
   };
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  const formatDateShort = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-
   // Distinct apps that have created (dropped) slates, for the "from app" filter.
   const sourceApps = useMemo(() => {
     const map = new Map(); // client_id -> display name
@@ -605,19 +846,22 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-[#666]">{strings.slates.loading}</div>
+        <div className="text-[var(--theme-text-dim)]">{strings.slates.loading}</div>
       </div>
     );
   }
+
+  const hasAnySlates = slates.length > 0 || sharedSlates.length > 0;
+  const hasCollabSlates = slates.some(s => s.is_collab) || sharedSlates.length > 0;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
         <div className="flex justify-between items-center mb-4 md:mb-6">
-          <h1 className="text-xl md:text-2xl text-white">{strings.slates.title}</h1>
+          <h1 className="text-xl md:text-2xl text-[var(--theme-text)]">{strings.slates.title}</h1>
           <button
             onClick={onNewSlate}
-            className="border border-[#333] px-4 md:px-6 py-2 rounded hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 text-xs md:text-sm"
+            className="border border-[var(--theme-border)] text-[var(--theme-text)] px-4 md:px-6 py-2 rounded hover:bg-[var(--theme-accent)] hover:text-[var(--theme-bg)] hover:border-[var(--theme-accent)] transition-all duration-300 text-xs md:text-sm"
           >
             {strings.slates.newSlate}
           </button>
@@ -656,31 +900,17 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         )}
 
-        {/* Search + Sort + Filters */}
-        {(slates.length > 0 || sharedSlates.length > 0) && (
+        {/* Search on one line, every list control on one quiet line below it */}
+        {hasAnySlates && (
           <div className="flex flex-col gap-3 mb-6">
-            <div className="flex flex-col md:flex-row gap-3 md:items-center">
-              {/* Search */}
-              <div className="flex-1">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={strings.slates.searchPlaceholder}
-                  className="w-full h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
-                />
-              </div>
-
-              {/* Active tag filter */}
-              {tagFilter && (
-                <button
-                  onClick={() => setTagFilter(null)}
-                  className="h-10 px-3 rounded border border-[var(--theme-border)] bg-[var(--theme-bg-secondary)] text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)] transition-colors text-xs md:text-sm whitespace-nowrap"
-                  title={strings.slates.tags.filterLabel(tagFilter)}
-                >
-                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[var(--theme-text-dim)] ml-2">x</span>
-                </button>
-              )}
+            <div className="flex gap-3 items-center">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={strings.slates.searchPlaceholder}
+                className="flex-1 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
+              />
 
               {/* View Mode Toggle (desktop only: both layouts are one column
                   on a phone, so the control had nothing to switch) */}
@@ -711,425 +941,101 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               </div>
             </div>
 
-            {/* Sort */}
-            <div className="flex items-center gap-2 text-sm flex-wrap">
-              <span className="text-[var(--theme-text-dim)]">{strings.slates.sortLabel}</span>
-              {[
-                { id: 'recent', label: strings.slates.sortOptions.recent },
-                { id: 'oldest', label: strings.slates.sortOptions.oldest },
-                { id: 'a-z', label: strings.slates.sortOptions.az },
-                { id: 'z-a', label: strings.slates.sortOptions.za },
-                { id: 'words', label: strings.slates.sortOptions.words },
-              ].map(option => (
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
+              <ChoiceRow
+                label={strings.slates.sortLabel}
+                options={SORT_OPTIONS}
+                value={sortBy}
+                onChange={setSortBy}
+              />
+              {hasCollabSlates && (
+                <ChoiceRow
+                  label={strings.collab.filter.label}
+                  options={[
+                    { id: 'all', label: strings.collab.filter.all },
+                    { id: 'collab', label: strings.collab.filter.collab },
+                  ]}
+                  value={collabFilter ? 'collab' : 'all'}
+                  onChange={(id) => setCollabFilter(id === 'collab')}
+                />
+              )}
+              {sourceApps.length > 0 && (
+                <ChoiceRow
+                  label={strings.slates.filterByApp}
+                  options={[
+                    { id: ALL_APPS, label: strings.slates.filterAllApps },
+                    ...sourceApps.map(app => ({ id: app.id, label: app.name, title: app.name })),
+                  ]}
+                  value={appFilter ?? ALL_APPS}
+                  onChange={(id) => setAppFilter(id === ALL_APPS ? null : id)}
+                />
+              )}
+              {tagFilter && (
                 <button
-                  key={option.id}
-                  onClick={() => setSortBy(option.id)}
-                  className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
-                    sortBy === option.id
-                      ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-text)]'
-                      : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
-                  }`}
+                  onClick={() => setTagFilter(null)}
+                  className="text-[var(--theme-accent)] hover:text-[var(--theme-text)] transition-colors"
+                  title={strings.slates.tags.filterLabel(tagFilter)}
                 >
-                  {option.label}
+                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[var(--theme-text-dim)]">x</span>
                 </button>
-              ))}
+              )}
             </div>
-
-            {/* Filter by collab status (only when collaborative slates exist) */}
-            {(slates.some(s => s.is_collab) || sharedSlates.length > 0) && (
-              <div className="flex items-center gap-2 text-sm flex-wrap">
-                <span className="text-[var(--theme-text-dim)]">{strings.collab.filter.label}</span>
-                {[
-                  { on: false, label: strings.collab.filter.all },
-                  { on: true, label: strings.collab.filter.collab },
-                ].map(option => (
-                  <button
-                    key={option.label}
-                    onClick={() => setCollabFilter(option.on)}
-                    className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
-                      collabFilter === option.on
-                        ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-text)]'
-                        : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Filter by source app (only when app-created slates exist) */}
-            {sourceApps.length > 0 && (
-              <div className="flex items-center gap-2 text-sm flex-wrap">
-                <span className="text-[var(--theme-text-dim)]">{strings.slates.filterByApp}</span>
-                <button
-                  onClick={() => setAppFilter(null)}
-                  className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm ${
-                    !appFilter
-                      ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-text)]'
-                      : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
-                  }`}
-                >
-                  {strings.slates.filterAllApps}
-                </button>
-                {sourceApps.map(app => (
-                  <button
-                    key={app.id}
-                    onClick={() => setAppFilter(app.id)}
-                    title={app.name}
-                    className={`h-8 px-3 rounded border transition-colors text-xs md:text-sm max-w-[12rem] truncate ${
-                      appFilter === app.id
-                        ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-border)] text-[var(--theme-green)]'
-                        : 'bg-transparent border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)]'
-                    }`}
-                  >
-                    {app.name}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
-      {(slates.length === 0 && sharedSlates.length === 0) ? (
+      {!hasAnySlates ? (
         <div className="text-center py-16">
-          <p className="text-[#666] mb-4 text-sm md:text-base">{strings.slates.empty.message}</p>
+          <p className="text-[var(--theme-text-dim)] mb-4 text-sm md:text-base">{strings.slates.empty.message}</p>
           <button
             onClick={onNewSlate}
-            className="text-white hover:underline text-sm md:text-base"
+            className="text-[var(--theme-accent)] hover:underline text-sm md:text-base"
           >
             {strings.slates.empty.cta}
           </button>
         </div>
       ) : filteredAndSortedSlates.length === 0 ? (
         <div className="text-center py-16">
-          <p className="text-[#666] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
-        </div>
-      ) : effectiveViewMode === 'list' ? (
-        /* List View */
-        <div className="space-y-3">
-          {filteredAndSortedSlates.map((slate) => {
-            const isPinned = Boolean(slate.pinned_at);
-            const tags = Array.isArray(slate.tags) ? slate.tags : [];
-            const visibleTags = tags.slice(0, 4);
-            const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
-
-            const status = slate.shared
-              ? { label: strings.collab.shared.by(slate.owner), className: 'text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-              : slate.is_published
-                ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                : slate.published_at
-                  ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                  : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
-
-            return (
-              <div
-                key={slate.slate_number}
-                onClick={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
-                className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {isPinned && (
-                      <svg className="w-3.5 h-3.5 text-[var(--theme-text-dim)] flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
-                      </svg>
-                    )}
-                    <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">
-                      {slate.title || strings.slates.untitled}
-                    </h3>
-                  </div>
-
-                  <div className="relative flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={(e) => toggleMenu(slate.slate_number, e)}
-                      className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
-                      title={strings.slates.menu.more}
-                    >
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-                        <circle cx="8" cy="2" r="1.5"/>
-                        <circle cx="8" cy="8" r="1.5"/>
-                        <circle cx="8" cy="14" r="1.5"/>
-                      </svg>
-                    </button>
-
-                    {openMenuId === slate.slate_number && (
-                      <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
-                        {slate.shared ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearTimeout(leaveTimerRef.current);
-                              if (leaveConfirmId === slate.sharedSlateId) {
-                                setOpenMenuId(null);
-                                handleLeaveShared(slate.sharedSlateId);
-                              } else {
-                                setLeaveConfirmId(slate.sharedSlateId);
-                                leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
-                              }
-                            }}
-                            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
-                          >
-                            {leaveConfirmId === slate.sharedSlateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
-                          </button>
-                        ) : (
-                          <>
-                        <button
-                          onClick={(e) => togglePin(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
-                        </button>
-                        <button
-                          onClick={(e) => openTagsEditor(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {strings.slates.menu.tags}
-                        </button>
-                        <button
-                          onClick={(e) => togglePublish(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            setOpenMenuId(null);
-                            showDeleteConfirmation(slate.slate_number, slate.title, e);
-                          }}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
-                        >
-                          {strings.slates.menu.delete}
-                        </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2 items-center min-h-[24px]">
-                  <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
-                    {status.label}
-                  </span>
-                  {slate.adoption_pending && (
-                    <span
-                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-text-secondary)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)] animate-pulse"
-                      title={strings.slates.status.syncingTitle}
-                    >
-                      {strings.slates.status.syncing}
-                    </span>
-                  )}
-                  {!!slate.is_collab && (
-                    <span className="text-xs px-2 py-0.5 rounded border text-violet-400 border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
-                      {strings.collab.badge}
-                    </span>
-                  )}
-                  {slate.source_app_name && (
-                    <span
-                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
-                      title={strings.slates.status.fromAppTitle.replace('{app}', slate.source_app_name)}
-                    >
-                      {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
-                    </span>
-                  )}
-                  {visibleTags.map(tag => (
-                    <button
-                      key={tag}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setTagFilter(tag);
-                      }}
-                      className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                      title={tag}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                  {remainingTagCount > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-dim)]">
-                      +{remainingTagCount}
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
-                  <div className="flex items-center gap-3">
-                    <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
-                    <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
-                  </div>
-                  <span>{formatDateShort(slate.updated_at)}</span>
-                </div>
-              </div>
-            );
-          })}
+          <p className="text-[var(--theme-text-dim)] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
         </div>
       ) : (
-        /* Grid View */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredAndSortedSlates.map((slate) => {
-            const isPinned = Boolean(slate.pinned_at);
-            const tags = Array.isArray(slate.tags) ? slate.tags : [];
-            const visibleTags = tags.slice(0, 3);
-            const remainingTagCount = Math.max(0, tags.length - visibleTags.length);
-
-            const status = slate.shared
-              ? { label: strings.collab.shared.by(slate.owner), className: 'text-[var(--theme-accent)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-              : slate.is_published
-                ? { label: strings.slates.status.public, className: 'text-[var(--theme-blue)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                : slate.published_at
-                  ? { label: strings.slates.status.wasPublic, className: 'text-[var(--theme-orange)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' }
-                  : { label: strings.slates.status.private, className: 'text-[var(--theme-text-muted)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]' };
-
-            return (
-              <div
-                key={slate.slate_number}
-                onClick={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
-                className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer group flex flex-col min-h-[132px]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    {isPinned && (
-                      <svg className="w-3.5 h-3.5 text-[var(--theme-text-dim)] flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                        <path d="M10 1.5c0-.3-.2-.5-.5-.5h-3c-.3 0-.5.2-.5.5V6L4 8v1h3v5l1-1 1 1V9h3V8l-2-2V1.5z" />
-                      </svg>
-                    )}
-                    <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate flex-1">
-                      {slate.title || strings.slates.untitled}
-                    </h3>
-                  </div>
-
-                  <div className="relative flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={(e) => toggleMenu(slate.slate_number, e)}
-                      className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
-                      title={strings.slates.menu.more}
-                    >
-                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-                        <circle cx="8" cy="2" r="1.5"/>
-                        <circle cx="8" cy="8" r="1.5"/>
-                        <circle cx="8" cy="14" r="1.5"/>
-                      </svg>
-                    </button>
-
-                    {openMenuId === slate.slate_number && (
-                      <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
-                        {slate.shared ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearTimeout(leaveTimerRef.current);
-                              if (leaveConfirmId === slate.sharedSlateId) {
-                                setOpenMenuId(null);
-                                handleLeaveShared(slate.sharedSlateId);
-                              } else {
-                                setLeaveConfirmId(slate.sharedSlateId);
-                                leaveTimerRef.current = setTimeout(() => setLeaveConfirmId(null), 3000);
-                              }
-                            }}
-                            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
-                          >
-                            {leaveConfirmId === slate.sharedSlateId ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
-                          </button>
-                        ) : (
-                          <>
-                        <button
-                          onClick={(e) => togglePin(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
-                        </button>
-                        <button
-                          onClick={(e) => openTagsEditor(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {strings.slates.menu.tags}
-                        </button>
-                        <button
-                          onClick={(e) => togglePublish(slate, e)}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-text)] transition-colors text-xs md:text-sm"
-                        >
-                          {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            setOpenMenuId(null);
-                            showDeleteConfirmation(slate.slate_number, slate.title, e);
-                          }}
-                          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-red)] transition-colors text-xs md:text-sm"
-                        >
-                          {strings.slates.menu.delete}
-                        </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2 items-center min-h-[24px]">
-                  <span className={`text-xs px-2 py-0.5 rounded border ${status.className}`}>
-                    {status.label}
-                  </span>
-                  {slate.adoption_pending && (
-                    <span
-                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-text-secondary)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)] animate-pulse"
-                      title={strings.slates.status.syncingTitle}
-                    >
-                      {strings.slates.status.syncing}
-                    </span>
-                  )}
-                  {!!slate.is_collab && (
-                    <span className="text-xs px-2 py-0.5 rounded border text-violet-400 border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]">
-                      {strings.collab.badge}
-                    </span>
-                  )}
-                  {slate.source_app_name && (
-                    <span
-                      className="text-xs px-2 py-0.5 rounded border text-[var(--theme-green)] border-[var(--theme-border)] bg-[var(--theme-bg-tertiary)]"
-                      title={strings.slates.status.fromAppTitle.replace('{app}', slate.source_app_name)}
-                    >
-                      {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
-                    </span>
-                  )}
-                  {visibleTags.map(tag => (
-                    <button
-                      key={tag}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setTagFilter(tag);
-                      }}
-                      className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                      title={tag}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                  {remainingTagCount > 0 && (
-                    <span className="text-xs px-2 py-0.5 rounded border border-[var(--theme-border)] text-[var(--theme-text-dim)]">
-                      +{remainingTagCount}
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-auto pt-3 flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
-                  <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
-                  <span>{formatDateShort(slate.updated_at)}</span>
-                </div>
-              </div>
-            );
-          })}
+        <div
+          className={
+            effectiveViewMode === 'list'
+              ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
+              : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
+          }
+        >
+          {filteredAndSortedSlates.map((slate) => (
+            <SlateItem
+              key={slate.slate_number}
+              slate={slate}
+              layout={effectiveViewMode === 'list' ? 'row' : 'card'}
+              onOpen={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
+              onTagFilter={setTagFilter}
+              menuProps={{
+                isOpen: openMenuId === slate.slate_number,
+                onToggle: (e) => toggleMenu(slate.slate_number, e),
+                onPin: (e) => togglePin(slate, e),
+                onTags: (e) => openTagsEditor(slate, e),
+                onPublish: (e) => togglePublish(slate, e),
+                onDelete: (e) => {
+                  setOpenMenuId(null);
+                  showDeleteConfirmation(slate.slate_number, slate.title, e);
+                },
+                onLeave: (e) => handleLeaveClick(slate, e),
+                leaveArmed: leaveConfirmId === slate.sharedSlateId,
+              }}
+            />
+          ))}
         </div>
       )}
 
       {/* Delete Confirmation Modal */}
       {deleteModal.show && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-white mb-4">{strings.slates.deleteModal.title}</h2>
-            <p className="text-sm text-[#666] mb-6 break-words">
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
+            <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-4">{strings.slates.deleteModal.title}</h2>
+            <p className="text-sm text-[var(--theme-text-muted)] mb-6 break-words">
               {strings.slates.deleteModal.message(deleteModal.slateTitle.length > 100 ? deleteModal.slateTitle.substring(0, 100) + '...' : deleteModal.slateTitle)}
             </p>
             <div className="flex gap-3">
@@ -1141,7 +1047,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               </button>
               <button
                 onClick={cancelDelete}
-                className="flex-1 border border-[#333] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-text)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.slates.deleteModal.cancel}
               </button>
@@ -1149,7 +1055,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         </div>
       )}
-
       {/* Tags Modal */}
       {tagsModal.show && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
