@@ -9,6 +9,13 @@ if (!fs.existsSync(dbDir)) {
 
 const db = new Database(path.join(dbDir, 'justtype.db'));
 
+// WAL lets readers run concurrently with a writer instead of being locked out
+// for the duration of every write, which is what a save-heavy workload needs.
+// busy_timeout makes the rare genuine lock wait rather than throw SQLITE_BUSY.
+db.pragma('journal_mode = WAL');
+db.pragma('busy_timeout = 5000');
+db.pragma('synchronous = NORMAL');
+
 // Initialize database schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
