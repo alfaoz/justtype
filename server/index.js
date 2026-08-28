@@ -74,15 +74,34 @@ async function verifyTurnstileToken(req, res, next) {
   }
 
   try {
-    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        secret: process.env.TURNSTILE_SECRET_KEY,
-        response: turnstileToken,
-        remoteip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress
-      })
-    });
+    // Cap the wait: without a timeout a hung siteverify blocks the request until
+    // the socket dies, which is a worse outage than letting the request through.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    let response;
+    try {
+      response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: process.env.TURNSTILE_SECRET_KEY,
+          response: turnstileToken,
+          remoteip: req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress
+        }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    // Turnstile itself being broken (5xx) must not lock every user out of
+    // logging in. A verdict we can read is enforced; an unreadable one fails
+    // open, because bot spam is a smaller harm than a total auth outage.
+    if (response.status >= 500) {
+      console.error(`Turnstile siteverify returned ${response.status}; failing open`);
+      return next();
+    }
 
     const data = await response.json();
 
@@ -92,8 +111,10 @@ async function verifyTurnstileToken(req, res, next) {
 
     next();
   } catch (error) {
-    console.error('Turnstile verification error:', error);
-    return res.status(500).json({ error: 'Verification service unavailable' });
+    // Network error, timeout, or unparseable response: Cloudflare is
+    // unreachable rather than rejecting this user. Fail open, same reasoning.
+    console.error('Turnstile verification unreachable; failing open:', error.message);
+    return next();
   }
 }
 

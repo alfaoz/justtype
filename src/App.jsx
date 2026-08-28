@@ -282,6 +282,8 @@ export default function App() {
   useEffect(() => {
     if (token && token !== 'checking') {
       fetchNotifications();
+      const interval = window.setInterval(fetchNotifications, 30 * 1000);
+      return () => window.clearInterval(interval);
     }
   }, [token]);
 
