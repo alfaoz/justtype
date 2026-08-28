@@ -19,6 +19,7 @@ import { PinSetupModal } from './components/PinSetupModal';
 import { API_URL } from './config';
 import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } from './crypto';
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
+import { recoverLostSlates } from './slateRecovery';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
@@ -77,17 +78,17 @@ export default function App() {
     applyThemeVariables(themeToApply);
   }, []);
 
-  // Drop box: once the user is unlocked (master key present in IndexedDB), make
-  // sure they have a published keypair so apps can drop encrypted slates to them,
-  // then start real-time delivery (SSE + push) and sweep any pending drops. Drops
-  // adopt into the vault as normal master-key-encrypted slates. Torn down on logout.
+  // On every authenticated device, preserve any origin-local incident copies
+  // before normal use. E2E copies are decrypted only after the user unlocks.
+  // The drop box still starts only when a master key is present.
   useEffect(() => {
     if (!userId || token === 'checking' || !token) return;
     let cancelled = false;
     (async () => {
       try {
         const masterKey = await getSlateKey(userId);
-        if (!masterKey || cancelled) return; // locked / no E2E key on this device yet
+        recoverLostSlates(userId, masterKey).catch((e) => console.warn('slate recovery failed', e));
+        if (!masterKey || cancelled) return;
         await ensureUserKeypair(userId, masterKey);
         if (cancelled) return;
         startDropRealtime(userId, masterKey, () => setDropRefreshKey((k) => k + 1));
@@ -96,7 +97,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; stopDropRealtime(); };
-  }, [userId, token]);
+  }, [userId, token, showPinSetup]);
 
   // Setup global login nudge trigger for Writer component
   useEffect(() => {

@@ -44,3 +44,7 @@ GOOGLE_DRIVE_IMPLEMENTATION_PLAN.md
 
 # Local DB snapshots (pushed offsite by backup-db.sh, never committed)
 backups/
+
+# Incident-recovery working data (encrypted user blobs, manifests)
+recovery/
+*.bak-*

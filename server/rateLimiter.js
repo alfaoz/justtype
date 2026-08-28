@@ -24,6 +24,8 @@ class RateLimiter {
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
     deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
+    recoverySources: { max: 10, windowMs: 60 * 60 * 1000 }, // one automatic incident sweep per login
+    recoveryReport: { max: 50, windowMs: 24 * 60 * 60 * 1000 }, // successful incident restores only
     // Admin and public operations (IP-based)
     adminAuth: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 attempts per 15 minutes (IP-based)
     viewPublicSlate: { max: 100, windowMs: 60 * 1000 }, // 100 per minute per IP (generous for normal viewing)
