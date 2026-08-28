@@ -41,3 +41,6 @@ GOOGLE_DRIVE_IMPLEMENTATION_PLAN.md
 
 # env backups
 .env.bak.*
+
+# Local DB snapshots (pushed offsite by backup-db.sh, never committed)
+backups/
