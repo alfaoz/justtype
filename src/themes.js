@@ -262,6 +262,11 @@ const saveCustomThemes = (themes) => {
 // Hidden themes (kept in code but not shown in UI)
 export const hiddenThemes = ['legacy'];
 
+// Theme for a browser with no stored choice: follow the device's color scheme.
+// Once the user picks a theme it lands in localStorage and this never runs again.
+export const deviceDefaultTheme = () =>
+  (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+
 // Get list of all theme ids (built-in + custom), excluding hidden themes
 export const getThemeIds = () => {
   const customThemes = getCustomThemes();

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, f
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
-import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount } from '../themes';
+import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { fetchSharedSlate } from '../collab';
@@ -308,7 +308,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const autoZenTimeoutRef = useRef(null);
   const autoZenActiveRef = useRef(false);
   const [theme, setTheme] = useState(() => {
-    return localStorage.getItem('justtype-theme') || 'light';
+    return localStorage.getItem('justtype-theme') || deviceDefaultTheme();
   });
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');

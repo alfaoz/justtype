@@ -24,7 +24,7 @@ import { generateRecoveryPhrase, generateSalt, deriveKey, wrapKey, unwrapKey } f
 import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
-import { applyThemeVariables, themeExists, fetchAndMergePreferences } from './themes';
+import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
@@ -86,9 +86,9 @@ export default function App() {
   // Initialize theme on mount - this ensures CSS variables are set for all pages
   // including special pages like /verify, /status, /cli that don't render Writer
   useEffect(() => {
-    const savedTheme = localStorage.getItem('justtype-theme') || 'light';
-    // Validate theme exists, fallback to light if not
-    const themeToApply = themeExists(savedTheme) ? savedTheme : 'light';
+    const savedTheme = localStorage.getItem('justtype-theme') || deviceDefaultTheme();
+    // Validate theme exists, fallback to the device default if not
+    const themeToApply = themeExists(savedTheme) ? savedTheme : deviceDefaultTheme();
     applyThemeVariables(themeToApply);
   }, []);
 

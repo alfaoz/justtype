@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
-import { applyThemeVariables } from '../themes';
+import { applyThemeVariables, deviceDefaultTheme } from '../themes';
 import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
 
@@ -13,7 +13,7 @@ export function PublicViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
-  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || 'light');
+  const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode

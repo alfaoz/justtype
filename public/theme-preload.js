@@ -18,7 +18,8 @@
       light: '#faf9f7',
       sepia: '#f4ecd8',
       midnight: '#0a0a14',
-    }[localStorage.getItem('justtype-theme') || 'light'];
+    }[localStorage.getItem('justtype-theme')
+      || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
     if (!bg) return;
     document.documentElement.style.setProperty('--theme-bg', bg);
     document.documentElement.style.backgroundColor = bg;
