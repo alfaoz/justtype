@@ -7,7 +7,7 @@ const db = require('./database');
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: 'https://justtype.io/auth/google/callback'
+  callbackURL: `${process.env.PUBLIC_URL || 'https://justtype.io'}/auth/google/callback`
 }, async (accessToken, refreshToken, profile, done) => {
   try {
     const email = profile.emails[0].value;
@@ -129,7 +129,7 @@ function decryptEncryptionKey(encryptedKeyBase64) {
 passport.use('google-link', new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: 'https://justtype.io/auth/google/link/callback',
+  callbackURL: `${process.env.PUBLIC_URL || 'https://justtype.io'}/auth/google/link/callback`,
   passReqToCallback: true
 }, async (req, accessToken, refreshToken, profile, done) => {
   // For linking, we just pass through the Google profile
