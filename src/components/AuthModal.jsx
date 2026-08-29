@@ -6,6 +6,7 @@ import { VERSION } from '../version';
 import { generateSlateKey, generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, encryptContent, decryptContent } from '../crypto';
 import { saveSlateKey, getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
+import { deviceDefaultTheme } from '../themes';
 import { VerifyBadge } from './VerifyBadge';
 
 export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = '', resumeVerificationEmail = null, onVerified = null }) {
@@ -260,8 +261,10 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           username, password, email, termsAccepted,
           ...authProof,
           wrappedKey, recoveryWrappedKey, recoverySalt, encryptionSalt,
-          // Keep whatever theme the user was browsing with (avoids reset to default on first login)
-          theme: localStorage.getItem('justtype-theme') || undefined
+          // Keep whatever theme the user was browsing with (avoids reset to default
+          // on first login). No stored choice means the device default is showing,
+          // so that is the theme the account starts with.
+          theme: localStorage.getItem('justtype-theme') || deviceDefaultTheme()
         };
       }
 

@@ -1825,7 +1825,10 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
     }
 
     res.json({
-      theme: user.theme || 'light',
+      // null, not a default: a user who never picked a theme has no preference
+      // to apply, and inventing one here overrode the client's device default
+      // (dark-mode devices flipped to light right after signup).
+      theme: user.theme || null,
       customThemes
     });
   } catch (error) {
