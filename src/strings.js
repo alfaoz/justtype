@@ -29,7 +29,7 @@ const strings = {
     publicState: {
       current: 'public',
       outdated: 'private draft · sync',
-      outdatedHint: 'your public copy is stale — click to update it'
+      outdatedHint: 'your public copy is stale. click to update it'
     },
     collabState: {
       label: 'collab',
@@ -82,7 +82,7 @@ const strings = {
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
-      forgottenPublic: 'unpublished — link disabled'
+      forgottenPublic: 'unpublished, link disabled'
     },
     publishMenu: {
       forget: 'unpublish completely',
@@ -256,7 +256,6 @@ const strings = {
         hint: 'anyone with the link can join. revoking it rotates the slate key, locking the old link out.'
       },
       needsSave: 'save this slate before sharing it',
-      appShared: 'this slate is shared with an app — a slate cannot be app-shared and collaborative at once.',
       close: 'close'
     },
     history: {
@@ -469,7 +468,7 @@ const strings = {
   pin: {
     googleReauth: {
       title: 'finish setting up encryption',
-      message: 'your slates are not yet end-to-end encrypted. sign in with google once more to finish setup — you\'ll pick a pin right after.',
+      message: 'your slates are not yet end-to-end encrypted. sign in with google once more to finish setup. you\'ll pick a pin right after.',
       button: 'sign in with google',
       later: 'later'
     },
@@ -565,19 +564,19 @@ const strings = {
       title: 'connected apps',
       loading: 'loading...',
       empty: 'no third-party apps have access to your account.',
-      description: 'apps you authorized to sign in with justtype. private slates stay encrypted unless you explicitly share specific ones below — and you can stop sharing anytime.',
+      description: 'apps you authorized to sign in with justtype. private slates stay encrypted unless you explicitly share specific ones below, and you can stop sharing anytime.',
       canAccess: 'can access',
       revoke: 'revoke',
       revoking: 'revoking...',
       shareSlates: 'manage slate access',
       sharedCount: (n) => `${n} slate${n === 1 ? '' : 's'} shared`,
-      sharesAll: 'full access — all private slates',
+      sharesAll: 'full access: all private slates',
       deviceCount: (n) => `${n} connected installation${n === 1 ? '' : 's'}`,
-      noDeviceYet: 'no installation connected yet — sharing applies once the app connects one.'
+      noDeviceYet: 'no installation connected yet. sharing applies once the app connects one.'
     },
     shareSlates: {
       title: 'private slate access',
-      subtitle: (app) => `control which private slates ${app} can read and write. everything is re-encrypted in your browser and locked to this app's key — your password and master key never leave your device.`,
+      subtitle: (app) => `control which private slates ${app} can read and write. everything is re-encrypted in your browser and locked to this app's key. your password and master key never leave your device.`,
       loading: 'loading your slates...',
       locked: 'unlock your account (enter your password/pin) before sharing, so your slates can be decrypted in this browser.',
       loadError: 'could not load sharing info.',
@@ -598,14 +597,14 @@ const strings = {
       unsharingAll: 'turning off…',
       advanced: 'or share specific slates only',
       advancedHint: 'pick individual slates instead of granting full access.',
-      noDevices: (app) => `${app} hasn't connected an installation yet. you can turn on access now — your slates will sync to it automatically the moment it connects.`
+      noDevices: (app) => `${app} hasn't connected an installation yet. you can turn on access now. your slates will sync to it automatically the moment it connects.`
     },
     authorizeShare: {
       sharing: (app) => `sharing your private slates with ${app}`,
       finishing: (app) => `finishing up with ${app}`,
       preparing: 'preparing your slates…',
       progress: (done, total) => `encrypting and sharing… ${done}/${total}`,
-      finishingNote: 'almost there — sending you back to the app.',
+      finishingNote: 'almost there, sending you back to the app.',
       lockedNote: (app) => `${app} will get access to your slates the next time you open justtype unlocked. sending you back now.`,
       dontClose: 'this only takes a moment. please don\'t close this tab.',
       errorTitle: 'something went wrong',
@@ -1042,7 +1041,7 @@ take care!
     version: (v) => `version ${v}`,
     buildDate: (d) => `built ${d}`,
     githubSource: 'view source on github',
-    betaBuild: 'beta build — served code matches the server manifest. github comparison runs on production releases only.',
+    betaBuild: 'beta build: served code matches the server manifest. github comparison runs on production releases only.',
     betaBadge: 'beta build',
     betaGithubNote: 'beta builds are not published to github pages. full three-way verification runs on production (justtype.io) releases.',
     github: {
@@ -1130,7 +1129,7 @@ take care!
       meta: 'list slates, counts, dates (private titles stay encrypted)',
       private: 'read private slates the user explicitly shares with your app (revocable per-slate)',
       write: 'create and edit published slates on the user\'s behalf',
-      create: 'drop new private (encrypted) slates into the user\'s account — they appear next time the user opens justtype',
+      create: 'drop new private (encrypted) slates into the user\'s account. they appear next time the user opens justtype',
       delete: 'delete slates on the user\'s behalf',
       publish: 'publish and unpublish slates on the user\'s behalf'
     },
@@ -1140,19 +1139,19 @@ take care!
       specUrl: '/dev/spec.md',
       what: {
         title: 'introduction',
-        body: 'justtype provides a standard oauth 2.0 authorization-code flow with PKCE — the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their content. this page is the full reference; the wizard generates ready-to-paste code.'
+        body: 'justtype provides a standard oauth 2.0 authorization-code flow with PKCE, the same pattern as "sign in with google". register an app, send users to justtype to approve, and get a scoped token to confirm their identity and read their content. this page is the full reference; the wizard generates ready-to-paste code.'
       },
       quickstart: {
         title: 'quickstart',
-        body: 'a working "sign in with justtype" takes five steps. below is the server-side (node) shape — the wizard fills in your real client_id, redirect, and scopes for node, browser, python, or curl.'
+        body: 'a working "sign in with justtype" takes five steps. below is the server-side (node) shape. the wizard fills in your real client_id, redirect, and scopes for node, browser, python, or curl.'
       },
       encryption: {
         title: 'encryption',
-        body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata. private writing stays encrypted — the server never sees plaintext or keys — unless the user explicitly delegates specific slates to your app (see private slates). even then, justtype never hands out a password or master key; it only stores blobs it cannot read.'
+        body: 'justtype is end-to-end encrypted. your app can verify identity, read published slates, and list metadata. private writing stays encrypted (the server never sees plaintext or keys) unless the user explicitly delegates specific slates to your app (see private slates). even then, justtype never hands out a password or master key; it only stores blobs it cannot read.'
       },
       delegation: {
         title: 'private slates',
-        body: 'with the slates:read:private scope, a user can grant your app access to their private slates — all of them (current + future) with one switch, or specific ones. it works by per-installation key delegation: each install of your app registers its own public key, and in the user\'s browser each shared slate is re-encrypted under a fresh content key wrapped to that install\'s key. justtype only stores the wrapped blobs — it still cannot read them, and one install\'s key can never decrypt another\'s. you decrypt with the install\'s private key.',
+        body: 'with the slates:read:private scope, a user can grant your app access to their private slates: all of them (current + future) with one switch, or specific ones. it works by per-installation key delegation: each install of your app registers its own public key, and in the user\'s browser each shared slate is re-encrypted under a fresh content key wrapped to that install\'s key. justtype only stores the wrapped blobs. it still cannot read them, and one install\'s key can never decrypt another\'s. you decrypt with the install\'s private key.',
         steps: [
           'request the slates:read:private scope in your oauth flow as usual; the user approves.',
           'register THIS install\'s public key. easiest: pass device_public_key on /oauth/authorize so it registers during consent (reads work instantly, and "allow full access" wraps the library before redirect). or POST /api/oauth/devices { public_key } after the token exchange. the private key never leaves the device; private reads return 409 needs_device until one is registered.',
@@ -1162,21 +1161,21 @@ take care!
         ],
         note: 'access is revocable anytime: the user (or revoking your app) deletes the blobs and future reads stop. while a slate stays shared, the user\'s own edits re-sync to you automatically.',
         writeTitle: 'writing back (two-way)',
-        write: 'with a shared slate you can also write. re-encrypt under the SAME content key you unwrapped (do not generate a new one), then PATCH /api/oauth/slates/:n/delegated with the new enc_content (and optional enc_title). the next time the user opens that slate in justtype, your edit is decrypted with their master key and merged into their canonical copy. tip: GET the slate again right before writing so you have the current key — the user\'s own edits rotate it.',
+        write: 'with a shared slate you can also write. re-encrypt under the SAME content key you unwrapped (do not generate a new one), then PATCH /api/oauth/slates/:n/delegated with the new enc_content (and optional enc_title). the next time the user opens that slate in justtype, your edit is decrypted with their master key and merged into their canonical copy. tip: GET the slate again right before writing so you have the current key (the user\'s own edits rotate it).',
         dropTitle: 'creating new private slates (the drop box)',
-        drop: 'with the slates:create scope your app can add brand-new encrypted slates to a user — without ever holding their master key. it is the mirror image of delegation: each user publishes their own public key, and you wrap a fresh content key to THAT (not to your app key). the user\'s client decrypts the drop on next unlock and adopts it as a normal private slate. neither justtype nor your server sees the plaintext.',
+        drop: 'with the slates:create scope your app can add brand-new encrypted slates to a user without ever holding their master key. it is the mirror image of delegation: each user publishes their own public key, and you wrap a fresh content key to THAT (not to your app key). the user\'s client decrypts the drop on next unlock and adopts it as a normal private slate. neither justtype nor your server sees the plaintext.',
         dropPoints: [
-          'request slates:create; fetch the user\'s public key (GET /api/oauth/users/me/public-key). if it is null they have no keypair yet — retry after they next open justtype.',
+          'request slates:create; fetch the user\'s public key (GET /api/oauth/users/me/public-key). if it is null they have no keypair yet. retry after they next open justtype.',
           'encrypt content + title under a fresh 32-byte content key (same blob format as everything else), wrap that key to the user\'s public key, and POST /api/oauth/slates/drop.',
-          'timing: appears in ~1s if justtype is open (live sse), otherwise the next time the user opens justtype. there are no notifications — drops surface silently in their slate list. only their device can decrypt it, so it is never instant when no tab is open — tell users "shows up next time you open justtype".',
+          'timing: appears in ~1s if justtype is open (live sse), otherwise the next time the user opens justtype. there are no notifications, drops surface silently in their slate list. only their device can decrypt it, so it is never instant when no tab is open, so tell users "shows up next time you open justtype".',
           'track delivery with GET /api/oauth/dropbox: it returns keypair_ready plus pending/delivered counts for your app, so you can show "2 notes waiting" or "all synced" instead of guessing.',
-          'the note is tagged "from <your app>" in the user\'s list (with a filter-by-app control). once adopted it is re-encrypted to their master key and is theirs permanently — it stays even if they remove your app, and an un-adopted drop survives revocation too.'
+          'the note is tagged "from <your app>" in the user\'s list (with a filter-by-app control). once adopted it is re-encrypted to their master key and is theirs permanently. it stays even if they remove your app, and an un-adopted drop survives revocation too.'
         ]
       },
       scopes: {
         title: 'scopes',
         recommendedTitle: 'recommended: a full justtype integration',
-        recommendedBody: 'building a real justtype client — one that handles a user\'s writing the way justtype does? request this bundle. it is end-to-end encrypted by default (read private + create), with full lifecycle control (delete, publish). the user approves it on one consent screen, which also offers a one-tap "allow full access to all my private slates" toggle.',
+        recommendedBody: 'building a real justtype client, one that handles a user\'s writing the way justtype does? request this bundle. it is end-to-end encrypted by default (read private + create), with full lifecycle control (delete, publish). the user approves it on one consent screen, which also offers a one-tap "allow full access to all my private slates" toggle.',
         recommendedBundle: 'identity slates:read:meta slates:read:private slates:create slates:delete slates:publish',
         recommendedNote: 'add slates:write only if you also need to create/edit plaintext published slates directly. an e2e-first client doesn\'t need it.'
       },
@@ -1229,7 +1228,7 @@ take care!
           ['GET /api/oauth/drops[/:id]', '{ drop_id, status: "pending"|"adopted"|"discarded",\n  slate_number|null, created_at, adopted_at, discarded_at }\n  // slate_number is set once the user adopts; list form returns an array'],
           ['GET /api/oauth/slates', '[ { slate_number, is_published, share_id, title|null,\n    title_encrypted, word_count, char_count,\n    created_at, updated_at, published_at } ]'],
           ['GET /api/oauth/sync?since=<ISO>', '{ changed: [ <meta rows, as /slates> ],\n  deleted: [ { slate_number, deleted_at } ],\n  cursor, has_more }   // omit since for a full baseline; page while has_more'],
-          ['GET /api/oauth/slates/:n  (published)', '{ slate_number, delegated: false, published: true,\n  title, content }   // plaintext — published slates are public'],
+          ['GET /api/oauth/slates/:n  (published)', '{ slate_number, delegated: false, published: true,\n  title, content }   // plaintext, published slates are public'],
           ['GET /api/oauth/slates/:n  (delegated)', '{ slate_number, delegated: true,\n  key_scheme: "rsa-oaep-sha256", content_scheme: "aes-256-gcm",\n  wrapped_key, enc_content, enc_title, shared_at }'],
           ['GET /api/oauth/slates/:n  (private, not shared)', '{ slate_number, delegated: false, encrypted: true,\n  encrypted_content, note }'],
           ['POST /api/oauth/slates/batch', 'req:  { slate_numbers: [..] }   // max 100\nok:   { slates: [ <same shape as GET /slates/:n> ], missing: [..] }'],
@@ -1239,36 +1238,36 @@ take care!
         ]
       },
       gotchas: {
-        title: 'gotchas — read these',
+        title: 'gotchas: read these',
         points: [
-          'the delegated write (PATCH /api/oauth/slates/:n/delegated) is authorized by slates:read:private, NOT slates:write — slates:write is only for plaintext/published slates. requesting slates:write and PATCHing delegated returns 403.',
-          'slates:write only creates/edits plaintext (server-readable) slates — even with publish:false. to create a NEW end-to-end-encrypted slate use slates:create + POST /api/oauth/slates/drop (the drop box). there is no way to author E2E content through slates:write.',
+          'the delegated write (PATCH /api/oauth/slates/:n/delegated) is authorized by slates:read:private, NOT slates:write. slates:write is only for plaintext/published slates. requesting slates:write and PATCHing delegated returns 403.',
+          'slates:write only creates/edits plaintext (server-readable) slates, even with publish:false. to create a NEW end-to-end-encrypted slate use slates:create + POST /api/oauth/slates/drop (the drop box). there is no way to author E2E content through slates:write.',
           'a drop returns 409 keypair_unavailable until the user has opened justtype at least once after this feature shipped (that is when their keypair is generated). handle it by retrying later, not as a hard failure.',
           'the blob IV is 16 bytes, not the usual 12. layout is IV(16) + authTag(16) + ciphertext, base64. a hardcoded 12-byte IV produces blobs justtype cannot read.',
           'RSA unwrap MUST set oaepHash: "sha256". node defaults OAEP to sha-1, which fails with a garbage key and an opaque error.',
-          'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational — set it to an ISO timestamp when you write; it is not authoritative.',
+          'content decrypts to JSON { content, uploadedAt }; title decrypts to a raw string. uploadedAt is informational: set it to an ISO timestamp when you write; it is not authoritative.',
           'a stale content key is expected, not a bug: the user\'s own edits rotate the per-slate key, so a cached key fails with a GCM auth error ("unable to authenticate data"). always GET the slate again right before writing.',
           'there is no shared app key. each INSTALL generates its own RSA keypair and registers the public half via POST /api/oauth/devices after authorizing (the private key never leaves the device). private reads/writes return 409 needs_device until you do. never embed a private key in a distributed build.',
-          'slates:read:private is the full-read scope: it also covers published slates (which are public anyway), so GET /api/oauth/slates/:n returns plaintext for a published slate and you do not need slates:read:public as well. it does NOT include the slate list (slates:read:meta) — request that separately if you need to enumerate.'
+          'slates:read:private is the full-read scope: it also covers published slates (which are public anyway), so GET /api/oauth/slates/:n returns plaintext for a published slate and you do not need slates:read:public as well. it does NOT include the slate list (slates:read:meta), so request that separately if you need to enumerate.'
         ]
       },
       errors: {
         title: 'errors',
         points: [
-          '400 invalid_request / invalid_grant — bad or expired code, PKCE mismatch, or missing parameters.',
-          '401 invalid_client — wrong client_id/secret. 401 invalid_token — missing, expired, or revoked bearer token.',
-          '403 insufficient_scope — your token lacks the scope the endpoint needs (error_description names it).',
-          '403 on a delegated slate — the user has not shared that slate with your app yet.',
-          '413 — content over 5 MB, or a grant blob over 8 MB per field.',
-          '429 rate_limited — too many requests. honour the Retry-After header (seconds) and back off. the body is JSON, like every other error.',
-          'every error is JSON { error, error_description } — never HTML, even for 404s, malformed bodies, rate limits, or upstream 5xx. safe to JSON.parse unconditionally.',
-          'GCM "unable to authenticate data" on decrypt — almost always a stale rotated key (re-GET), or a wrong oaepHash / IV length. not a server error.'
+          '400 invalid_request / invalid_grant: bad or expired code, PKCE mismatch, or missing parameters.',
+          '401 invalid_client: wrong client_id/secret. 401 invalid_token: missing, expired, or revoked bearer token.',
+          '403 insufficient_scope: your token lacks the scope the endpoint needs (error_description names it).',
+          '403 on a delegated slate: the user has not shared that slate with your app yet.',
+          '413: content over 5 MB, or a grant blob over 8 MB per field.',
+          '429 rate_limited: too many requests. honour the Retry-After header (seconds) and back off. the body is JSON, like every other error.',
+          'every error is JSON { error, error_description }, never HTML, even for 404s, malformed bodies, rate limits, or upstream 5xx. safe to JSON.parse unconditionally.',
+          'GCM "unable to authenticate data" on decrypt: almost always a stale rotated key (re-GET), or a wrong oaepHash / IV length. not a server error.'
         ]
       },
       tokens: {
         title: 'tokens',
         points: [
-          'access token: scoped JWT, 1 hour. only works on /api/oauth/* — never as a justtype login.',
+          'access token: scoped JWT, 1 hour. only works on /api/oauth/*, never as a justtype login.',
           'refresh token: opaque, 90 days, single-use (rotates on every refresh).',
           'authorization code: single-use, expires in 60 seconds.',
           'always verify state. always use S256 PKCE. https only. users can revoke you from their account.'
@@ -1311,7 +1310,7 @@ take care!
       editorBadge: 'editor',
       viewerBadge: 'viewer',
       sharedBy: (u) => `shared by @${u}`,
-      viewOnlyNote: 'you have view-only access — only the owner or an editor can change settings.',
+      viewOnlyNote: 'you have view-only access. only the owner or an editor can change settings.',
       deleteModal: {
         title: 'delete app?',
         message: (name) => `"${name}" will be permanently removed. every token, shared slate grant, and collaborator for this app stops working immediately. this cannot be undone.`,
@@ -1360,7 +1359,7 @@ take care!
       accepting: 'joining...',
       decline: 'not now',
       alreadyMember: 'you\'re already a collaborator on this app.',
-      isOwner: 'this is your own app — you already have full access.',
+      isOwner: 'this is your own app, you already have full access.',
       invalid: 'this invite link is invalid or has expired.',
       gate: 'log in to your justtype account to accept this invitation.',
       success: (app) => `you've joined ${app}.`
@@ -1376,17 +1375,17 @@ take care!
       intro: 'answer two quick questions and get copy-paste code wired to your real app.',
       stepLabels: ['app', 'stack', 'code'],
       step1: {
-        title: 'step 1 — pick an app',
+        title: 'step 1: pick an app',
         body: 'choose which of your apps this integration is for.',
         noApps: 'you have no apps yet.',
         goCreate: 'register one first →'
       },
       step2: {
-        title: 'step 2 — pick your stack',
+        title: 'step 2: pick your stack',
         body: 'we tailor the snippet to your language and runtime.'
       },
       step3: {
-        title: 'step 3 — your code',
+        title: 'step 3: your code',
         appLabel: 'app',
         body: 'this is the full login flow, filled in with your client. drop it into your app and you have "sign in with justtype" working.',
         note: 'public clients use PKCE and need no secret. keep tokens server-side where you can; for SPAs, hold them in memory.'
