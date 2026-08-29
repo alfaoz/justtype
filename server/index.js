@@ -20,6 +20,12 @@ const { logAdminAction, getAdminLogs, getAdminLogStats } = require('./adminLogge
 const { validateEmailForRegistration } = require('./emailValidator');
 const { createRateLimitMiddleware, rateLimiter } = require('./rateLimiter');
 const { healthChecks } = require('./startupHealth');
+const {
+  getIncidentRecoverySources,
+  getIncidentGrantSources,
+  initializeIncidentRecovery,
+  recordIncidentRecovery,
+} = require('./incidentRecovery');
 const { passport, decryptEncryptionKey } = require('./googleAuth');
 const stripeModule = require('./stripe');
 const { wordlist: bip39Wordlist } = require('./bip39-wordlist');
@@ -27,6 +33,14 @@ const { wordlist: bip39Wordlist } = require('./bip39-wordlist');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
+const RECOVERY_SOURCE_TYPES = new Set([
+  'device_cache',
+  'public_cache',
+  'delegated_copy',
+  'recovery_vault',
+]);
+
+initializeIncidentRecovery(db);
 
 // Stripe
 const stripe = stripeModule?.stripe;
@@ -2614,7 +2628,8 @@ app.get('/api/slates', authenticateToken, (req, res) => {
   try {
     const slates = db.prepare(`
       SELECT s.id, s.slate_number, s.title, s.encrypted_title, s.encrypted_tags, s.pinned_at, s.is_published,
-             s.share_id, s.word_count, s.char_count, s.created_at, s.updated_at, s.published_at,
+             s.is_system_slate, s.share_id, s.word_count, s.char_count, s.size_bytes, s.view_count,
+             s.created_at, s.updated_at, s.published_at,
              s.source_app, s.adoption_pending, c.name AS source_app_name,
              s.is_collab, cm.wrapped_key AS collab_wrapped_key
       FROM slates s
@@ -2637,6 +2652,67 @@ app.get('/api/slates', authenticateToken, (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch slates' });
+  }
+});
+
+// Owner-only access to encrypted historical blobs preserved during the
+// 2026-08-21 incident audit. The server never receives the owner's key and
+// cannot decrypt these files; the unlocked browser archives them locally.
+app.get('/api/account/incident-recovery-sources', authenticateToken, createRateLimitMiddleware('recoverySources'), (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({
+      sources: [
+        ...getIncidentRecoverySources(req.user.id),
+        ...getIncidentGrantSources(db, req.user.id),
+      ],
+    });
+  } catch (error) {
+    console.error('Incident recovery source error:', error);
+    res.status(500).json({ error: 'Failed to load incident recovery sources' });
+  }
+});
+
+// A signed receipt is issued only by a successful slate PUT whose recovered
+// character/word counts match the pre-incident DB metadata. The browser sends
+// it back only after rereading and verifying the restored plaintext.
+app.post('/api/account/incident-recovery-success', authenticateToken, createRateLimitMiddleware('recoveryReport'), (req, res) => {
+  try {
+    const { receipt } = req.body || {};
+    if (typeof receipt !== 'string' || receipt.length > 4096) {
+      return res.status(400).json({ error: 'Valid recovery receipt required' });
+    }
+    const verified = jwt.verify(receipt, JWT_SECRET);
+    if (verified.purpose !== 'incident_recovery'
+        || Number(verified.userId) !== Number(req.user.id)
+        || !RECOVERY_SOURCE_TYPES.has(verified.source)) {
+      return res.status(403).json({ error: 'Invalid recovery receipt' });
+    }
+
+    const result = recordIncidentRecovery(db, {
+      userId: req.user.id,
+      slateNumber: verified.slateNumber,
+      source: verified.source,
+      b2FileId: verified.b2FileId,
+    });
+
+    if (!result.duplicate && result.adminEmail) {
+      emailService.sendEmail({
+        to: result.adminEmail,
+        subject: result.title,
+        text: result.message,
+      }).then((sent) => {
+        if (!sent) console.warn(`Recovery email notification failed for event ${result.eventId}`);
+      }).catch((error) => console.warn('Recovery email notification error:', error));
+    }
+
+    res.json({ success: true, notified: !result.duplicate, duplicate: result.duplicate });
+  } catch (error) {
+    if (error?.name === 'JsonWebTokenError' || error?.name === 'TokenExpiredError') {
+      return res.status(403).json({ error: 'Invalid or expired recovery receipt' });
+    }
+    console.error('Incident recovery report error:', error);
+    res.status(500).json({ error: 'Failed to record recovery success' });
   }
 });
 
@@ -2866,7 +2942,11 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 
 // Update slate
 app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateSlate'), async (req, res) => {
-  const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body || {};
+  const {
+    title, encryptedTitle, content, encryptedContent,
+    wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes,
+    incidentRecovery, recoverySource,
+  } = req.body || {};
   const maxSize = 5 * 1024 * 1024; // 5 MB
 
   try {
@@ -3031,6 +3111,18 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     // Get current slate count
     const currentSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
 
+    const recoveryStatsMatch = incidentRecovery === true
+      && RECOVERY_SOURCE_TYPES.has(recoverySource)
+      && wordCount === Number(slate.word_count)
+      && charCount === Number(slate.char_count);
+    const recoveryReceipt = recoveryStatsMatch ? jwt.sign({
+      purpose: 'incident_recovery',
+      userId: Number(req.user.id),
+      slateNumber: Number(slate.slate_number),
+      source: recoverySource,
+      b2FileId,
+    }, JWT_SECRET, { expiresIn: '7d' }) : null;
+
     res.json({
       success: true,
       word_count: wordCount,
@@ -3038,7 +3130,8 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       was_unpublished: wasUnpublished,
       is_published: newPublishedState === 1,
       share_id: slate.share_id,
-      slateCount: currentSlateCount.count
+      slateCount: currentSlateCount.count,
+      recovery_receipt: recoveryReceipt,
     });
   } catch (error) {
     console.error('Update slate error:', error);
