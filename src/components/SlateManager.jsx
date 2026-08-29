@@ -921,7 +921,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   on a phone, so the control had nothing to switch) */}
               <div className="hidden md:flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
                 <button
-                  onClick={() => setViewMode('list')}
+                  onClick={() => withViewTransition(() => setViewMode('list'))}
                   className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
                   title={strings.slates.viewToggle.list}
                 >
@@ -932,7 +932,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   </svg>
                 </button>
                 <button
-                  onClick={() => setViewMode('grid')}
+                  onClick={() => withViewTransition(() => setViewMode('grid'))}
                   className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
                   title={strings.slates.viewToggle.grid}
                 >
