@@ -1111,7 +1111,7 @@ take care!
 
   dev: {
     title: 'justtype developer',
-    subtitle: 'build "sign in with justtype" into your own app.',
+    subtitle: 'build with the justtype api',
     copy: 'copy',
     copied: 'copied!',
     loading: 'loading...',
