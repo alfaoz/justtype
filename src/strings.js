@@ -475,9 +475,7 @@ const strings = {
     setup: {
       title: 'set a 6-digit pin',
       description: 'this pin protects your encrypted slates. you\'ll need it to access your slates on new devices or after clearing your browser data.',
-      confirmTitle: 'confirm your pin',
-      confirmDescription: 'enter the same pin again to confirm.',
-      continue: 'continue',
+      confirmLabel: 'enter it again',
       submit: 'set pin',
       saving: 'saving...',
       back: 'back',
