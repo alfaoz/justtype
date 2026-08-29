@@ -159,20 +159,20 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           value={digit}
           onChange={(e) => handleChange(i, e.target.value, values, setValues, refs)}
           onKeyDown={(e) => handleKeyDown(i, e, values, setValues, refs)}
-          className="w-11 h-14 bg-[#111] border border-[#333] rounded text-center text-2xl text-white focus:border-[#666] focus:outline-none transition-colors"
+          className="w-11 h-14 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded text-center text-2xl text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
         />
       ))}
     </div>
   );
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-[#1a1a1a] border border-[#333] rounded p-6 md:p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4">
+      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
 
         {step === 'enter' && isSetup && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.setup.title}</h2>
-            <p className="text-[#999] text-sm mb-6">{strings.pin.setup.description}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.setup.description}</p>
             {renderPinInputs(pin, inputRefs, setPin)}
           </>
         )}
@@ -180,7 +180,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'confirm' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.setup.confirmTitle}</h2>
-            <p className="text-[#999] text-sm mb-6">{strings.pin.setup.confirmDescription}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.setup.confirmDescription}</p>
             {renderPinInputs(confirmPin, confirmRefs, setConfirmPin)}
           </>
         )}
@@ -188,7 +188,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'unlock' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.unlock.title}</h2>
-            <p className="text-[#999] text-sm mb-6">{strings.pin.unlock.description}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.unlock.description}</p>
             {renderPinInputs(pin, inputRefs, setPin)}
           </>
         )}
@@ -196,12 +196,12 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'recovery' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.recovery.title}</h2>
-            <p className="text-[#999] text-sm mb-4">{strings.pin.recovery.description}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-4">{strings.pin.recovery.description}</p>
             <textarea
               value={recoveryInput}
               onChange={(e) => { setRecoveryInput(e.target.value); setError(''); }}
               placeholder={strings.pin.recovery.placeholder}
-              className="w-full bg-[#111] border border-[#333] rounded p-3 text-white text-sm font-mono resize-none h-24 focus:border-[#666] focus:outline-none transition-colors"
+              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 text-white text-sm font-mono resize-none h-24 focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               autoFocus
             />
           </>
@@ -210,7 +210,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'newPin' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.recovery.newPinTitle}</h2>
-            <p className="text-[#999] text-sm mb-6">{strings.pin.recovery.newPinDescription}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.recovery.newPinDescription}</p>
             {renderPinInputs(newPin, newPinRefs, setNewPin)}
           </>
         )}
@@ -218,7 +218,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'confirmNewPin' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.setup.confirmTitle}</h2>
-            <p className="text-[#999] text-sm mb-6">{strings.pin.setup.confirmDescription}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.setup.confirmDescription}</p>
             {renderPinInputs(confirmNewPin, confirmNewPinRefs, setConfirmNewPin)}
           </>
         )}
@@ -226,7 +226,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         {step === 'noKey' && (
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.recovery.title}</h2>
-            <p className="text-[#999] text-sm mb-4">{strings.pin.recovery.noKeyWarning}</p>
+            <p className="text-[var(--theme-text-muted)] text-sm mb-4">{strings.pin.recovery.noKeyWarning}</p>
           </>
         )}
 
@@ -257,7 +257,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
         ) : step === 'noKey' ? (
           <button
             onClick={() => { setStep('recovery'); setError(''); }}
-            className="w-full mt-4 bg-[#222] border border-[#444] text-white px-6 py-3 rounded hover:bg-[#333] transition-colors text-sm"
+            className="w-full mt-4 border border-[var(--theme-border)] text-white px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
           >
             {strings.pin.setup.back}
           </button>
