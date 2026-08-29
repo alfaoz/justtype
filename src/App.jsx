@@ -76,6 +76,7 @@ export default function App() {
   const [loginNudgeDismissed, setLoginNudgeDismissed] = useState(false);
   const writerRef = useRef(null);
   const lastSlateRef = useRef(null); // Track last working slate when switching views
+  const googleExchangeStartedRef = useRef(false); // One-time auth code must be spent exactly once
   const blankSlateContentRef = useRef(''); // Preserve blank slate content when navigating
   const writerScrollRef = useRef(0); // Preserve writer scroll position
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -156,6 +157,13 @@ export default function App() {
       // No early return on missing local state: a signup abandoned at the email
       // verification step leaves a valid session cookie but no localStorage user,
       // and we want to resume that session (and its verification prompt).
+      //
+      // Except on a Google callback load: the exchange effect is about to set
+      // the session cookie and fetch /auth/me itself. Probing here races it,
+      // and the guaranteed 401 (no cookie yet) can land after the exchange
+      // succeeds and wipe the fresh login state, so a brand-new Google user
+      // finished PIN setup looking logged out.
+      if (new URLSearchParams(window.location.search).get('googleAuth') === 'success') return;
       try {
         const response = await fetch(`${API_URL}/auth/me`, {
           credentials: 'include' // Use HttpOnly cookie for auth
@@ -542,7 +550,10 @@ export default function App() {
 
     if (googleAuth === 'success') {
       const authCode = urlParams.get('code');
-      if (authCode) {
+      // The code is one-time; a second effect invocation (StrictMode) would
+      // burn it on a 401 and silently drop the login.
+      if (authCode && !googleExchangeStartedRef.current) {
+        googleExchangeStartedRef.current = true;
         // Exchange one-time code for session (cookie set by server)
         fetch(`${API_URL}/auth/exchange-code`, {
           method: 'POST',
