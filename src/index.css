@@ -496,6 +496,46 @@ body.light-mode .text-green-500 {
   color: #008800 !important;
 }
 
+body.light-mode .text-yellow-400 {
+  color: #9a6a00 !important;
+}
+
+body.light-mode .text-yellow-400\/80 {
+  color: rgba(154, 106, 0, 0.9) !important;
+}
+
+body.light-mode .text-yellow-400\/50 {
+  color: rgba(154, 106, 0, 0.6) !important;
+}
+
+body.light-mode .hover\:text-yellow-400:hover {
+  color: #9a6a00 !important;
+}
+
+body.light-mode .border-yellow-400\/20 {
+  border-color: rgba(154, 106, 0, 0.35) !important;
+}
+
+body.light-mode .border-yellow-500\/30 {
+  border-color: rgba(154, 106, 0, 0.4) !important;
+}
+
+body.light-mode .bg-yellow-400\/5 {
+  background: rgba(154, 106, 0, 0.06) !important;
+}
+
+body.light-mode .bg-yellow-500\/5 {
+  background: rgba(154, 106, 0, 0.05) !important;
+}
+
+body.light-mode .bg-yellow-500\/10 {
+  background: rgba(154, 106, 0, 0.09) !important;
+}
+
+body.light-mode .bg-yellow-900\/30 {
+  background: rgba(154, 106, 0, 0.12) !important;
+}
+
 body.light-mode .hover\:text-red-300:hover {
   color: #c44000 !important;
 }
