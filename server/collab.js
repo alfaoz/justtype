@@ -11,9 +11,12 @@
 // The server stores ciphertext and opaque wrapped keys only; the ACL itself
 // (who collaborates on which slate) is plain server-side by design (v1).
 //
-// v1 rule: a slate is app-shared (oauth_slate_grants) XOR collaborative — the
-// grant sync paths assume a single-writer owner-canonical slate. Enforced here
-// on enable and in oauth.js at grant-creation time.
+// v1 rule: a slate is app-shared (oauth_slate_grants) XOR collaborative; the
+// grant sync paths assume a single-writer owner-canonical slate. Enabling
+// collab wins the conflict by revoking the slate's app grants in the same
+// transaction (share-all apps regrant new slates on sight, so sending the
+// user off to un-share by hand first was a dead end); oauth.js refuses new
+// grants while is_collab is set.
 //
 // Revocation is doc-key rotation (see /collab/rotate): the owner re-keys the
 // slate, re-wraps for everyone who stays, and the epoch guard locks the old
@@ -57,7 +60,6 @@ function mountCollab(app, deps) {
   const getOwnSlate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?');
   const getMember = db.prepare('SELECT * FROM collab_members WHERE slate_id = ? AND user_id = ?');
   const countMembers = db.prepare('SELECT COUNT(*) AS n FROM collab_members WHERE slate_id = ?');
-  const hasAppGrant = db.prepare('SELECT id FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?');
 
   const b2ErrorResponse = (res, error, fallback) => {
     if (B2Error && error instanceof B2Error) {
@@ -118,9 +120,6 @@ function mountCollab(app, deps) {
       if (slate.is_system_slate) return res.status(403).json({ error: 'System slates cannot be shared' });
       if (slate.adoption_pending) return res.status(409).json({ error: 'Slate is pending adoption' });
       if (slate.is_collab) return res.status(409).json({ error: 'Slate is already collaborative' });
-      if (hasAppGrant.get(req.user.id, slate.slate_number)) {
-        return res.status(409).json({ error: 'This slate is shared with an app. Un-share it there first — a slate cannot be app-shared and collaborative at once.', code: 'COLLAB_APP_SHARED' });
-      }
       if (typeof ownerWrappedKey !== 'string' || !ownerWrappedKey.trim()) {
         return res.status(400).json({ error: 'Wrapped doc key required' });
       }
@@ -134,6 +133,10 @@ function mountCollab(app, deps) {
       const oldFileId = slate.b2_file_id;
 
       db.transaction(() => {
+        // A slate cannot be app-shared and collaborative at once: revoke any
+        // app grants so the swap to the doc key leaves no delegated copy of
+        // the master-key era behind.
+        db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?').run(req.user.id, slate.slate_number);
         db.prepare(`
           UPDATE slates SET is_collab = 1, b2_file_id = ?, encrypted_title = ?, word_count = ?, char_count = ?, size_bytes = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
