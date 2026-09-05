@@ -4,7 +4,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -2002,6 +2002,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 setCollabKeyGen((g) => g + 1);
                 // undefined = key rotation, same slate; null = collab disabled
                 setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
+                // The device copy follows: it is what an offline open reads
+                if (userId && currentSlate) {
+                  (async () => {
+                    const master = await getSlateKey(userId);
+                    if (!master) return;
+                    const patch = key
+                      ? { is_collab: 1, collab_wrapped_key: await wrapKey(key, master), ...(slateDbId ? { id: slateDbId } : {}) }
+                      : { is_collab: 0, collab_wrapped_key: null };
+                    await cacheSlate(userId, currentSlate.slate_number, patch);
+                  })().catch(() => {});
+                }
               },
               onClose: () => setCollabPanel(null),
             }}
