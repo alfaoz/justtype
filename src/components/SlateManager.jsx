@@ -2,6 +2,9 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
+import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
+import { cacheList, getCachedList, getCachedSlates, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache } from '../offlineStore';
+import { onSync } from '../offlineSync';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 import { useToast } from './Toast';
@@ -70,7 +73,7 @@ function ChoiceRow({ label, options, value, onChange }) {
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3 }) {
+function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false }) {
   const tags = Array.isArray(slate.tags) ? slate.tags : [];
   const visibleTags = tags.slice(0, maxTags);
   const remaining = tags.length - visibleTags.length;
@@ -79,6 +82,15 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3 }) {
   return (
     <>
       <span className={status.cls}>{status.label}</span>
+      {/* Device copy: a slate saved offline that has no number yet, one kept
+          on this device, or (offline) one that is not here */}
+      {slate.local ? (
+        <span className="text-[var(--theme-orange)]">{strings.slates.offline.local}</span>
+      ) : offline && !slate.available ? (
+        <span className="text-[var(--theme-text-dim)]">{strings.slates.offline.unavailable}</span>
+      ) : slate.kept ? (
+        <span className="text-[var(--theme-text-dim)]">{strings.slates.offline.kept}</span>
+      ) : null}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
           {strings.slates.status.syncing}
@@ -123,7 +135,7 @@ const menuItemCls = (danger) =>
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline }) {
   const isPinned = Boolean(slate.pinned_at);
   return (
     <div className="relative flex items-center flex-shrink-0">
@@ -153,6 +165,11 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
               <button onClick={onTags} className={menuItemCls(false)}>
                 {strings.slates.menu.tags}
               </button>
+              {!slate.local && (
+                <button onClick={onKeepOffline} className={menuItemCls(false)}>
+                  {slate.kept ? strings.slates.offline.unkeep : strings.slates.offline.keep}
+                </button>
+              )}
               <button onClick={onPublish} className={menuItemCls(false)}>
                 {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
               </button>
@@ -179,8 +196,11 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false }) {
   const isPinned = Boolean(slate.pinned_at);
+  const unavailable = offline && !slate.available && !slate.local;
+  const open = unavailable ? undefined : onOpen;
+  const unavailableCls = unavailable ? ' slate-unavailable' : '';
   const title = slate.title || strings.slates.untitled;
   const stats = (
     <>
@@ -192,8 +212,8 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
   if (layout === 'card') {
     return (
       <div
-        onClick={onOpen}
-        className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]"
+        onClick={open}
+        className={`bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
         {/* The title is the card: let it wrap to two lines instead of
             truncating at twenty characters, and gather every piece of meta
@@ -209,7 +229,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -222,8 +242,8 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
 
   return (
     <div
-      onClick={onOpen}
-      className="flex items-start md:items-center gap-3 px-2 py-3.5 hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors"
+      onClick={open}
+      className={`flex items-start md:items-center gap-3 px-2 py-3.5 hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -233,14 +253,14 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
           {stats}
           <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
-        <SlateBadges slate={slate} onTagFilter={onTagFilter} />
+        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
         {stats}
         <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
@@ -251,6 +271,19 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps }) {
 }
 
 export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
+  const { online } = useConnectivity();
+  // Which slates this device holds a copy of, and which are pinned to it
+  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set() });
+  const refreshDeviceCopies = async () => {
+    if (!userId) return;
+    try {
+      const rows = await getCachedSlates(userId);
+      setDeviceCopies({
+        available: new Set(rows.filter(r => r.data?.encryptedContent).map(r => r.slateNumber)),
+        kept: new Set(rows.filter(r => r.keep).map(r => r.slateNumber)),
+      });
+    } catch { /* no local store: nothing is available offline */ }
+  };
   const [slates, setSlates] = useState([]);
   const [loading, setLoading] = useState(true);
   // E2EE collaboration: invites waiting on me + slates others shared with me
@@ -386,14 +419,36 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const loadSlates = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/slates`, {
-        credentials: 'include'
-      });
-      let data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.error || strings.errors.loadFailed);
+      // Network first; the last list this device saw when the network fails
+      let data;
+      let fromCache = false;
+      try {
+        if (!isOnline()) throw new Error('offline');
+        const response = await fetch(`${API_URL}/slates`, {
+          credentials: 'include'
+        });
+        data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error || strings.errors.loadFailed);
+        }
+        if (userId) cacheList(userId, data).catch(() => {});
+      } catch (netErr) {
+        reportNetworkFailure();
+        const cached = userId ? await getCachedList(userId).catch(() => null) : null;
+        if (!cached) throw netErr;
+        data = cached.rows;
+        fromCache = true;
       }
+
+      // Slates created offline that have no number yet
+      const copies = userId ? await getCachedSlates(userId).catch(() => []) : [];
+      const locals = copies.filter(c => isLocalSlateNumber(c.slateNumber)).map(c => ({
+        slate_number: c.slateNumber, local: true, is_published: 0, published_at: null,
+        encrypted_title: c.data.encrypted_title, word_count: c.data.word_count || 0, char_count: c.data.char_count || 0,
+        created_at: new Date(c.cachedAt).toISOString(), updated_at: new Date(c.cachedAt).toISOString(), tags: [],
+      }));
+      data = [...locals, ...data];
+      refreshDeviceCopies();
 
       // Get slate key for decryption
       const slateKey = userId ? await getSlateKey(userId) : null;
@@ -444,7 +499,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         }));
 
         // Migration: encrypt plaintext titles for unpublished slates without encrypted_title
-        const needsMigration = data.filter(s => !s.is_published && !s.encrypted_title && s.title);
+        const needsMigration = fromCache ? [] : data.filter(s => !s.is_published && !s.encrypted_title && s.title);
         if (needsMigration.length > 0) {
           for (const slate of needsMigration) {
             try {
@@ -472,12 +527,55 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       }
 
       setSlates(data);
+
+      // Kept slates follow the server: refresh any whose copy is behind
+      if (!fromCache && userId) {
+        const behind = copies.filter(c => c.keep && !isLocalSlateNumber(c.slateNumber)).filter(c => {
+          const row = data.find(r => r.slate_number === c.slateNumber);
+          return row && row.updated_at !== c.data?.updated_at;
+        });
+        (async () => {
+          for (const c of behind) {
+            try {
+              const r = await fetch(`${API_URL}/slates/${c.slateNumber}`, { credentials: 'include' });
+              if (r.ok) await cacheSlate(userId, c.slateNumber, await r.json());
+            } catch { /* next list load retries */ }
+          }
+          if (behind.length) refreshDeviceCopies();
+          pruneCache(userId).catch(() => {});
+        })();
+      }
     } catch (err) {
       console.error('Failed to load slates:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  // Pin or unpin a slate to this device; pinning fetches it right away
+  const toggleKeepOffline = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    if (!userId) return;
+    const next = !deviceCopies.kept.has(slate.slate_number);
+    try {
+      await setKeepOffline(userId, slate.slate_number, next);
+      if (next && !deviceCopies.available.has(slate.slate_number) && isOnline()) {
+        const r = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
+        if (r.ok) await cacheSlate(userId, slate.slate_number, await r.json());
+      }
+    } catch (err) {
+      console.error('keep offline failed:', err);
+    }
+    refreshDeviceCopies();
+  };
+
+  // A local slate got its number, or a queued edit landed: refresh
+  useEffect(() => onSync((ev) => {
+    if (ev.type === 'synced') loadSlates();
+    else if (ev.type === 'finished') refreshDeviceCopies();
+  }), [userId]);
 
   const showDeleteConfirmation = (id, title, e) => {
     e.stopPropagation();
@@ -1013,7 +1111,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem
               key={slate.slate_number}
-              slate={slate}
+              slate={{ ...slate, kept: deviceCopies.kept.has(slate.slate_number), available: deviceCopies.available.has(slate.slate_number) }}
+              offline={!online}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
               onOpen={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
               onTagFilter={setTagFilter}
@@ -1022,6 +1121,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onToggle: (e) => toggleMenu(slate.slate_number, e),
                 onPin: (e) => togglePin(slate, e),
                 onTags: (e) => openTagsEditor(slate, e),
+                onKeepOffline: (e) => toggleKeepOffline(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);

@@ -12,6 +12,8 @@ import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
+import { cacheSlate, getCachedSlate, getPendingFor, queuePending, setKeepOffline, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
+import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -317,6 +319,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
   const { online, updateAvailable } = useConnectivity();
+  const [keptOffline, setKeptOffline] = useState(false); // this slate is pinned to the device
+  // The version of the open slate as loaded (server timestamp + encrypted
+  // blob): the base its edits started from, for conflict detection and merge
+  const loadedSlateRef = useRef(null);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   const themeFileInputRef = useRef(null);
@@ -815,6 +821,34 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }, [wasPublishedBeforeEdit, status]);
 
+  // Queued offline writes flush whenever the network is back
+  useEffect(() => {
+    if (!userId) return;
+    watchConnectivity(userId);
+    pruneCache(userId).catch(() => {});
+  }, [userId]);
+
+  // A local slate that got its number, or a merge that changed the open
+  // slate: follow it without a reload
+  useEffect(() => onSync((e) => {
+    const open = currentSlate?.slate_number;
+    if (e.type === 'synced' && open != null && open === e.from) {
+      loadedSlateRef.current = { updated_at: e.slate.updated_at ?? null, encryptedContent: loadedSlateRef.current?.encryptedContent ?? null };
+      onSlateChange({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
+      window.history.replaceState({}, '', `/slate/${e.to}`);
+    } else if (e.type === 'merged' && open != null && open === e.slateNumber) {
+      setContent(e.text);
+      lastSavedContentRef.current = JSON.stringify({ content: e.text });
+      setHasUnsavedChanges(false);
+      setStatus(e.conflicts ? strings.writer.connectivity.conflicts(e.conflicts) : strings.writer.connectivity.merged);
+      if (!e.conflicts) setTimeout(() => setStatus('ready'), 4000);
+    } else if (e.type === 'started') {
+      setStatus(strings.writer.connectivity.syncing);
+    } else if (e.type === 'finished' && !e.failed) {
+      setStatus((prev) => prev === strings.writer.connectivity.syncing ? 'ready' : prev);
+    }
+  }), [currentSlate, onSlateChange]);
+
   // Auto-save
   useEffect(() => {
     if (saveTimeoutRef.current) {
@@ -990,23 +1024,62 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
 
+  // Pin this slate to the device so it opens with no network
+  const canKeepOffline = Boolean(token && userId && currentSlate && !isShared && !isLocalSlateNumber(currentSlate.slate_number));
+  const toggleKeepOffline = async () => {
+    if (!canKeepOffline) return;
+    const next = !keptOffline;
+    setKeptOffline(next);
+    await setKeepOffline(userId, currentSlate.slate_number, next).catch(() => {});
+  };
+
   const loadSlate = async (id) => {
     try {
-      const response = await fetch(`${API_URL}/slates/${id}`, {
-        credentials: 'include'
-      });
+      // The device copy: the truth for slates created offline and for slates
+      // with an edit still waiting to sync; the fallback when the network
+      // fails. Everything else comes from the server and refreshes the copy.
+      const cached = userId ? await getCachedSlate(userId, id).catch(() => null) : null;
+      const pending = userId ? await getPendingFor(userId, id).catch(() => null) : null;
+      let data = null;
+      let fromCache = false;
+      if (isLocalSlateNumber(id) || pending) {
+        if (!cached?.data?.encryptedContent) throw new Error('local copy missing');
+        data = cached.data;
+        fromCache = true;
+      } else {
+        try {
+          if (!isOnline()) throw new Error('offline');
+          const response = await fetch(`${API_URL}/slates/${id}`, {
+            credentials: 'include'
+          });
 
-      // Check if encryption key is missing (server restarted)
-      if (response.status === 401) {
-        const data = await response.json();
-        if (data.code === 'ENCRYPTION_KEY_MISSING') {
-          setIsLoading(false);
-          onLogin();
-          return;
+          // Check if encryption key is missing (server restarted)
+          if (response.status === 401) {
+            const body = await response.json();
+            if (body.code === 'ENCRYPTION_KEY_MISSING') {
+              setIsLoading(false);
+              onLogin();
+              return;
+            }
+          }
+          if (!response.ok) throw new Error(`load ${response.status}`);
+          data = await response.json();
+        } catch (netErr) {
+          reportNetworkFailure();
+          if (!cached?.data?.encryptedContent) {
+            setStatus(strings.writer.connectivity.notAvailableOffline);
+            setIsLoading(false);
+            setLoadingFadeOut(false);
+            return;
+          }
+          data = cached.data;
+          fromCache = true;
         }
       }
-
-      const data = await response.json();
+      if (!fromCache && userId && data.encrypted) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
+      else if (cached && userId) cacheSlate(userId, id, {}, { opened: true }).catch(() => {});
+      setKeptOffline(Boolean(cached?.keep));
+      loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: data.encryptedContent ?? null };
       let slateContent;
       let slateTitle = data.title;
       let slateKey = null;
@@ -1048,7 +1121,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
       // (Collab slates are never app-shared — enforced server-side.)
-      if (data.encrypted && slateKey && !data.is_published && !data.is_collab) {
+      if (!fromCache && data.encrypted && slateKey && !data.is_published && !data.is_collab) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -1112,59 +1185,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   };
 
+  // Save before leaving the slate: same path as autosave
   const saveSlateSync = async () => {
-    if (isShared) return; // shared slates persist through the collab relay
-    if (!title.trim() || !token || !currentSlate) return;
-
-    setStatus('saving...');
-
-    try {
-      const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
-      const titleToSave = firstLine || 'untitled slate';
-
-      // Try E2E encryption (collab slates encrypt under the shared doc key)
-      const slateKey = userId ? await getSlateKey(userId) : null;
-      const contentKey = collabDocKey || slateKey;
-      let body;
-      if (contentKey) {
-        const encrypted = await encryptContent(content, contentKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
-        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-        const charCount = content.length;
-        const sizeBytes = new TextEncoder().encode(content).length;
-        // ZK titles: do not send plaintext titles to the server for E2E slates.
-        body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
-      } else {
-        body = { title: titleToSave, content };
-      }
-
-      const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-
-      // Check if encryption key is missing (server restarted)
-      if (response.status === 401) {
-        const data = await response.json();
-        if (data.code === 'ENCRYPTION_KEY_MISSING') {
-          setStatus(strings.errors.sessionExpired);
-          onLogin();
-          return;
-        }
-      }
-
-      if (response.ok) {
-        lastSavedContentRef.current = JSON.stringify({ content });
-        setHasUnsavedChanges(false);
-        setStatus('saved');
-        setTimeout(() => setStatus('ready'), 2000);
-      }
-    } catch (err) {
-      console.error('Save failed:', err);
-      reportNetworkFailure();
-    }
+    if (isShared || !token || !currentSlate) return;
+    await saveSlate();
   };
 
   // Expose save function to parent via ref
@@ -1326,50 +1350,84 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setCollabPanel(tab);
   }
 
-  const saveSlate = async () => {
-    if (isShared) return null; // shared slates persist through the collab relay
-    // Extract title from first line of content
+  // The encrypted payload a save sends (collab slates encrypt under the
+  // shared doc key; new slates are never collab). ZK titles: no plaintext
+  // title leaves the browser for E2E slates.
+  const buildSavePayload = async () => {
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
+    const slateKey = userId ? await getSlateKey(userId) : null;
+    const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
+    let body;
+    if (contentKey) {
+      const encrypted = await encryptContent(content, contentKey);
+      const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
+      const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+      body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount: content.length, sizeBytes: new TextEncoder().encode(content).length };
+    } else {
+      body = { title: titleToSave, content };
+    }
+    // New slates carry their editor mode; existing slates persist it via metadata PATCH
+    if (!currentSlate) body.editorMode = editorMode;
+    return { body, titleToSave, slateKey };
+  };
 
+  // Offline, or the network fell over mid-save: the edit stays on this
+  // device and syncs later. A new slate gets a local number until then.
+  // Collab slates persist through the relay and are not queued here.
+  const saveOffline = async (body) => {
+    if (!userId || collabDocKey || !body.encryptedContent) return false;
+    if (currentSlate) {
+      await queueOfflineSave(userId, currentSlate.slate_number, body, loadedSlateRef.current ? { data: loadedSlateRef.current } : null);
+    } else {
+      const local = newLocalSlateNumber();
+      await cacheSlate(userId, local, {
+        slate_number: local, local: true, encrypted: true,
+        encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
+        editor_mode: editorMode, is_published: 0, share_id: null, updated_at: null,
+        word_count: body.wordCount, char_count: body.charCount,
+      }, { opened: true });
+      await queuePending(userId, local, { op: 'post', body, editorMode });
+      onSlateChange({ slate_number: local, local: true });
+    }
+    lastSavedContentRef.current = JSON.stringify({ content });
+    setHasUnsavedChanges(false);
+    localStorage.removeItem('justtype-draft');
+    setStatus(strings.writer.connectivity.savedLocally);
+    return true;
+  };
+
+  const saveSlate = async () => {
+    if (isShared) return null; // shared slates persist through the collab relay
     if (!content.trim()) return null;
 
     setStatus('saving...');
 
     try {
+      const { body, titleToSave, slateKey } = await buildSavePayload();
       const method = currentSlate ? 'PUT' : 'POST';
       const url = currentSlate
         ? `${API_URL}/slates/${currentSlate.slate_number}`
         : `${API_URL}/slates`;
+      // Existing slates say which version their edits started from
+      if (currentSlate && loadedSlateRef.current?.updated_at) body.baseUpdatedAt = loadedSlateRef.current.updated_at;
 
-      // Try E2E encryption (collab slates encrypt under the shared doc key;
-      // new slates are never collab)
-      const slateKey = userId ? await getSlateKey(userId) : null;
-      const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
-      let body;
-      if (contentKey) {
-        const encrypted = await encryptContent(content, contentKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
-        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-        const charCount = content.length;
-        const sizeBytes = new TextEncoder().encode(content).length;
-        // ZK titles: do not send plaintext titles to the server for E2E slates.
-        body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
-      } else {
-        body = { title: titleToSave, content };
-      }
+      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) return { local: true };
 
-      // New slates carry their editor mode; existing slates persist it via metadata PATCH
-      if (!currentSlate) {
-        body.editorMode = editorMode;
-      }
-
-      const response = await fetch(url, {
+      const send = (payload) => fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
+      let response;
+      try {
+        response = await send(body);
+      } catch (netErr) {
+        reportNetworkFailure();
+        if (await saveOffline(body)) return { local: true };
+        throw netErr;
+      }
 
       // Check if encryption key is missing (server restarted)
       if (response.status === 401) {
@@ -1381,12 +1439,36 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         }
       }
 
+      // The slate moved on since it was loaded (another device, an agent):
+      // three-way merge and send the result. Regions both sides changed
+      // become conflict blocks the editor renders with keep-mine/theirs.
+      let sentBody = body;
+      let mergeInfo = null;
+      if (response.status === 409 && currentSlate && userId) {
+        mergeInfo = await mergeWithServer(userId, currentSlate.slate_number, body, loadedSlateRef.current?.encryptedContent);
+        sentBody = mergeInfo.body;
+        response = await send(sentBody);
+      }
+
       if (!response.ok) {
         setStatus(saveFailedStatus());
         return null;
       }
 
       const data = await response.json();
+
+      if (currentSlate && sentBody.encryptedContent) {
+        loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent };
+        cacheSlate(userId, currentSlate.slate_number, { encryptedContent: sentBody.encryptedContent, encrypted_title: sentBody.encryptedTitle, updated_at: data.updated_at ?? null }).catch(() => {});
+      }
+      if (mergeInfo) {
+        setContent(mergeInfo.text);
+        lastSavedContentRef.current = JSON.stringify({ content: mergeInfo.text });
+        setHasUnsavedChanges(false);
+        setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
+        if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
+        return data;
+      }
 
       if (!currentSlate) {
         onSlateChange(data);
@@ -2108,6 +2190,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 >
                   {strings.writer.editorMode.label(editorMode)}
                 </button>
+                {canKeepOffline && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <button
+                      onClick={toggleKeepOffline}
+                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
+                      style={{ color: 'var(--theme-accent)' }}
+                    >
+                      {keptOffline ? strings.writer.connectivity.keptOffline : strings.writer.connectivity.keepOffline}
+                    </button>
+                  </>
+                )}
                 {token && (
                   <>
                     <span className="opacity-30">·</span>
@@ -2484,6 +2578,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   { key: 'focus', label: getFocusLabel(), onClick: cycleFocus },
                   { key: 'counter', label: showCounter ? strings.writer.mobile.counterOn : strings.writer.mobile.counterOff, onClick: () => setShowCounter(!showCounter) },
                   { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode, highlight: highlightNew },
+                  ...(canKeepOffline ? [{ key: 'offline', label: keptOffline ? strings.writer.connectivity.keptOffline : strings.writer.connectivity.keepOffline, onClick: toggleKeepOffline }] : []),
                 ].map((c) => (
                   <button
                     key={c.key}

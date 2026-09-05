@@ -62,6 +62,8 @@ if (typeof window !== 'undefined') {
 }
 
 export const isOnline = () => state.online;
+// Subscribe outside React (modules that react to reconnects)
+export function onConnectivity(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 
 // Call from any API failure that looks like a network error
 export function reportNetworkFailure() { if (state.online) probe(); }

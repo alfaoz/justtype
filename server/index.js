@@ -2961,8 +2961,10 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     // Get updated slate count
     const updatedSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
 
+	    const { updated_at: createdUpdatedAt } = db.prepare('SELECT updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(nextNumber, req.user.id);
 	    res.status(201).json({
 	      slate_number: nextNumber,
+	      updated_at: createdUpdatedAt,
 	      title: isE2E ? '' : title,
 	      word_count: wordCount,
 	      char_count: charCount,
@@ -2999,6 +3001,14 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // Optimistic concurrency: a client that says which version its edits
+    // started from gets a 409 when the slate moved on, and merges client-side
+    // (offline saves, two devices, agent edits). Clients that send no base
+    // keep last-writer-wins.
+    if (req.body && req.body.baseUpdatedAt != null && String(req.body.baseUpdatedAt) !== String(slate.updated_at)) {
+      return res.status(409).json({ error: 'Slate changed since it was loaded', code: 'SLATE_CHANGED', updated_at: slate.updated_at });
     }
 
     const isE2E = !!(userE2E && userE2E.e2e_migrated && !slate.is_system_slate);
@@ -3165,8 +3175,10 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       b2FileId,
     }, JWT_SECRET, { expiresIn: '7d' }) : null;
 
+    const { updated_at: updatedAt } = db.prepare('SELECT updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
     res.json({
       success: true,
+      updated_at: updatedAt,
       word_count: wordCount,
       char_count: charCount,
       was_unpublished: wasUnpublished,

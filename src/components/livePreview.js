@@ -13,10 +13,12 @@ import { StateEffect, StateField } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { markdownMath } from './markdownMath';
+import { markdownConflict } from './markdownConflict';
+import { strings } from '../strings';
 
 // The markdown dialect both editors and the read-only view parse: GFM plus
 // dollar-delimited math. Defined once so the three call sites cannot drift.
-export const richMarkdown = () => markdown({ base: markdownLanguage, extensions: [markdownMath] });
+export const richMarkdown = () => markdown({ base: markdownLanguage, extensions: [markdownMath, markdownConflict] });
 
 // KaTeX is a lazy chunk. Widgets built before it arrives show the raw TeX;
 // when the import resolves, one no-op transaction carrying `mathReady`
@@ -120,6 +122,51 @@ class MathWidget extends WidgetType {
     return el;
   }
   ignoreEvent() { return false; }
+}
+
+// A merge conflict as one card: both versions side by side, three ways out.
+// The buttons edit the document (replace the whole block with the choice),
+// so resolving is just another edit, undoable and autosaved.
+class ConflictWidget extends WidgetType {
+  constructor(ours, theirs, from, to) { super(); this.ours = ours; this.theirs = theirs; this.from = from; this.to = to; }
+  eq(other) { return other.ours === this.ours && other.theirs === this.theirs && other.from === this.from && other.to === this.to; }
+  toDOM(view) {
+    const el = document.createElement('div');
+    el.className = 'cm-lp-conflict';
+    const t = strings.writer.conflict;
+    const pane = (label, text) => {
+      const p = document.createElement('div');
+      p.className = 'cm-lp-conflict-pane';
+      const h = document.createElement('div'); h.className = 'cm-lp-conflict-label'; h.textContent = label;
+      const b = document.createElement('pre'); b.className = 'cm-lp-conflict-text'; b.textContent = text;
+      p.append(h, b);
+      return p;
+    };
+    const panes = document.createElement('div');
+    panes.className = 'cm-lp-conflict-panes';
+    panes.append(pane(t.ours, this.ours), pane(t.theirs, this.theirs));
+    const actions = document.createElement('div');
+    actions.className = 'cm-lp-conflict-actions';
+    const choose = (label, text) => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'cm-lp-conflict-btn'; btn.textContent = label; btn.cmIgnore = true;
+      btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+      btn.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        view.dispatch({ changes: { from: this.from, to: this.to, insert: text }, selection: { anchor: this.from + text.length } });
+        view.focus();
+      };
+      return btn;
+    };
+    actions.append(
+      choose(t.keepOurs, this.ours),
+      choose(t.keepTheirs, this.theirs),
+      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n')),
+    );
+    el.append(panes, actions);
+    return el;
+  }
+  ignoreEvent(e) { return e.type !== 'mousedown' || e.target.closest?.('.cm-lp-conflict-btn') != null; }
 }
 
 const ROMAN = [[50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
@@ -247,6 +294,14 @@ function mathBlocks(reveal) {
     const out = [];
     tree.iterate({
       enter: (node) => {
+        if (node.name === 'Conflict') {
+          if (reveal && touchesSelection(state, node.from, node.to)) return false;
+          const n = node.node;
+          const part = (name) => { const c = n.getChild(name); return c ? doc.sliceString(c.from, c.to) : ''; };
+          const from = doc.lineAt(node.from).from, to = doc.lineAt(node.to).to;
+          out.push(Decoration.replace({ widget: new ConflictWidget(part('ConflictOurs'), part('ConflictTheirs'), from, to) }).range(from, to));
+          return false;
+        }
         if (node.name !== 'Math') return;
         const m = mathInfo(doc, node.node);
         if (!m || !m.multiline || (reveal && touchesSelection(state, node.from, node.to))) return false;
@@ -340,6 +395,14 @@ export function livePreview({ reveal = true } = {}) {
             if (name === 'Link' || name === 'Autolink') {
               all.push(LINK.range(node.from, node.to));
               return;
+            }
+
+            if (name === 'Conflict') {
+              if (touches(node.from, node.to)) {
+                addCodeCard(node.from, node.to);
+                for (const mark of node.node.getChildren('ConflictMark')) all.push(MARK_DIM.range(mark.from, mark.to));
+              }
+              return false;
             }
 
             if (name === 'Math') {

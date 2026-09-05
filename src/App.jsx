@@ -357,7 +357,8 @@ export default function App() {
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
-          setCurrentSlate({ slate_number: parseInt(slateId) });
+          // Slates created offline carry a local id until they sync
+          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
           setView('writer');
         }
       } else if (path === '/slates') {

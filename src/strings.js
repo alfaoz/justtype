@@ -29,9 +29,23 @@ const strings = {
     connectivity: {
       offline: 'offline',
       notSaved: 'not saved',
+      savedLocally: 'saved on this device',
+      notAvailableOffline: 'not available offline',
+      syncing: 'syncing',
+      merged: 'merged with edits made elsewhere',
+      conflicts: (n) => `${n} ${n === 1 ? 'conflict' : 'conflicts'} to resolve`,
+      keepOffline: 'keep offline',
+      keptOffline: 'kept offline',
       offlineHint: 'no connection. keep writing; saving picks up when you are back online',
       update: 'new version · reload',
       updateHint: 'a newer justtype is live. reload to get it'
+    },
+    conflict: {
+      ours: 'this device',
+      theirs: 'elsewhere',
+      keepOurs: 'keep mine',
+      keepTheirs: 'keep theirs',
+      keepBoth: 'keep both'
     },
     publicState: {
       current: 'public',
@@ -160,6 +174,13 @@ const strings = {
       grid: 'grid view',
     },
     lockedTitle: 'locked slate',
+    offline: {
+      kept: 'offline',
+      unavailable: 'not available offline',
+      local: 'saved on this device',
+      keep: 'keep offline',
+      unkeep: 'stop keeping offline'
+    },
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
