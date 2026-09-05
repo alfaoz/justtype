@@ -1041,3 +1041,35 @@ body.custom-theme ::-webkit-scrollbar-track {
 .wysiwyg-editor .cm-lp-math-pending,
 .wysiwyg-editor .cm-lp-math-error { font-family: var(--theme-font-code); color: var(--theme-text-muted); white-space: pre-wrap; }
 .wysiwyg-editor .cm-lp-math-error { text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* Export as pdf: a print-only copy of the slate is mounted on body while
+   printing; the app chrome is hidden and the theme swaps for ink on paper */
+.print-root { display: none; }
+@media print {
+  @page { margin: 18mm; }
+  body[data-printing] { background: #fff !important; }
+  body[data-printing] > *:not(.print-root) { display: none !important; }
+  .print-root {
+    display: block;
+    --theme-bg: #fff;
+    --theme-bg-secondary: #f2f2f2;
+    --theme-bg-tertiary: #e8e8e8;
+    --theme-text: #111;
+    --theme-text-muted: #555;
+    --theme-text-dim: #888;
+    --theme-border: #ccc;
+    --theme-border-light: #ddd;
+    --theme-accent: #111;
+    --theme-blue: #1d4ed8;
+    --theme-green: #15803d;
+    --theme-orange: #c2410c;
+    --theme-red: #b91c1c;
+    background: #fff;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .print-title { font-size: 1.6em; font-weight: 600; margin: 0 0 1em; }
+  .print-root pre { font: inherit; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .print-root .cm-content { min-height: 0; }
+  .print-root .cm-lp-copy { display: none; }
+}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { createPortal } from 'react-dom';
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
@@ -49,6 +50,8 @@ if (typeof window !== 'undefined') {
 }
 
 const TiptapEditor = React.lazy(() => loadEditorChunk());
+// Read-only rendered view, used as the print copy for pdf export of rich slates
+const MarkdownViewLazy = React.lazy(() => loadEditorChunk().then(m => ({ default: m.MarkdownView })));
 // Collaborative editor (yjs + remote carets) — its own on-demand chunk
 const CollabEditorLazy = React.lazy(() => loadCollabChunk());
 // Collab side panel (people + version history; carries yjs) — on demand, and
@@ -300,6 +303,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   const themeFileInputRef = useRef(null);
@@ -1620,42 +1624,41 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setShowSaveMenu(false);
   };
 
+  // Export as pdf = print. A print-only copy of the slate is mounted on body
+  // (see the portal below and .print-root in index.css): rich slates print
+  // the rendered view, math included, plain slates print the text. The
+  // popup + document.write approach this replaces printed raw markdown,
+  // broke on any `<` in the content and raced its own 250ms timer.
   const exportToPdf = () => {
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title || 'Slate'}</title>
-          <style>
-            body {
-              font-family: 'IBM Plex Mono', monospace;
-              padding: 40px;
-              max-width: 800px;
-              margin: 0 auto;
-              line-height: 1.6;
-              color: #333;
-            }
-            h1 { margin-bottom: 20px; }
-            pre {
-              white-space: pre-wrap;
-              word-wrap: break-word;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${title || 'Untitled Slate'}</h1>
-          <pre>${content}</pre>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 250);
     setShowSaveMenu(false);
+    setShowExportMenu(false);
+    setPrintJob(n => n + 1);
   };
+
+  useEffect(() => {
+    if (!printJob) return;
+    let cancelled = false;
+    document.body.dataset.printing = '';
+    const done = () => setPrintJob(0);
+    window.addEventListener('afterprint', done, { once: true });
+    // Print once the copy has settled: lazy chunk mounted, math typeset,
+    // fonts loaded. Bounded so a stuck chunk still gets a (plainer) print.
+    (async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const root = document.querySelector('.print-root');
+        if (root && !root.querySelector('.print-fallback, .cm-lp-math-pending')) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+      await document.fonts?.ready;
+      if (!cancelled) window.print();
+    })();
+    return () => {
+      cancelled = true;
+      delete document.body.dataset.printing;
+      window.removeEventListener('afterprint', done);
+    };
+  }, [printJob]);
 
   const wordCount = content?.trim() === '' ? 0 : content?.trim().split(/\s+/).length || 0;
   const charCount = content?.length || 0;
@@ -1836,6 +1839,20 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           />
         )}
       </main>
+
+      {printJob > 0 && createPortal(
+        <div className={`print-root punto-${punto}`}>
+          {title && <h1 className="print-title">{title}</h1>}
+          {editorMode === 'wysiwyg' ? (
+            <React.Suspense fallback={<pre className="print-fallback">{content}</pre>}>
+              <MarkdownViewLazy content={content} puntoClass={`punto-${punto}`} />
+            </React.Suspense>
+          ) : (
+            <pre>{content}</pre>
+          )}
+        </div>,
+        document.body
+      )}
 
       {collabPanel && (currentSlate || isShared) && (
         <React.Suspense fallback={null}>
