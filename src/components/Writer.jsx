@@ -314,6 +314,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
+  const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
   const lastSavedContentRef = useRef('');
@@ -522,11 +523,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }, [currentSlate, token]);
 
-  // Autofocus textarea on blank slate (so user can "just type")
+  // Autofocus the editor on a blank slate (so user can "just type"). The rich
+  // editor is a lazy chunk that may mount after this runs; its `autofocus`
+  // prop covers that first mount.
   useEffect(() => {
-    if (!currentSlate && !isLoading && textareaRef.current) {
-      textareaRef.current.focus();
-    }
+    if (currentSlate || isLoading) return;
+    if (textareaRef.current) textareaRef.current.focus();
+    else if (richEditorRef.current) richEditorRef.current.focus();
   }, [currentSlate, isLoading]);
 
   // Notify parent about zen mode changes
@@ -1814,8 +1817,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         ) : editorMode === 'wysiwyg' ? (
           <React.Suspense fallback={<EditorSkeleton text={content} punto={punto} />}>
             <TiptapEditor
+              ref={richEditorRef}
               content={content}
               onChange={setContent}
+              autofocus={!currentSlate}
               puntoClass={`punto-${punto}`}
             />
           </React.Suspense>

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -19,9 +19,10 @@ const baseExtensions = ({ reveal }) => [
 // Live-preview markdown editor (Typora/Obsidian-style). Same contract as the
 // plain textarea: markdown string in via `content`, markdown string out via
 // `onChange` — storage, encryption and export pipelines are unaffected.
-export default function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }) {
+const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
+  useImperativeHandle(ref, () => ({ focus: () => viewRef.current?.focus() }), []);
   const lastContentRef = useRef(content || '');
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -73,7 +74,9 @@ export default function LivePreviewEditor({ content, onChange, puntoClass = '', 
       className={`wysiwyg-editor w-full max-w-3xl p-8 ${puntoClass}`}
     />
   );
-}
+});
+
+export default LivePreviewEditor;
 
 // Read-only rendered view (public pages for rich slates). Syntax is always
 // hidden since there is no caret to reveal it for.
