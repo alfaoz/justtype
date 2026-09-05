@@ -16,13 +16,22 @@ const baseExtensions = ({ reveal }) => [
   indentUnit.of('    '),
 ];
 
+// Focus with the caret at the end of the document, where typing continues.
+// A fresh view's selection sits at 0, so a bare focus() lands on the first
+// letter of a restored draft.
+const focusEnd = (view) => {
+  const end = view.state.doc.length;
+  view.dispatch({ selection: { anchor: end }, scrollIntoView: true });
+  view.focus();
+};
+
 // Live-preview markdown editor (Typora/Obsidian-style). Same contract as the
 // plain textarea: markdown string in via `content`, markdown string out via
 // `onChange` — storage, encryption and export pipelines are unaffected.
 const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
-  useImperativeHandle(ref, () => ({ focus: () => viewRef.current?.focus() }), []);
+  useImperativeHandle(ref, () => ({ focus: () => viewRef.current && focusEnd(viewRef.current) }), []);
   const lastContentRef = useRef(content || '');
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -49,7 +58,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
       }),
     });
     viewRef.current = view;
-    if (autofocus) view.focus();
+    if (autofocus) focusEnd(view);
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -64,6 +73,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
       lastContentRef.current = next;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: next },
+        selection: { anchor: next.length },
       });
     }
   }, [content]);

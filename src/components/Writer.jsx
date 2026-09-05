@@ -532,8 +532,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // prop covers that first mount.
   useEffect(() => {
     if (currentSlate || isLoading) return;
-    if (textareaRef.current) textareaRef.current.focus();
-    else if (richEditorRef.current) richEditorRef.current.focus();
+    const ta = textareaRef.current;
+    if (ta) {
+      // Caret at the end, same as the rich editor's focus handle
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.focus();
+    } else if (richEditorRef.current) {
+      richEditorRef.current.focus();
+    }
   }, [currentSlate, isLoading]);
 
   // Notify parent about zen mode changes
