@@ -15,6 +15,7 @@ import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity
 import { cacheSlate, getCachedSlate, getPendingFor, queuePending, setKeepOffline, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
+import { StripLab, StripLabSwitcher, useStripVariant } from './StripLab';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -344,6 +345,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
+  const [stripVariant, setStripVariant] = useStripVariant(); // strip lab, see StripLab.jsx
   const textareaRef = useRef(null);
   const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
@@ -1901,8 +1903,199 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return showCounter ? 'hide counter' : 'show counter';
   };
 
+  const themePickerPopover = showThemePicker && popoverAnchor && (
+    <div data-theme-picker
+      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
+      onMouseLeave={() => setPreviewTheme(null)}
+    >
+      {/* Built-in themes */}
+      {Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id)).map(themeId => (
+        <button
+          key={themeId}
+          onClick={() => selectTheme(themeId)}
+          onMouseEnter={() => setPreviewTheme(themeId)}
+          className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+          style={{
+            color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
+            backgroundColor: 'transparent'
+          }}
+          onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+          {themeId}
+        </button>
+      ))}
+      {/* Custom themes */}
+      {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
+        <>
+          <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
+          {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => (
+            <div key={themeId} className="flex items-center">
+              <button
+                onClick={() => selectTheme(themeId)}
+                onMouseEnter={() => setPreviewTheme(themeId)}
+                className="flex-1 px-4 py-2 text-left transition-colors duration-200 text-sm"
+                style={{
+                  color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
+                  backgroundColor: 'transparent'
+                }}
+                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                {themeId}
+              </button>
+              <button
+                onClick={() => handleDeleteTheme(themeId)}
+                onMouseEnter={() => setPreviewTheme(themeId)}
+                className="px-3 py-2 transition-colors duration-200 text-sm"
+                style={{ color: 'var(--theme-text-dim)' }}
+                onMouseOver={(e) => { e.currentTarget.style.color = 'var(--theme-red)'; e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'; }}
+                onMouseOut={(e) => { e.currentTarget.style.color = 'var(--theme-text-dim)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                title="delete theme"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+      {/* Import/Download buttons */}
+      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
+      <button
+        onClick={() => themeFileInputRef.current?.click()}
+        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+        style={{ color: 'var(--theme-text-muted)', backgroundColor: 'transparent' }}
+        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+      >
+        + import json
+      </button>
+      <button
+        onClick={downloadExampleTheme}
+        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+        style={{ color: 'var(--theme-text-dim)', backgroundColor: 'transparent' }}
+        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+      >
+        ↓ example.json
+      </button>
+      {/* Import error message */}
+      {themeImportError && (
+        <div className="px-4 py-2 text-xs" style={{ color: 'var(--theme-red)', borderTop: '1px solid var(--theme-border)' }}>
+          {themeImportError}
+        </div>
+      )}
+      {/* Hidden file input */}
+      <input
+        ref={themeFileInputRef}
+        type="file"
+        accept=".json,application/json"
+        onChange={handleThemeImport}
+        className="hidden"
+      />
+    </div>
+  );
+
+  const publishPopover = showPublishMenu && popoverAnchor && (
+    <div
+      className="fixed bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+      style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
+    >
+      {!shareUrl && !wasPublishedBeforeEdit && (
+        collabDocKey ? (
+          // Collab slates cannot be published yet. Greyed and
+          // inert; the label swaps on hover instead of a
+          // native tooltip, matching the inline `sure?` style.
+          <div
+            className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
+            title={strings.writer.collabState.publishBlockedHint}
+          >
+            <span className="group-hover:hidden">make public</span>
+            <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
+          </div>
+        ) : (
+          <button
+            onClick={handlePublish}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+          >
+            make public
+          </button>
+        )
+      )}
+      {shareUrl && (
+        <>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(shareUrl);
+              setStatus(strings.writer.status.linkCopied);
+              setTimeout(() => setStatus('ready'), 2000);
+              setShowPublishMenu(false);
+            }}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+          >
+            copy link
+          </button>
+          <button
+            onClick={handlePublish}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+          >
+            make private
+          </button>
+        </>
+      )}
+      {wasPublishedBeforeEdit && !shareUrl && (
+        <button
+          onClick={handlePublish}
+          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+        >
+          update public version
+        </button>
+      )}
+      {(shareUrl || wasPublishedBeforeEdit) && (
+        <button
+          onClick={() => {
+            clearTimeout(forgetTimerRef.current);
+            if (confirmForget) {
+              setConfirmForget(false);
+              handleForgetPublic();
+            } else {
+              setConfirmForget(true);
+              forgetTimerRef.current = setTimeout(() => setConfirmForget(false), 3000);
+            }
+          }}
+          title={strings.writer.publishMenu.forgetHint}
+          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+        >
+          {confirmForget ? strings.writer.publishMenu.forgetConfirm : strings.writer.publishMenu.forget}
+        </button>
+      )}
+    </div>
+  );
+
+  // Strip lab: one control model every variant renders from (see StripLab.jsx)
+  const stripControls = {
+    device: [
+      { id: 'theme', label: 'theme', kind: 'cycle', value: theme, options: getThemeIds(), onCycle: cycleTheme, onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
+      { id: 'size', label: 'size', kind: 'cycle', value: punto, options: ['small', 'base', 'large'], onCycle: cyclePunto, onSet: setPunto },
+      { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
+      { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
+    ],
+    slate: [
+      { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
+      canKeepOffline && { id: 'offline', label: 'keep offline', kind: 'toggle', value: keptOffline ? 'on' : 'off', onCycle: toggleKeepOffline },
+    ].filter(Boolean),
+    actions: [
+      token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => openCollab('people'), active: !!collabDocKey, pulse: highlightNew },
+      token && collabDocKey && collabSlateDbId && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
+      token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: (e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); } },
+    ].filter(Boolean),
+  };
+  const stripLabActive = !!stripVariant && stripVariant !== 'current';
+
   return (
     <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
+      {stripVariant && <StripLabSwitcher variant={stripVariant} onChange={setStripVariant} />}
       {/* LOADING OVERLAY */}
       {isLoading && (
         <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
@@ -2065,7 +2258,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             {/* Menu buttons - appear after animation, slide in from three dots
                 position. Bounded to the space before the right controls: on
                 narrow windows the strip scrolls, fading out at the cutoff. */}
-            {showMenuButton && (
+            {showMenuButton && !stripLabActive && (
               <div
                 ref={stripRef}
                 className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
@@ -2090,99 +2283,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   >
                     theme: {theme}
                   </button>
-                  {showThemePicker && popoverAnchor && (
-                    <div
-                      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
-                      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
-                      onMouseLeave={() => setPreviewTheme(null)}
-                    >
-                      {/* Built-in themes */}
-                      {Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id)).map(themeId => (
-                        <button
-                          key={themeId}
-                          onClick={() => selectTheme(themeId)}
-                          onMouseEnter={() => setPreviewTheme(themeId)}
-                          className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                          style={{
-                            color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
-                            backgroundColor: 'transparent'
-                          }}
-                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          {themeId}
-                        </button>
-                      ))}
-                      {/* Custom themes */}
-                      {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
-                        <>
-                          <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
-                          {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => (
-                            <div key={themeId} className="flex items-center">
-                              <button
-                                onClick={() => selectTheme(themeId)}
-                                onMouseEnter={() => setPreviewTheme(themeId)}
-                                className="flex-1 px-4 py-2 text-left transition-colors duration-200 text-sm"
-                                style={{
-                                  color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
-                                  backgroundColor: 'transparent'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                              >
-                                {themeId}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteTheme(themeId)}
-                                onMouseEnter={() => setPreviewTheme(themeId)}
-                                className="px-3 py-2 transition-colors duration-200 text-sm"
-                                style={{ color: 'var(--theme-text-dim)' }}
-                                onMouseOver={(e) => { e.currentTarget.style.color = 'var(--theme-red)'; e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'; }}
-                                onMouseOut={(e) => { e.currentTarget.style.color = 'var(--theme-text-dim)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                title="delete theme"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                      {/* Import/Download buttons */}
-                      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
-                      <button
-                        onClick={() => themeFileInputRef.current?.click()}
-                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                        style={{ color: 'var(--theme-text-muted)', backgroundColor: 'transparent' }}
-                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                      >
-                        + import json
-                      </button>
-                      <button
-                        onClick={downloadExampleTheme}
-                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                        style={{ color: 'var(--theme-text-dim)', backgroundColor: 'transparent' }}
-                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                      >
-                        ↓ example.json
-                      </button>
-                      {/* Import error message */}
-                      {themeImportError && (
-                        <div className="px-4 py-2 text-xs" style={{ color: 'var(--theme-red)', borderTop: '1px solid var(--theme-border)' }}>
-                          {themeImportError}
-                        </div>
-                      )}
-                      {/* Hidden file input */}
-                      <input
-                        ref={themeFileInputRef}
-                        type="file"
-                        accept=".json,application/json"
-                        onChange={handleThemeImport}
-                        className="hidden"
-                      />
-                    </div>
-                  )}
+                  {themePickerPopover}
                 </div>
                 <span className="opacity-30">·</span>
                 <button
@@ -2263,85 +2364,26 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                       >
                         share
                       </button>
-                      {showPublishMenu && popoverAnchor && (
-                        <div
-                          className="fixed bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
-                          style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
-                        >
-                          {!shareUrl && !wasPublishedBeforeEdit && (
-                            collabDocKey ? (
-                              // Collab slates cannot be published yet. Greyed and
-                              // inert; the label swaps on hover instead of a
-                              // native tooltip, matching the inline `sure?` style.
-                              <div
-                                className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
-                                title={strings.writer.collabState.publishBlockedHint}
-                              >
-                                <span className="group-hover:hidden">make public</span>
-                                <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={handlePublish}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                              >
-                                make public
-                              </button>
-                            )
-                          )}
-                          {shareUrl && (
-                            <>
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(shareUrl);
-                                  setStatus(strings.writer.status.linkCopied);
-                                  setTimeout(() => setStatus('ready'), 2000);
-                                  setShowPublishMenu(false);
-                                }}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                              >
-                                copy link
-                              </button>
-                              <button
-                                onClick={handlePublish}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
-                              >
-                                make private
-                              </button>
-                            </>
-                          )}
-                          {wasPublishedBeforeEdit && !shareUrl && (
-                            <button
-                              onClick={handlePublish}
-                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                            >
-                              update public version
-                            </button>
-                          )}
-                          {(shareUrl || wasPublishedBeforeEdit) && (
-                            <button
-                              onClick={() => {
-                                clearTimeout(forgetTimerRef.current);
-                                if (confirmForget) {
-                                  setConfirmForget(false);
-                                  handleForgetPublic();
-                                } else {
-                                  setConfirmForget(true);
-                                  forgetTimerRef.current = setTimeout(() => setConfirmForget(false), 3000);
-                                }
-                              }}
-                              title={strings.writer.publishMenu.forgetHint}
-                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
-                            >
-                              {confirmForget ? strings.writer.publishMenu.forgetConfirm : strings.writer.publishMenu.forget}
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      {publishPopover}
                     </div>
                   </>
                 )}
               </div>
+            )}
+            {showMenuButton && stripLabActive && (
+              <>
+                <StripLab
+                  variant={stripVariant}
+                  controls={stripControls}
+                  rowRef={stripRef}
+                  rowClassName={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
+                  rowStyle={{ zIndex: 150 }}
+                  onRowScroll={() => { setShowThemePicker(false); setShowPublishMenu(false); updateStripScroll(); }}
+                  onClose={handleToggleMenu}
+                />
+                {themePickerPopover}
+                {publishPopover}
+              </>
             )}
 
             {/* Scroll hint for the strip: a slim thumb that appears only when
