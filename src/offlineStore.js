@@ -122,6 +122,10 @@ export async function queuePending(userId, slateNumber, record) {
   const rec = {
     key, userId, slateNumber,
     ...record,
+    // A slate that has not been created on the server yet stays a POST no
+    // matter how many times it is saved again offline
+    op: prev?.op === 'post' ? 'post' : record.op,
+    editorMode: record.editorMode ?? prev?.editorMode,
     baseUpdatedAt: prev?.baseUpdatedAt ?? record.baseUpdatedAt ?? null,
     baseEncryptedContent: prev?.baseEncryptedContent ?? record.baseEncryptedContent ?? null,
     createdAt: prev?.createdAt || Date.now(),
