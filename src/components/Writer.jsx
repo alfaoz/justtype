@@ -11,6 +11,7 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
+import { useConnectivity, reportNetworkFailure } from '../connectivity';
 
 // The rich editor and the collab editor are separate chunks: they are
 // content-hashed, so a deploy that only touches app code leaves the ~500 kB of
@@ -304,6 +305,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
+  const { online, updateAvailable } = useConnectivity();
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   const themeFileInputRef = useRef(null);
@@ -1150,6 +1152,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
     } catch (err) {
       console.error('Save failed:', err);
+      reportNetworkFailure();
     }
   };
 
@@ -2252,6 +2255,28 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
             {status !== 'ready' && <span className="opacity-30">·</span>}
 
+            {/* Connectivity, in the same voice as the status word: offline is
+                orange like a private draft, a newer build is blue like a
+                current public copy */}
+            {!online && (
+              <>
+                <span className="text-orange-400" title={strings.writer.connectivity.offlineHint}>{strings.writer.connectivity.offline}</span>
+                <span className="opacity-30">·</span>
+              </>
+            )}
+            {online && updateAvailable && (
+              <>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-blue-400 hover:text-white transition-colors duration-200"
+                  title={strings.writer.connectivity.updateHint}
+                >
+                  {strings.writer.connectivity.update}
+                </button>
+                <span className="opacity-30">·</span>
+              </>
+            )}
+
             <button
               onClick={() => setShowAboutModal(true)}
               className="hover:text-white transition-colors duration-200"
@@ -2472,6 +2497,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 }`}>
                   {status}
                 </div>
+              )}
+              {!online && (
+                <div className="mb-3 py-2 rounded-lg text-center text-sm text-orange-400">{strings.writer.connectivity.offline}</div>
+              )}
+              {online && updateAvailable && (
+                <button onClick={() => window.location.reload()} className="w-full mb-3 py-2 rounded-lg text-center text-sm text-blue-400">
+                  {strings.writer.connectivity.update}
+                </button>
               )}
 
               {/* primary action */}

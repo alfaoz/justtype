@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>just type</title>
     <meta name="description" content="need to jot something down real quick? just start typing." />
     <meta name="theme-color" content="#050505" />
@@ -180,8 +181,9 @@
     entry.type = 'module';
     entry.src = '/assets/' + manifest.jsFile;
     entry.integrity = 'sha256-' + hexToB64(manifest.jsHash);
-    // fires on network failure AND on an SRI mismatch
-    entry.onerror = function () { fail('tamper'); };
+    // fires on network failure AND on an SRI mismatch; when the browser
+    // knows it is offline, say so instead of crying tamper
+    entry.onerror = function () { fail(navigator.onLine === false ? 'network' : 'tamper'); };
     document.head.appendChild(entry);
   };
 

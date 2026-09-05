@@ -26,6 +26,12 @@ const strings = {
       menuTitle: 'editor',
       value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
     },
+    connectivity: {
+      offline: 'offline',
+      offlineHint: 'no connection. keep writing; saving picks up when you are back online',
+      update: 'new version · reload',
+      updateHint: 'a newer justtype is live. reload to get it'
+    },
     publicState: {
       current: 'public',
       outdated: 'private draft · sync',

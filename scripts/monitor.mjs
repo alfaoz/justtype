@@ -60,6 +60,11 @@ try {
   if (sha256(indexHtml) !== manifest.indexHtmlHash) {
     failures.push(`index.html hash ${sha256(indexHtml).slice(0, 16)}... does not match manifest indexHtmlHash ${String(manifest.indexHtmlHash).slice(0, 16)}...`);
   } else console.log('loader: index.html matches manifest');
+  if (manifest.swHash) {
+    const sw = await get(`${ORIGIN}/sw.js`);
+    if (sha256(sw) !== manifest.swHash) failures.push(`sw.js hash ${sha256(sw).slice(0, 16)}... does not match manifest swHash`);
+    else console.log('offline shell: sw.js matches manifest');
+  }
   if (!Buffer.from(indexHtml).equals(Buffer.from(rootHtml))) {
     failures.push('/ serves different bytes than /index.html (possible per-path split view)');
   }

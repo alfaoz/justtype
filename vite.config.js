@@ -30,6 +30,13 @@ function buildManifestPlugin() {
       }))
 
       // Entry files kept as top-level fields for backward compat + curl instructions
+      // Everything else under assets/ (fonts) is listed too, so the offline
+      // shell can precache a build completely. Not part of the SRI set.
+      const assets = allFiles.filter(f => !hashable.includes(f)).sort().map(f => ({
+        file: f,
+        hash: createHash('sha256').update(readFileSync(join(assetsDir, f))).digest('hex')
+      }))
+
       const jsEntry = files.find(f => f.file.startsWith('index-') && f.file.endsWith('.js'))
       const cssEntry = files.find(f => f.file.startsWith('index-') && f.file.endsWith('.css'))
       if (!jsEntry || !cssEntry) return
@@ -50,6 +57,9 @@ function buildManifestPlugin() {
         // that decides what actually runs. Not in `files`: that array is
         // /assets/-relative and drives the SRI pins the loader applies.
         indexHtmlHash: createHash('sha256').update(loaderHtml).digest('hex'),
+        // The offline shell worker, watched the same way (byte-stable too)
+        swHash: createHash('sha256').update(readFileSync(join(distDir, 'sw.js'))).digest('hex'),
+        assets,
         buildDate: new Date().toISOString()
       }
 

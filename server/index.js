@@ -972,6 +972,11 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
     else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }
+    // Installable app manifest: express's mime table predates the extension
+    else if (filePath.endsWith('.webmanifest')) {
+      res.setHeader('Content-Type', 'application/manifest+json');
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
   }
 }));
 

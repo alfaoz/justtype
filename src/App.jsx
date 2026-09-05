@@ -29,6 +29,7 @@ import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefau
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
+import { reportNetworkFailure } from './connectivity';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -257,6 +258,7 @@ export default function App() {
         }
       } catch (err) {
         console.error('Failed to fetch user data:', err);
+        reportNetworkFailure();
       }
     };
 
