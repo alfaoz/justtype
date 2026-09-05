@@ -3,14 +3,14 @@ import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view
 import { EditorState } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
-import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown';
-import { livePreview } from './livePreview';
+import { markdownKeymap } from '@codemirror/lang-markdown';
+import { livePreview, richMarkdown } from './livePreview';
 import { strings } from '../strings';
 
 // Shared extensions: GFM markdown (headings, emphasis, strikethrough, code,
-// quotes, links, lists, task lists, tables, hr — no images/mermaid by design)
+// quotes, links, lists, task lists, tables, hr, dollar math — no images/mermaid by design)
 const baseExtensions = ({ reveal }) => [
-  markdown({ base: markdownLanguage }),
+  richMarkdown(),
   livePreview({ reveal }),
   EditorView.lineWrapping,
   indentUnit.of('    '),

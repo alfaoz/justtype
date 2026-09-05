@@ -1031,3 +1031,13 @@ body.custom-theme ::-webkit-scrollbar-track {
 
 /* invisible spacer used for live table column alignment */
 .wysiwyg-editor .cm-lp-tablepad { display: inline-block; }
+
+/* Math: `$...$` inline, `$$...$$` on its own lines centered as a block; the
+   raw TeX reads as code while the caret is inside or before KaTeX loads */
+.wysiwyg-editor .cm-lp-math { cursor: text; }
+.wysiwyg-editor .cm-lp-math .katex { font-size: 1.1em; }
+.wysiwyg-editor .cm-lp-mathblock { display: block; text-align: center; padding: 0.35em 0; overflow-x: auto; }
+.wysiwyg-editor .cm-lp-mathblock .katex-display { margin: 0; }
+.wysiwyg-editor .cm-lp-math-pending,
+.wysiwyg-editor .cm-lp-math-error { font-family: var(--theme-font-code); color: var(--theme-text-muted); white-space: pre-wrap; }
+.wysiwyg-editor .cm-lp-math-error { text-decoration: underline dotted; text-underline-offset: 3px; }

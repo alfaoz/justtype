@@ -9,7 +9,35 @@
 
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { ViewPlugin } from '@codemirror/view';
+import { StateEffect, StateField } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { markdownMath } from './markdownMath';
+
+// The markdown dialect both editors and the read-only view parse: GFM plus
+// dollar-delimited math. Defined once so the three call sites cannot drift.
+export const richMarkdown = () => markdown({ base: markdownLanguage, extensions: [markdownMath] });
+
+// KaTeX is a lazy chunk. Widgets built before it arrives show the raw TeX;
+// when the import resolves, one no-op transaction carrying `mathReady`
+// makes the plugin recompute, and since `ready` is part of widget equality
+// the stale widgets are rebuilt with real typesetting.
+const mathReady = StateEffect.define();
+let renderMath = null;
+let mathLoading = null;
+const awaitingMath = new Set();
+function loadMath(view) {
+  awaitingMath.add(view);
+  if (!mathLoading) {
+    mathLoading = import('./mathRender').then((m) => {
+      renderMath = m.renderMath;
+      for (const v of awaitingMath) {
+        try { v.dispatch({ effects: mathReady.of(null) }); } catch { /* view destroyed */ }
+      }
+      awaitingMath.clear();
+    });
+  }
+}
 
 // Inline replacement for a list marker ("-" -> "•", nested "2." -> "ii.")
 class TextMarkerWidget extends WidgetType {
@@ -60,6 +88,36 @@ class PadWidget extends WidgetType {
     span.className = 'cm-lp-tablepad';
     span.style.width = `${this.chars}ch`;
     return span;
+  }
+  ignoreEvent() { return false; }
+}
+
+// Typeset math replacing a `$...$` / `$$...$$` span while the caret is elsewhere
+class MathWidget extends WidgetType {
+  constructor(tex, source, block, display) {
+    super();
+    this.tex = tex;
+    this.source = source;
+    this.block = block;
+    this.display = display;
+    this.ready = !!renderMath;
+  }
+  eq(other) {
+    return other.tex === this.tex && other.block === this.block
+      && other.display === this.display && other.ready === this.ready;
+  }
+  toDOM(view) {
+    const el = document.createElement(this.block ? 'div' : 'span');
+    el.className = this.block ? 'cm-lp-math cm-lp-mathblock' : 'cm-lp-math';
+    if (!renderMath) {
+      loadMath(view);
+      el.classList.add('cm-lp-math-pending');
+      el.textContent = this.source;
+    } else if (!renderMath(el, this.tex, this)) {
+      el.classList.add('cm-lp-math-error');
+      el.textContent = this.source;
+    }
+    return el;
   }
   ignoreEvent() { return false; }
 }
@@ -154,6 +212,60 @@ function normalizeUrl(raw) {
   return null;
 }
 
+const touchesSelection = (state, from, to) =>
+  state.selection.ranges.some(r => r.from <= to && r.to >= from);
+
+// A Math node's shape: `$$` delimiters that own their lines are a block
+function mathInfo(doc, node) {
+  const marks = node.getChildren('MathMark');
+  if (marks.length !== 2) return null;
+  const display = marks[0].to - marks[0].from === 2;
+  const firstLine = doc.lineAt(node.from);
+  const lastLine = doc.lineAt(node.to);
+  const block = display
+    && doc.sliceString(firstLine.from, node.from).trim() === ''
+    && doc.sliceString(node.to, lastLine.to).trim() === '';
+  return {
+    marks, display, block,
+    from: block ? firstLine.from : node.from,
+    to: block ? lastLine.to : node.to,
+    tex: doc.sliceString(marks[0].to, marks[1].from).trim(),
+    source: doc.sliceString(node.from, node.to),
+  };
+}
+
+// Collapsed math blocks replace whole lines, and decorations that swallow
+// line breaks must come from a state field, not a view plugin. This field
+// carries only those; everything else (inline math included) stays in the
+// plugin below, which handles the revealed state for blocks too.
+function mathBlocks(reveal) {
+  const compute = (state) => {
+    const doc = state.doc;
+    const tree = syntaxTree(state);
+    const out = [];
+    tree.iterate({
+      enter: (node) => {
+        if (node.name !== 'Math') return;
+        const m = mathInfo(doc, node.node);
+        if (!m || !m.block || (reveal && touchesSelection(state, node.from, node.to))) return false;
+        out.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, true, true) }).range(m.from, m.to));
+        return false;
+      },
+    });
+    return { tree, deco: Decoration.set(out, true) };
+  };
+  return StateField.define({
+    create: compute,
+    update(value, tr) {
+      // The tree identity changes as the background parser advances
+      if (!tr.docChanged && !tr.selection && syntaxTree(tr.state) === value.tree
+        && !tr.effects.some(e => e.is(mathReady))) return value;
+      return compute(tr.state);
+    },
+    provide: f => EditorView.decorations.from(f, v => v.deco),
+  });
+}
+
 export function livePreview({ reveal = true } = {}) {
   const plugin = ViewPlugin.fromClass(class {
     constructor(view) {
@@ -161,7 +273,8 @@ export function livePreview({ reveal = true } = {}) {
     }
 
     update(update) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged
+        || update.transactions.some(tr => tr.effects.some(e => e.is(mathReady)))) {
         this.compute(update.view);
       }
     }
@@ -173,8 +286,7 @@ export function livePreview({ reveal = true } = {}) {
       const hidden = [];
       const quoteLines = new Map(); // line start -> nesting depth
 
-      const touches = (from, to) =>
-        reveal && state.selection.ranges.some(r => r.from <= to && r.to >= from);
+      const touches = (from, to) => reveal && touchesSelection(state, from, to);
 
       const hideOrDim = (from, to, revealed) => {
         if (from >= to) return;
@@ -190,9 +302,17 @@ export function livePreview({ reveal = true } = {}) {
       const withTrailingSpace = (to) =>
         to < doc.length && doc.sliceString(to, to + 1) === ' ' ? to + 1 : to;
 
-      const addLines = (from, to, deco) => {
-        let line = doc.lineAt(from);
+      // Code-styled lines with rounded first/last so the block reads as a
+      // card, not a slab (fenced code, and math source while revealed)
+      const addCodeCard = (from, to) => {
+        const firstLine = doc.lineAt(from);
+        const lastLine = doc.lineAt(to);
+        let line = firstLine;
         for (;;) {
+          const deco = line.from === firstLine.from && line.from === lastLine.from ? CODE_LINE_ONLY
+            : line.from === firstLine.from ? CODE_LINE_FIRST
+            : line.from === lastLine.from ? CODE_LINE_LAST
+            : CODE_LINE;
           all.push(deco.range(line.from));
           if (line.to >= to) break;
           line = doc.lineAt(line.to + 1);
@@ -218,6 +338,21 @@ export function livePreview({ reveal = true } = {}) {
             if (name === 'Link' || name === 'Autolink') {
               all.push(LINK.range(node.from, node.to));
               return;
+            }
+
+            if (name === 'Math') {
+              const m = mathInfo(doc, node.node);
+              if (!m) return false;
+              if (touches(node.from, node.to)) {
+                // Revealed: the source reads as code, delimiters dimmed
+                if (m.block) addCodeCard(node.from, node.to);
+                else all.push(INLINE_CODE.range(m.marks[0].to, m.marks[1].from));
+                for (const mark of m.marks) all.push(MARK_DIM.range(mark.from, mark.to));
+              } else if (!m.block) {
+                all.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, false, m.display) }).range(m.from, m.to));
+              }
+              // Collapsed blocks are drawn by the mathBlocks field
+              return false;
             }
 
             if (name === 'HeaderMark') {
@@ -292,19 +427,7 @@ export function livePreview({ reveal = true } = {}) {
             }
 
             if (name === 'FencedCode' || name === 'CodeBlock') {
-              // Rounded first/last lines so the block reads as a card, not a slab
-              const firstLine = doc.lineAt(node.from);
-              const lastLine = doc.lineAt(node.to);
-              let line = firstLine;
-              for (;;) {
-                const deco = line.from === firstLine.from && line.from === lastLine.from ? CODE_LINE_ONLY
-                  : line.from === firstLine.from ? CODE_LINE_FIRST
-                  : line.from === lastLine.from ? CODE_LINE_LAST
-                  : CODE_LINE;
-                all.push(deco.range(line.from));
-                if (line.to >= node.to) break;
-                line = doc.lineAt(line.to + 1);
-              }
+              addCodeCard(node.from, node.to);
               if (name === 'FencedCode') {
                 const codeChild = node.node.getChild('CodeText');
                 const code = codeChild ? doc.sliceString(codeChild.from, codeChild.to) : '';
@@ -455,5 +578,5 @@ export function livePreview({ reveal = true } = {}) {
     },
   });
 
-  return [plugin, clickHandler];
+  return [mathBlocks(reveal), plugin, clickHandler];
 }

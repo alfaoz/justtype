@@ -6,8 +6,8 @@ import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view
 import { EditorState } from '@codemirror/state';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
-import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown';
-import { livePreview } from './livePreview';
+import { markdownKeymap } from '@codemirror/lang-markdown';
+import { livePreview, richMarkdown } from './livePreview';
 import { strings } from '../strings';
 import { wrapKey, unwrapKey } from '../crypto';
 import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates, requestCollabJoin } from '../collabSync';
@@ -358,7 +358,7 @@ export default function CollabEditor({
       state: EditorState.create({
         doc: ytext.toString(),
         extensions: [
-          ...(mode === 'wysiwyg' ? [markdown({ base: markdownLanguage }), livePreview({ reveal: true })] : []),
+          ...(mode === 'wysiwyg' ? [richMarkdown(), livePreview({ reveal: true })] : []),
           EditorView.lineWrapping,
           indentUnit.of('    '),
           drawSelection(),
