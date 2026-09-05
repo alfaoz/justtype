@@ -15,6 +15,7 @@ import { API_URL } from '../config';
 import { colorFor } from '../collabColors';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { isOnline } from '../connectivity';
+import { closeNearbySession } from '../nearbySession';
 
 // Collaborative editor surface for a shared slate. Owns the whole Yjs
 // lifecycle so callers stay simple: build the Y.Doc from the encrypted
@@ -141,6 +142,8 @@ export default function CollabEditor({
       setReady(true);
       if (apiRef) {
         apiRef.current = {
+          // For the nearby bridge (nearbySession.js): the live document
+          getDoc: () => (cancelled || stale ? null : { ydoc, awareness, key }),
           replaceText: (text) => {
             if (cancelled || stale) return;
             ydoc.transact(() => {
@@ -383,6 +386,7 @@ export default function CollabEditor({
 
     return () => {
       cancelled = true;
+      closeNearbySession(slateId);
       clearRetry();
       clearTimeout(offlineTimer);
       persistence.destroy().catch(() => {});

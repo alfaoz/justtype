@@ -1068,6 +1068,10 @@ body.custom-theme ::-webkit-scrollbar-track {
 .slate-unavailable { opacity: 0.4; cursor: default !important; }
 .slate-unavailable:hover { background: transparent !important; }
 
+/* Nearby collab: the code on a white card so cameras read it, the camera view */
+.nearby-qr { width: 240px; height: 240px; max-width: 100%; background: #fff; padding: 8px; border-radius: 6px; image-rendering: pixelated; }
+.nearby-video { width: 100%; max-height: 220px; object-fit: cover; border-radius: 6px; background: #000; }
+
 /* Export as pdf: a print-only copy of the slate is mounted on body while
    printing; the app chrome is hidden and the theme swaps for ink on paper */
 .print-root { display: none; }

@@ -14,6 +14,7 @@ import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
 import { cacheSlate, getCachedSlate, getPendingFor, queuePending, setKeepOffline, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
+import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -320,6 +321,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
   const { online, updateAvailable } = useConnectivity();
   const [keptOffline, setKeptOffline] = useState(false); // this slate is pinned to the device
+  // Devices connected directly to this slate (nearby collab)
+  const [nearbyCount, setNearbyCount] = useState(0);
+  useEffect(() => {
+    const refresh = () => setNearbyCount(collabSlateDbId ? nearbyPeerCount(collabSlateDbId) : 0);
+    refresh();
+    return onNearbyChange(refresh);
+  }, [collabSlateDbId]);
   // The version of the open slate as loaded (server timestamp + encrypted
   // blob): the base its edits started from, for conflict detection and merge
   const loadedSlateRef = useRef(null);
@@ -1972,6 +1980,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             slateId={collabSlateDbId}
             docKey={collabDocKey}
             currentText={content}
+            getDoc={() => collabApiRef.current?.getDoc?.()}
             onRestore={(text) => {
               if (collabApiRef.current) collabApiRef.current.replaceText(text);
               setCollabPanel(null);
@@ -2416,6 +2425,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     title={strings.writer.publicState.outdatedHint}
                   >
                     {strings.writer.publicState.outdated}
+                  </button>
+                )}
+
+                {/* Devices connected directly (nearby): one click to the tab */}
+                {nearbyCount > 0 && (
+                  <button
+                    onClick={() => setCollabPanel('nearby')}
+                    className="text-sm text-violet-400 hover:text-white transition-colors duration-200"
+                  >
+                    {strings.collab.nearby.chip(nearbyCount)}
                   </button>
                 )}
 
