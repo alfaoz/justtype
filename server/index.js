@@ -444,6 +444,15 @@ app.use(cors((req, callback) => {
     return callback(null, { origin: true, credentials: false });
   }
 
+  // The verification surface (loader html, manifest + signature, hashed
+  // assets) is public and must be readable cross-origin so the off-origin
+  // verifier on github pages can fetch and hash it. No credentials.
+  if (path === '/' || path === '/index.html'
+    || path === '/build-manifest.json' || path === '/build-manifest.sig'
+    || path.startsWith('/assets/')) {
+    return callback(null, { origin: true, credentials: false });
+  }
+
   // Allow requests with no origin (CLI, mobile apps, curl, etc.)
   if (!origin) {
     return callback(null, { origin: true, credentials: true });
@@ -468,12 +477,37 @@ app.use(cors((req, callback) => {
 // Cookie parser for HttpOnly auth cookies
 app.use(cookieParser());
 
+// CSP hashes for the verified bootstrap. The built index.html is a static
+// loader with a single inline <script> (see loader/template.html); at runtime
+// it injects an inline import map built from build-manifest.json. Both are
+// inline scripts and CSP has no 'unsafe-inline', so hash them at boot -- the
+// loader from its bytes on disk, the import map by constructing the exact
+// string the loader constructs (same file order, no whitespace; the two
+// expressions must be changed together). Deploys restart the server after
+// building, so these are always fresh. If dist/ is missing (dev), CSP simply
+// omits them; the vite dev server serves its own index.html anyway.
+const bootstrapCspHashes = [];
+try {
+  const bootFs = require('fs');
+  const bootPath = require('path');
+  const distIndexHtml = bootFs.readFileSync(bootPath.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
+  const inlineLoader = distIndexHtml.match(/<script>([\s\S]*?)<\/script>/);
+  if (inlineLoader) {
+    bootstrapCspHashes.push(`'sha256-${crypto.createHash('sha256').update(inlineLoader[1]).digest('base64')}'`);
+  }
+  const bootManifest = JSON.parse(bootFs.readFileSync(bootPath.join(__dirname, '..', 'dist', 'build-manifest.json'), 'utf8'));
+  const importMapJson = JSON.stringify({ integrity: Object.fromEntries(bootManifest.files.filter(f => f.file.endsWith('.js')).map(f => [`/assets/${f.file}`, `sha256-${Buffer.from(f.hash, 'hex').toString('base64')}`])) });
+  bootstrapCspHashes.push(`'sha256-${crypto.createHash('sha256').update(importMapJson).digest('base64')}'`);
+} catch (err) {
+  console.warn('verified bootstrap: no dist build found, CSP hashes skipped');
+}
+
 // Security headers with helmet.js
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
+      scriptSrc: ["'self'", "https://challenges.cloudflare.com", ...bootstrapCspHashes],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
       // wss origin listed explicitly — CSP3 'self' covers same-origin

@@ -1,0 +1,38 @@
+# continuously checks that justtype.io is serving a signed release that
+# matches what actions built from this repository (scripts/monitor.mjs).
+# runs from github's infrastructure, so a compromised server cannot lie to it
+# the way it could lie to a /verify page it serves itself. a failure fails the
+# run (github emails the owner) and opens an integrity-alert issue.
+name: integrity monitor
+
+on:
+  schedule:
+    # every ~15 minutes, off the :00/:15/:30/:45 spikes github delays
+    - cron: '4,19,34,49 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/monitor.mjs
+      - name: open alert issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create integrity-alert --color B60205 --description "the integrity monitor found a mismatch on justtype.io" --force
+          if [ -z "$(gh issue list --repo "$GITHUB_REPOSITORY" --label integrity-alert --state open --json number --jq '.[].number')" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "integrity monitor: verification failed" \
+              --label integrity-alert \
+              --body "the scheduled integrity check of justtype.io failed. see the run log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
