@@ -61,6 +61,8 @@ if (typeof window !== 'undefined') {
   setTimeout(probe, 1500);
 }
 
+export const isOnline = () => state.online;
+
 // Call from any API failure that looks like a network error
 export function reportNetworkFailure() { if (state.online) probe(); }
 

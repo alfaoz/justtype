@@ -11,7 +11,18 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
-import { useConnectivity, reportNetworkFailure } from '../connectivity';
+import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
+
+// Colour of the status word in the strip and the mobile sheet: failures
+// red, private-draft states orange, everything else green
+const statusTone = (status) => {
+  const { privateDraft, savedAsPrivate } = strings.writer.status;
+  if (status === strings.errors.saveFailed || status === strings.writer.connectivity.notSaved) return 'text-red-400';
+  if (status === privateDraft || status === savedAsPrivate) return 'text-orange-400';
+  return 'text-green-500';
+};
+// Offline, a failed save is expected and reads as a state, not a failure
+const saveFailedStatus = () => isOnline() ? strings.errors.saveFailed : strings.writer.connectivity.notSaved;
 
 // The rich editor and the collab editor are separate chunks: they are
 // content-hashed, so a deploy that only touches app code leaves the ~500 kB of
@@ -1371,7 +1382,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       if (!response.ok) {
-        setStatus(strings.errors.saveFailed);
+        setStatus(saveFailedStatus());
         return null;
       }
 
@@ -1431,7 +1442,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       return data; // Return the saved slate data
     } catch (err) {
-      setStatus(strings.errors.saveFailed);
+      setStatus(saveFailedStatus());
       console.error('Save failed:', err);
       return null;
     }
@@ -2235,11 +2246,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             <span
               className={`transition-opacity duration-300 ${
                 status === 'ready' ? 'opacity-0' : 'opacity-100'
-              } ${
-                status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate ? 'text-orange-400' :
-                status === 'saved' ? 'text-green-500' :
-                'text-green-500'
-              } ${
+              } ${statusTone(status)} ${
                 (status.includes('create account') || status.includes('support us')) ? 'cursor-pointer hover:text-white' : ''
               }`}
               onClick={() => {
@@ -2490,11 +2497,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               {/* status */}
               {status !== 'ready' && (
-                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${
-                  status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
-                    ? 'text-orange-400'
-                    : 'text-green-500'
-                }`}>
+                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${statusTone(status)}`}>
                   {status}
                 </div>
               )}

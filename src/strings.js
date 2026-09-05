@@ -28,6 +28,7 @@ const strings = {
     },
     connectivity: {
       offline: 'offline',
+      notSaved: 'not saved',
       offlineHint: 'no connection. keep writing; saving picks up when you are back online',
       update: 'new version · reload',
       updateHint: 'a newer justtype is live. reload to get it'
