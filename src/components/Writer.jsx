@@ -1400,6 +1400,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const saveSlate = async () => {
     if (isShared) return null; // shared slates persist through the collab relay
     if (!content.trim()) return null;
+    // Collab slates persist through the Yjs document, which lives on this
+    // device too; the canonical blob catches up when the network is back
+    if (collabDocKey && !isOnline()) {
+      setStatus(strings.writer.connectivity.savedLocally);
+      return null;
+    }
 
     setStatus('saving...');
 

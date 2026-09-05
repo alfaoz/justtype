@@ -198,7 +198,7 @@ const PinGlyph = () => (
  */
 function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false }) {
   const isPinned = Boolean(slate.pinned_at);
-  const unavailable = offline && !slate.available && !slate.local;
+  const unavailable = offline && !slate.available && !slate.local && !slate.shared;
   const open = unavailable ? undefined : onOpen;
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
   const title = slate.title || strings.slates.untitled;

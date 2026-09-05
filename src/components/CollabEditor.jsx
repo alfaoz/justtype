@@ -13,6 +13,8 @@ import { wrapKey, unwrapKey } from '../crypto';
 import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates, requestCollabJoin } from '../collabSync';
 import { API_URL } from '../config';
 import { colorFor } from '../collabColors';
+import { IndexeddbPersistence } from 'y-indexeddb';
+import { isOnline } from '../connectivity';
 
 // Collaborative editor surface for a shared slate. Owns the whole Yjs
 // lifecycle so callers stay simple: build the Y.Doc from the encrypted
@@ -56,6 +58,7 @@ export default function CollabEditor({
   const containerRef = useRef(null);
   const [session, setSession] = useState(null); // { ytext, awareness, undoManager }
   const [ready, setReady] = useState(false);
+  const [offlineUnavailable, setOfflineUnavailable] = useState(false); // no network and no copy on this device
 
   // Late-bound refs so the doc effect never re-runs for changing callbacks.
   const docKeyRef = useRef(docKey); docKeyRef.current = docKey;
@@ -76,6 +79,16 @@ export default function CollabEditor({
 
     const ydoc = new Y.Doc();
     const ytext = ydoc.getText('content');
+    // Every update, local or remote, lands in IndexedDB as it happens, so the
+    // document survives reloads and opens with no network. Updates replayed
+    // from there carry `persistence` as origin and are never re-sent.
+    const persistence = new IndexeddbPersistence(`jt-collab-${slateId}`, ydoc);
+    // Mirror of what the server holds, built during the first catch-up, so
+    // the exact updates it lacks (written offline, here or earlier) can be
+    // sent as one update once the catch-up drains.
+    let serverDoc = new Y.Doc();
+    let serverSynced = false;
+    let offlineTimer = null;
     const awareness = new awarenessProtocol.Awareness(ydoc);
     const undoManager = new Y.UndoManager(ytext);
     const [color, colorLight] = colorFor(usernameRef.current);
@@ -140,6 +153,21 @@ export default function CollabEditor({
       if (onReadyRef.current) onReadyRef.current();
     };
 
+    // First catch-up with the server complete: whatever this device holds
+    // that the server does not (edits made offline, in this session or an
+    // earlier one) goes up as a single update. Seeding already sent itself.
+    const catchUpDone = () => {
+      finishReady();
+      if (serverSynced) return;
+      serverSynced = true;
+      if (!seeded) {
+        const missing = Y.encodeStateAsUpdate(ydoc, Y.encodeStateVector(serverDoc));
+        if (missing.length > 2) sendUpdate(missing);
+      }
+      serverDoc.destroy();
+      serverDoc = null;
+    };
+
     const flushQueue = () => {
       while (sendQueue.length) {
         const payload = sendQueue[0];
@@ -160,7 +188,7 @@ export default function CollabEditor({
     };
 
     const updateHandler = (update, origin) => {
-      if (origin === REMOTE) return;
+      if (origin === REMOTE || origin === persistence) return;
       sendUpdate(update);
     };
     ydoc.on('update', updateHandler);
@@ -187,6 +215,7 @@ export default function CollabEditor({
         const bytes = await unwrapKey(payload, key);
         if (cancelled) return;
         Y.applyUpdate(ydoc, bytes, REMOTE);
+        if (!serverSynced) Y.applyUpdate(serverDoc, bytes);
         if (version > appliedVersion) appliedVersion = version;
       } catch (e) {
         console.warn('collab update decrypt failed at version', version, e);
@@ -215,6 +244,7 @@ export default function CollabEditor({
         const bytes = await unwrapKey(data.payload, key);
         if (cancelled) return;
         Y.applyUpdate(ydoc, bytes, REMOTE);
+        if (!serverSynced) Y.applyUpdate(serverDoc, bytes);
         appliedVersion = data.version || 0;
         snapshotVersion = data.version || 0;
       }
@@ -252,7 +282,7 @@ export default function CollabEditor({
       if (cancelled) return;
       switch (event.type) {
         case 'joined': {
-          if (becameReady) {
+          if (serverSynced) {
             if ((event.epoch ?? 0) !== epoch) { goStale(); break; }
             // Rejoin while live: push what we wrote offline, pull what we missed.
             flushQueue();
@@ -264,15 +294,17 @@ export default function CollabEditor({
           epoch = event.epoch ?? 0;
           try {
             if (event.version === 0 && event.snapshotVersion === 0) {
-              if (!seeded) { seeded = true; seed(); }
-              finishReady();
+              // Nothing on the server yet: seed from the canonical text,
+              // unless this device already holds a version written offline
+              if (!seeded && ytext.length === 0) { seeded = true; seed(); }
+              catchUpDone();
             } else {
               if (event.snapshotVersion > 0 && snapshotVersion === 0) await loadSnapshot();
               if (event.version > appliedVersion) {
                 // Ready lands once the catch-up reply drains.
                 if (!fetchCollabUpdates(slateId, appliedVersion)) throw new Error('socket closed mid catch-up');
               } else {
-                finishReady();
+                catchUpDone();
               }
             }
           } catch (e) {
@@ -293,7 +325,7 @@ export default function CollabEditor({
         case 'updates': {
           for (const u of event.updates) await applyLogged(u.version, u.payload);
           if (event.more) fetchCollabUpdates(slateId, appliedVersion);
-          else finishReady();
+          else catchUpDone();
           break;
         }
         case 'awareness': {
@@ -335,9 +367,26 @@ export default function CollabEditor({
     });
     scheduleRetry();
 
+    // With no network the local copy is the document. When there is none,
+    // say so instead of pulsing "loading" forever. Online but slow, the
+    // local copy shows after a moment and the server merges in behind it.
+    persistence.whenSynced.then(() => {
+      if (cancelled || becameReady) return;
+      const hasCopy = ytext.length > 0;
+      if (!isOnline()) {
+        if (hasCopy) finishReady();
+        else setOfflineUnavailable(true);
+      } else if (hasCopy) {
+        offlineTimer = setTimeout(() => { if (!cancelled && !becameReady) finishReady(); }, 4000);
+      }
+    }).catch(() => {});
+
     return () => {
       cancelled = true;
       clearRetry();
+      clearTimeout(offlineTimer);
+      persistence.destroy().catch(() => {});
+      if (serverDoc) serverDoc.destroy();
       if (apiRef) apiRef.current = null;
       unsubscribe();
       awareness.off('update', awarenessHandler);
@@ -384,8 +433,8 @@ export default function CollabEditor({
   return (
     <>
       {!ready && (
-        <div className="w-full max-w-3xl p-8 text-sm animate-pulse" style={{ color: 'var(--theme-text-dim)' }}>
-          {strings.collab.viewer.loading}
+        <div className={`w-full max-w-3xl p-8 text-sm ${offlineUnavailable ? '' : 'animate-pulse'}`} style={{ color: 'var(--theme-text-dim)' }}>
+          {offlineUnavailable ? strings.writer.connectivity.notAvailableOffline : strings.collab.viewer.loading}
         </div>
       )}
       <div
