@@ -227,6 +227,8 @@ function mathInfo(doc, node) {
     && doc.sliceString(node.to, lastLine.to).trim() === '';
   return {
     marks, display, block,
+    // Anything crossing a line break must be replaced from the state field
+    multiline: firstLine.from !== lastLine.from,
     from: block ? firstLine.from : node.from,
     to: block ? lastLine.to : node.to,
     tex: doc.sliceString(marks[0].to, marks[1].from).trim(),
@@ -234,10 +236,10 @@ function mathInfo(doc, node) {
   };
 }
 
-// Collapsed math blocks replace whole lines, and decorations that swallow
-// line breaks must come from a state field, not a view plugin. This field
-// carries only those; everything else (inline math included) stays in the
-// plugin below, which handles the revealed state for blocks too.
+// Decorations that swallow line breaks must come from a state field, not a
+// view plugin. This field carries the collapsed multi-line math (blocks, and
+// `$$` pairs that cross lines inside prose); single-line math and the
+// revealed state for everything stay in the plugin below.
 function mathBlocks(reveal) {
   const compute = (state) => {
     const doc = state.doc;
@@ -247,8 +249,8 @@ function mathBlocks(reveal) {
       enter: (node) => {
         if (node.name !== 'Math') return;
         const m = mathInfo(doc, node.node);
-        if (!m || !m.block || (reveal && touchesSelection(state, node.from, node.to))) return false;
-        out.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, true, true) }).range(m.from, m.to));
+        if (!m || !m.multiline || (reveal && touchesSelection(state, node.from, node.to))) return false;
+        out.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, m.block, m.display) }).range(m.from, m.to));
         return false;
       },
     });
@@ -348,10 +350,10 @@ export function livePreview({ reveal = true } = {}) {
                 if (m.block) addCodeCard(node.from, node.to);
                 else all.push(INLINE_CODE.range(m.marks[0].to, m.marks[1].from));
                 for (const mark of m.marks) all.push(MARK_DIM.range(mark.from, mark.to));
-              } else if (!m.block) {
+              } else if (!m.multiline) {
                 all.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, false, m.display) }).range(m.from, m.to));
               }
-              // Collapsed blocks are drawn by the mathBlocks field
+              // Collapsed multi-line math is drawn by the mathBlocks field
               return false;
             }
 
