@@ -196,8 +196,10 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
   if (slate.available) {
     return (
-      <HoverNote plain note={slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.kept ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)] opacity-70'}`}>
-        <svg className="w-[1em] h-[1em]" viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
+      <HoverNote plain note={slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.kept ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
+        {/* The dimming sits on the icon, not the wrapper: the hover card is a
+            child of the wrapper and must stay opaque */}
+        <svg className={`w-[1em] h-[1em] ${slate.kept ? '' : 'opacity-70'}`} viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
           <circle cx="12" cy="12" r="10" />
           <path d="m9 12 2 2 4-4" />
         </svg>
