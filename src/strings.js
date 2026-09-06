@@ -176,6 +176,10 @@ const strings = {
     newSlate: '+ new slate',
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
+    filterVisibility: 'show:',
+    filterVisibilityAll: 'all',
+    filterVisibilityPublic: 'public',
+    filterVisibilityPrivate: 'private',
     sortOptions: {
       recent: 'recent',
       oldest: 'oldest',
@@ -196,7 +200,8 @@ const strings = {
       // for a slate that is not here yet
       auto: 'on this device',
       kept: 'kept on this device',
-      missing: 'not on this device yet. click to copy it',
+      missing: 'not on this device yet. click to keep a copy here',
+      offloaded: 'offloaded from this device. click to keep a copy here',
       missingOffline: 'not on this device',
       copying: 'copying to this device',
       pending: 'saved on this device, not in your account yet',
@@ -204,7 +209,9 @@ const strings = {
       syncing: 'syncing to your account',
       synced: 'synced',
       keep: 'keep on this device',
-      unkeep: 'remove from this device'
+      unkeep: 'stop keeping on this device',
+      offload: 'offload from this device',
+      copy: 'copy to this device'
     },
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',

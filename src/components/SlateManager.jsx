@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
-import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
+import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { MarkGlyph } from './MarkGlyph';
@@ -130,7 +130,7 @@ const menuItemCls = (danger) =>
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   return (
     <div className="relative flex items-center flex-shrink-0">
@@ -160,9 +160,21 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
               <button onClick={onTags} className={menuItemCls(false)}>
                 {strings.slates.menu.tags}
               </button>
-              {!slate.local && (
+              {/* This device's copy: keep it past the budget, let it go, or
+                  get it. A copy with an edit still on its way stays put. */}
+              {!slate.local && slate.available && (
                 <button onClick={onKeepOffline} className={menuItemCls(false)}>
                   {slate.kept ? strings.slates.offline.unkeep : strings.slates.offline.keep}
+                </button>
+              )}
+              {!slate.local && slate.available && !slate.pending && (
+                <button onClick={onOffload} className={menuItemCls(false)}>
+                  {strings.slates.offline.offload}
+                </button>
+              )}
+              {!slate.local && !slate.available && (
+                <button onClick={onCopyToDevice} className={menuItemCls(false)}>
+                  {strings.slates.offline.copy}
                 </button>
               )}
               <button onClick={onPublish} className={menuItemCls(false)}>
@@ -218,7 +230,7 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
   }
   const copying = Boolean(slate.copying);
   const canCopy = !offline && !copying;
-  const note = copying ? o.copying : offline ? o.missingOffline : o.missing;
+  const note = copying ? o.copying : offline ? o.missingOffline : slate.offloaded ? o.offloaded : o.missing;
   return (
     <HoverNote plain note={note} className={`device-mark p-1 -m-1 text-[var(--theme-text-dim)] ${copying ? 'animate-pulse is-live' : ''}`}>
       <button
@@ -323,7 +335,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
 export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
-  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), pending: new Set() });
+  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
   const [copying, setCopying] = useState(() => new Set());
   const refreshDeviceCopies = async () => {
     if (!userId) return;
@@ -332,6 +344,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       setDeviceCopies({
         available: new Set(rows.filter(r => r.data?.encryptedContent).map(r => r.slateNumber)),
         kept: new Set(rows.filter(r => r.keep).map(r => r.slateNumber)),
+        offloaded: new Set(rows.filter(r => r.offloaded && !r.data?.encryptedContent).map(r => r.slateNumber)),
         pending: new Set(queued.map(q => q.slateNumber)),
       });
     } catch { /* no local store: nothing is available offline */ }
@@ -376,6 +389,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
+  const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private'
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
@@ -651,11 +665,26 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setSlateKept(slate, !deviceCopies.kept.has(slate.slate_number));
   };
 
-  // The cloud mark: copy it now and keep it
+  // The cloud mark, or the menu: copy it now and keep it, budget or not
   const copySlateNow = (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
+    setOpenMenuId(null);
     setSlateKept(slate, true);
+  };
+
+  // Free the space: the copy goes, and stays gone until asked for
+  const offloadFromDevice = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    if (!userId) return;
+    try {
+      await offloadSlate(userId, slate.slate_number);
+    } catch (err) {
+      console.error('offload failed:', err);
+    }
+    refreshDeviceCopies();
   };
 
   // A local slate got its number, or a queued edit landed: refresh
@@ -983,6 +1012,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         return false;
       }
 
+      if (visibilityFilter === 'public' && !slate.is_published) return false;
+      if (visibilityFilter === 'private' && slate.is_published) return false;
+
       if (collabFilter && !slate.is_collab) {
         return false;
       }
@@ -1030,7 +1062,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, sharedSlates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, sortBy]);
+  }, [slates, sharedSlates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, visibilityFilter, sortBy]);
 
   // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
   useEffect(() => {
@@ -1142,6 +1174,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 value={sortBy}
                 onChange={setSortBy}
               />
+              <ChoiceRow
+                label={strings.slates.filterVisibility}
+                options={[
+                  { id: 'all', label: strings.slates.filterVisibilityAll },
+                  { id: 'public', label: strings.slates.filterVisibilityPublic },
+                  { id: 'private', label: strings.slates.filterVisibilityPrivate },
+                ]}
+                value={visibilityFilter}
+                onChange={setVisibilityFilter}
+              />
               {hasCollabSlates && (
                 <ChoiceRow
                   label={strings.collab.filter.label}
@@ -1206,6 +1248,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 ...slate,
                 kept: deviceCopies.kept.has(slate.slate_number),
                 available: deviceCopies.available.has(slate.slate_number),
+                offloaded: deviceCopies.offloaded.has(slate.slate_number),
                 pending: slate.local || deviceCopies.pending.has(slate.slate_number),
                 syncing: syncing.has(slate.slate_number),
                 justSynced: justSynced.has(slate.slate_number),
@@ -1222,6 +1265,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onPin: (e) => togglePin(slate, e),
                 onTags: (e) => openTagsEditor(slate, e),
                 onKeepOffline: (e) => toggleKeepOffline(slate, e),
+                onOffload: (e) => offloadFromDevice(slate, e),
+                onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);

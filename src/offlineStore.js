@@ -94,7 +94,16 @@ export async function setKeepOffline(userId, slateNumber, keep) {
   const rec = prev || { key, userId: uid(userId), slateNumber, data: {}, cachedAt: 0, lastOpenedAt: 0 };
   rec.userId = uid(userId);
   rec.keep = keep;
+  if (keep) rec.offloaded = false;
   await tx('slates', 'readwrite', s => s.put(rec));
+}
+
+// Take the copy off this device and remember that the person asked, so the
+// app does not quietly bring it back on the next list load. Opening the
+// slate, or clicking its cloud mark, puts a copy back.
+export async function offloadSlate(userId, slateNumber) {
+  const key = slateKeyOf(userId, slateNumber);
+  await tx('slates', 'readwrite', s => s.put({ key, userId: uid(userId), slateNumber, data: {}, keep: false, offloaded: true, cachedAt: 0, lastOpenedAt: 0 }));
 }
 
 // A synced slate replaces its local stand-in under the real number
@@ -145,7 +154,8 @@ export function copyPlan(rows, cached) {
   };
   const eligible = rows.filter(r => !r.local && !r.shared && !isLocalSlateNumber(r.slate_number));
   const kept = eligible.filter(r => byNumber.get(r.slate_number)?.keep);
-  const rest = eligible.filter(r => !byNumber.get(r.slate_number)?.keep)
+  // Offloaded slates stay off until asked for
+  const rest = eligible.filter(r => { const c = byNumber.get(r.slate_number); return !c?.keep && !c?.offloaded; })
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   let total = kept.reduce((n, r) => n + (r.size_bytes || 0), 0);
   const within = [];
