@@ -1450,7 +1450,9 @@ take care!
         previews: ['draft three, final', 'draft two, tighter', 'draft one, rough']
       },
       unpublish: { url: 'justtype.io/s/9f2ka1', after: 'fully private again' },
-      markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' }
+      markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' },
+      // The line keeps typing while the footer word comes and goes
+      offline: { lineA: 'the wifi died mid sentence', lineB: "and the sentence didn't." }
     },
     features: [
       {
@@ -1477,8 +1479,15 @@ take care!
         id: 'brand',
         title: 'a new justtype',
         body: 'a new default identity, a new default font, a polished design, a new justtype.',
-        fontPhrase: 'a new default font',
-        fontNote: 'ibm plex mono'
+        notePhrase: 'a new default font',
+        note: 'ibm plex mono'
+      },
+      {
+        id: 'offline',
+        title: 'offline, on its own',
+        body: "the one you're not supposed to notice. every device you write from now keeps its own encrypted copy of your slates, without being asked. lose the connection mid sentence and nothing happens: the words wait on the device and sync when you're back. nothing to turn on.",
+        notePhrase: 'nothing happens',
+        note: 'almost nothing. a small orange mark sits by the slate in your list until it syncs'
       }
     ],
     backLink: 'back to writing'

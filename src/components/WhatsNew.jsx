@@ -102,6 +102,24 @@ export function WhatsNew() {
       </div>
     </div>
     ),
+
+    // Offline: the sentence keeps typing; only the footer word notices
+    offline: (
+    <div className="wn-frame" key="offline">
+      <div className="wn-line">
+        <span className="wn-type wn-off-a">{d.offline.lineA}</span>
+        <span className="wn-caret wn-off-caret-a" style={{ background: 'var(--theme-accent)' }} />
+      </div>
+      <div className="wn-line">
+        <span className="wn-type wn-off-b">{d.offline.lineB}</span>
+        <span className="wn-caret wn-off-caret-b" style={{ background: 'var(--theme-accent)' }} />
+      </div>
+      <span className="wn-off-status" aria-hidden="true">
+        <span className="wn-off-offline">{strings.writer.connectivity.offline}</span>
+        <span className="wn-off-syncing">{strings.writer.connectivity.syncing}</span>
+      </span>
+    </div>
+    ),
   };
 
   return (
@@ -123,6 +141,7 @@ export function WhatsNew() {
           flex-direction: column;
           justify-content: center;
           overflow: hidden;
+          position: relative;
         }
         .wn-frame-center { align-items: center; }
         .wn-line { display: flex; align-items: center; min-height: 2rem; color: var(--theme-text); font-size: 0.9rem; }
@@ -182,6 +201,25 @@ export function WhatsNew() {
         .wn-brand-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; animation: wnBrand 7s steps(11, end) infinite; }
         @keyframes wnBrand { 0%, 10% { width: 0; } 45% { width: 11ch; } 94% { width: 11ch; } 100% { width: 0; } }
 
+        /* Offline: one writer, two lines. The footer word goes orange halfway
+           through the first line and the caret never pauses. Same
+           derived-from-copy rule as the collab demo. */
+        .wn-off-a { animation: wnOffA 10s steps(${d.offline.lineA.length}, end) infinite; }
+        .wn-off-b { animation: wnOffB 10s steps(${d.offline.lineB.length}, end) infinite; }
+        @keyframes wnOffA { 0%, 6% { width: 0; } 32% { width: ${d.offline.lineA.length}ch; } 94% { width: ${d.offline.lineA.length}ch; } 100% { width: 0; } }
+        @keyframes wnOffB { 0%, 38% { width: 0; } 62% { width: ${d.offline.lineB.length}ch; } 94% { width: ${d.offline.lineB.length}ch; } 100% { width: 0; } }
+        .wn-off-caret-a { animation: wnOffCaretA 10s infinite; }
+        .wn-off-caret-b { animation: wnOffCaretB 10s infinite; }
+        @keyframes wnOffCaretA { 0%, 37% { opacity: 1; } 38%, 100% { opacity: 0; } }
+        @keyframes wnOffCaretB { 0%, 37% { opacity: 0; } 38%, 100% { opacity: 1; } }
+        /* Where the writer's footer keeps it: bottom right, small */
+        .wn-off-status { position: absolute; right: 0.9rem; bottom: 0.55rem; font-size: 0.7rem; line-height: 1; }
+        .wn-off-offline, .wn-off-syncing { position: absolute; right: 0; bottom: 0; white-space: nowrap; opacity: 0; }
+        .wn-off-offline { color: var(--theme-orange); animation: wnOffWord 10s infinite; }
+        .wn-off-syncing { color: var(--theme-text-dim); animation: wnOffSync 10s infinite; }
+        @keyframes wnOffWord { 0%, 18% { opacity: 0; } 20%, 66% { opacity: 1; } 68%, 100% { opacity: 0; } }
+        @keyframes wnOffSync { 0%, 68% { opacity: 0; } 70%, 80% { opacity: 1; } 82%, 100% { opacity: 0; } }
+
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }
         @media (min-width: 768px) {
@@ -219,13 +257,13 @@ export function WhatsNew() {
                 <p className="text-xs text-[var(--theme-text-dim)] mb-2">{String(i + 1).padStart(2, '0')}</p>
                 <h2 className="text-xl md:text-2xl text-white mb-3">{f.title}</h2>
                 <p className="text-sm text-[var(--theme-text-muted)] leading-relaxed">
-                  {f.fontPhrase && f.body.includes(f.fontPhrase)
+                  {f.notePhrase && f.body.includes(f.notePhrase)
                     ? (() => {
-                        const [before, after] = f.body.split(f.fontPhrase);
+                        const [before, after] = f.body.split(f.notePhrase);
                         return (
                           <>
                             {before}
-                            <HoverNote note={f.fontNote}>{f.fontPhrase}</HoverNote>
+                            <HoverNote note={f.note}>{f.notePhrase}</HoverNote>
                             {after}
                           </>
                         );
