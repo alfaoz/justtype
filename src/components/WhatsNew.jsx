@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { PageHeader } from './PageHeader';
 import { HoverNote } from './HoverNote';
+import { MarkGlyph } from './MarkGlyph';
 import { strings } from '../strings';
 import { VERSION } from '../version';
 
@@ -103,24 +104,52 @@ export function WhatsNew() {
     </div>
     ),
 
-    // Offline: the sentence keeps typing; only the footer word notices
+    // Offline: the real list, marks only. Copies land on their own, cloud by
+    // cloud; then one slate is written while offline, waits orange, spins,
+    // lands green and settles.
     offline: (
-    <div className="wn-frame" key="offline">
-      <div className="wn-line">
-        <span className="wn-type wn-off-a">{d.offline.lineA}</span>
-        <span className="wn-caret wn-off-caret-a" style={{ background: 'var(--theme-accent)' }} />
+    <div className="wn-frame wn-frame-list" key="offline">
+      <div className="wn-slates">
+        {d.offline.slates.map((title, i) => (
+          <div key={title} className="wn-slate">
+            <span className="wn-slate-title">{title}</span>
+            <span className="wn-slate-meta">
+              <span className={`wn-mark wn-mark-${i + 1}`}>
+                <span className="wn-mk wn-mk-cloud"><MarkGlyph kind="cloud" /></span>
+                <span className="wn-mk wn-mk-check"><MarkGlyph kind="check" /></span>
+                {i === d.offline.written && (
+                  <>
+                    <span className="wn-mk wn-mk-alert"><MarkGlyph kind="alert" /></span>
+                    <span className="wn-mk wn-mk-spin"><MarkGlyph kind="spin" className="mark-spin" /></span>
+                    <span className="wn-mk wn-mk-green"><MarkGlyph kind="check" /></span>
+                  </>
+                )}
+              </span>
+              <span>{strings.slates.status.private}</span>
+            </span>
+          </div>
+        ))}
       </div>
-      <div className="wn-line">
-        <span className="wn-type wn-off-b">{d.offline.lineB}</span>
-        <span className="wn-caret wn-off-caret-b" style={{ background: 'var(--theme-accent)' }} />
-      </div>
-      <span className="wn-off-status" aria-hidden="true">
-        <span className="wn-off-offline">{strings.writer.connectivity.offline}</span>
-        <span className="wn-off-syncing">{strings.writer.connectivity.syncing}</span>
-      </span>
     </div>
     ),
   };
+
+  // Offline demo timeline, in percent of one 12s loop. Each row's copy lands
+  // at its own moment (cloud out, check in); the written row then goes orange
+  // at 40%, spins at 60%, pops green at 70% and settles dim at 86%. The list
+  // dips out at the end so the marks reset out of sight.
+  const offlineCss = d.offline.slates.map((_, i) => {
+    const t = 8 + i * 4;
+    const n = i + 1;
+    const check = i === d.offline.written
+      ? `0%, ${t}% { opacity: 0; } ${t + 2}%, 40% { opacity: 0.7; } 42%, 84% { opacity: 0; } 86%, 96% { opacity: 0.7; } 98%, 100% { opacity: 0; }`
+      : `0%, ${t}% { opacity: 0; } ${t + 2}%, 96% { opacity: 0.7; } 98%, 100% { opacity: 0; }`;
+    return `
+        .wn-mark-${n} .wn-mk-cloud { animation: wnCloud${n} 12s infinite; }
+        .wn-mark-${n} .wn-mk-check { animation: wnCheck${n} 12s infinite; }
+        @keyframes wnCloud${n} { 0%, ${t}% { opacity: 1; } ${t + 2}%, 96% { opacity: 0; } 98%, 100% { opacity: 1; } }
+        @keyframes wnCheck${n} { ${check} }`;
+  }).join('');
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
@@ -141,7 +170,6 @@ export function WhatsNew() {
           flex-direction: column;
           justify-content: center;
           overflow: hidden;
-          position: relative;
         }
         .wn-frame-center { align-items: center; }
         .wn-line { display: flex; align-items: center; min-height: 2rem; color: var(--theme-text); font-size: 0.9rem; }
@@ -201,24 +229,32 @@ export function WhatsNew() {
         .wn-brand-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; animation: wnBrand 7s steps(11, end) infinite; }
         @keyframes wnBrand { 0%, 10% { width: 0; } 45% { width: 11ch; } 94% { width: 11ch; } 100% { width: 0; } }
 
-        /* Offline: one writer, two lines. The footer word goes orange halfway
-           through the first line and the caret never pauses. Same
-           derived-from-copy rule as the collab demo. */
-        .wn-off-a { animation: wnOffA 10s steps(${d.offline.lineA.length}, end) infinite; }
-        .wn-off-b { animation: wnOffB 10s steps(${d.offline.lineB.length}, end) infinite; }
-        @keyframes wnOffA { 0%, 6% { width: 0; } 32% { width: ${d.offline.lineA.length}ch; } 94% { width: ${d.offline.lineA.length}ch; } 100% { width: 0; } }
-        @keyframes wnOffB { 0%, 38% { width: 0; } 62% { width: ${d.offline.lineB.length}ch; } 94% { width: ${d.offline.lineB.length}ch; } 100% { width: 0; } }
-        .wn-off-caret-a { animation: wnOffCaretA 10s infinite; }
-        .wn-off-caret-b { animation: wnOffCaretB 10s infinite; }
-        @keyframes wnOffCaretA { 0%, 37% { opacity: 1; } 38%, 100% { opacity: 0; } }
-        @keyframes wnOffCaretB { 0%, 37% { opacity: 0; } 38%, 100% { opacity: 1; } }
-        /* Where the writer's footer keeps it: bottom right, small */
-        .wn-off-status { position: absolute; right: 0.9rem; bottom: 0.55rem; font-size: 0.7rem; line-height: 1; }
-        .wn-off-offline, .wn-off-syncing { position: absolute; right: 0; bottom: 0; white-space: nowrap; opacity: 0; }
-        .wn-off-offline { color: var(--theme-orange); animation: wnOffWord 10s infinite; }
-        .wn-off-syncing { color: var(--theme-text-dim); animation: wnOffSync 10s infinite; }
-        @keyframes wnOffWord { 0%, 18% { opacity: 0; } 20%, 66% { opacity: 1; } 68%, 100% { opacity: 0; } }
-        @keyframes wnOffSync { 0%, 68% { opacity: 0; } 70%, 80% { opacity: 1; } 82%, 100% { opacity: 0; } }
+        /* Offline: the slate list as the list draws it, marks stacked in one
+           cell and crossfaded on the timeline in offlineCss */
+        .wn-frame-list { padding: 1rem 1.25rem; }
+        .wn-slates { display: flex; flex-direction: column; font-size: 0.75rem; animation: wnSlates 12s infinite; }
+        @keyframes wnSlates { 0%, 93% { opacity: 1; } 95%, 98% { opacity: 0; } 100% { opacity: 1; } }
+        .wn-slate { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.45rem 0; border-top: 1px solid var(--theme-border-light); }
+        .wn-slate:first-child { border-top: 0; }
+        .wn-slate-title { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wn-slate-meta { display: flex; align-items: center; gap: 0.6rem; color: var(--theme-text-dim); flex-shrink: 0; }
+        .wn-mark { position: relative; display: inline-block; width: 1em; height: 1em; }
+        .wn-mk { position: absolute; inset: 0; opacity: 0; transform-origin: center; }
+        .wn-mk svg { width: 100%; height: 100%; display: block; }
+        .wn-mk-alert, .wn-mk-spin { color: var(--theme-orange); }
+        .wn-mk-green { color: var(--theme-green); }
+        .wn-mk-alert { animation: wnMkAlert 12s infinite; }
+        .wn-mk-spin { animation: wnMkSpin 12s infinite; }
+        .wn-mk-green { animation: wnMkGreen 12s infinite; }
+        @keyframes wnMkAlert { 0%, 40% { opacity: 0; } 42%, 58% { opacity: 1; } 60%, 100% { opacity: 0; } }
+        @keyframes wnMkSpin { 0%, 58% { opacity: 0; } 60%, 68% { opacity: 1; } 70%, 100% { opacity: 0; } }
+        @keyframes wnMkGreen {
+          0%, 68% { opacity: 0; transform: scale(0.4); }
+          70% { opacity: 1; transform: scale(1.35); }
+          72%, 82% { opacity: 1; transform: scale(1); }
+          84%, 100% { opacity: 0; transform: scale(1); }
+        }
+        ${offlineCss}
 
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }

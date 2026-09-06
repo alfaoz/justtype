@@ -1451,8 +1451,9 @@ take care!
       },
       unpublish: { url: 'justtype.io/s/9f2ka1', after: 'fully private again' },
       markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' },
-      // The line keeps typing while the footer word comes and goes
-      offline: { lineA: 'the wifi died mid sentence', lineB: "and the sentence didn't." }
+      // The slate list: copies land on their own; `written` is the row that
+      // gets edited while offline and syncs back
+      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 }
     },
     features: [
       {

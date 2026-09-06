@@ -6,6 +6,7 @@ import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity
 import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
+import { MarkGlyph } from './MarkGlyph';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 import { useToast } from './Toast';
@@ -190,25 +191,18 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
 const DeviceMark = ({ slate, offline, onCopy }) => {
   if (slate.shared) return null;
   const o = strings.slates.offline;
-  const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
   const icon = 'w-[1em] h-[1em]';
   if (slate.syncing) {
     return (
       <HoverNote plain note={o.syncing} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
-        <svg className={`${icon} mark-spin`} viewBox="0 0 24 24" {...stroke} aria-label={o.syncing} role="img">
-          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-        </svg>
+        <MarkGlyph kind="spin" className={`${icon} mark-spin`} aria-label={o.syncing} role="img" />
       </HoverNote>
     );
   }
   if (slate.pending) {
     return (
       <HoverNote plain note={slate.local ? o.pending : o.pendingEdits} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
-        <svg className={icon} viewBox="0 0 24 24" {...stroke} aria-label={slate.local ? o.pending : o.pendingEdits} role="img">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" x2="12" y1="8" y2="12" />
-          <line x1="12" x2="12.01" y1="16" y2="16" />
-        </svg>
+        <MarkGlyph kind="alert" className={icon} aria-label={slate.local ? o.pending : o.pendingEdits} role="img" />
       </HoverNote>
     );
   }
@@ -218,10 +212,7 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
       <HoverNote plain note={slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
         {/* The dimming sits on the icon, not the wrapper: the hover card is a
             child of the wrapper and must stay opaque */}
-        <svg className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
-          <circle cx="12" cy="12" r="10" />
-          <path d="m9 12 2 2 4-4" />
-        </svg>
+        <MarkGlyph kind="check" className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} aria-label={slate.kept ? o.kept : o.auto} role="img" />
       </HoverNote>
     );
   }
@@ -237,11 +228,7 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
         aria-label={note}
         className="flex items-center"
       >
-        <svg className={icon} viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-          <path d="M12 13v8l-4-4" />
-          <path d="m12 21 4-4" />
-          <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
-        </svg>
+        <MarkGlyph kind="cloud" className={icon} aria-hidden="true" />
       </button>
     </HoverNote>
   );
