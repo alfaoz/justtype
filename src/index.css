@@ -1069,11 +1069,24 @@ body.custom-theme ::-webkit-scrollbar-track {
 .slate-unavailable:hover { background: transparent !important; }
 
 /* The device mark shows itself only while its slate is hovered (or focused),
-   on devices that can hover. Touch screens always see it. A copy in flight
-   stays visible so the pulse reads as feedback. */
+   on devices that can hover. Touch screens always see it. A live state (an
+   unsynced save, an upload, a copy in flight, a sync that just landed)
+   stays visible: that is the feedback. */
 .device-mark { transition: opacity 0.15s ease; }
 @media (hover: hover) {
-  .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-copying) { opacity: 0; }
+  .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-live) { opacity: 0; }
+}
+@keyframes markSpin { to { transform: rotate(360deg); } }
+@keyframes markPop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.35); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.mark-spin { animation: markSpin 0.9s linear infinite; transform-origin: center; }
+.mark-pop { animation: markPop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) {
+  .mark-spin { animation: pulse 1.5s ease-in-out infinite; }
+  .mark-pop { animation: none; }
 }
 
 /* Nearby collab: the code on a white card so cameras read it, the camera view */

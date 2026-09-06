@@ -124,6 +124,16 @@ export async function pruneCache(userId) {
   if (drop.length) await tx('slates', 'readwrite', s => { for (const d of drop) s.delete(d.key); });
 }
 
+// Copies of slates the server no longer lists (deleted elsewhere) go, unless
+// a queued write still refers to them. Local slates are not the server's.
+export async function dropStaleCopies(userId, listedNumbers) {
+  const listed = new Set(listedNumbers);
+  const [slates, pending] = await Promise.all([getCachedSlates(userId), getPending(userId)]);
+  const pendingKeys = new Set(pending.map(p => p.key));
+  const stale = slates.filter(s => !isLocalSlateNumber(s.slateNumber) && !listed.has(s.slateNumber) && !pendingKeys.has(s.key));
+  if (stale.length) await tx('slates', 'readwrite', st => { for (const d of stale) st.delete(d.key); });
+}
+
 // Which slates from the server list this device should fetch: kept slates
 // whose copy is behind, then everything missing or behind, newest first,
 // while the list fits the budget. Rows are the server's list entries.

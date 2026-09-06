@@ -2875,8 +2875,33 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 });
 
 // Create new slate
+// A created slate, in the shape the create route answers with
+function createdSlateResponse(userId, slateNumber, title) {
+  const row = db.prepare('SELECT updated_at, word_count, char_count FROM slates WHERE slate_number = ? AND user_id = ?').get(slateNumber, userId);
+  const count = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(userId);
+  return {
+    slate_number: slateNumber,
+    updated_at: row.updated_at,
+    title,
+    word_count: row.word_count,
+    char_count: row.char_count,
+    is_published: 0,
+    share_id: null,
+    slateCount: count.count,
+  };
+}
+
 app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
   const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
+
+  // Idempotent create: the same client_ref from this user returns the slate
+  // that first request made, so a retry after a lost response (or an offline
+  // queue flushing a slate the online save already created) never duplicates.
+  const clientRef = typeof req.body.clientRef === 'string' && /^[A-Za-z0-9_-]{4,64}$/.test(req.body.clientRef) ? req.body.clientRef : null;
+  if (clientRef) {
+    const existing = db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND client_ref = ?').get(req.user.id, clientRef);
+    if (existing) return res.status(200).json(createdSlateResponse(req.user.id, existing.slate_number, req.e2e ? '' : title));
+  }
 
   const isE2E = !!req.e2e;
   let encryptedBuffer = null;
@@ -2950,10 +2975,20 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 	    const editorModeToStore = req.body.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain';
 	    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
 	    const stmt = db.prepare(`
-	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode)
-	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode, client_ref)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	    `);
-	    const result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1, editorModeToStore);
+	    let result;
+	    try {
+	      result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1, editorModeToStore, clientRef);
+	    } catch (insertErr) {
+	      // Two creates with the same client_ref raced: answer with the one that won
+	      if (clientRef && /UNIQUE/.test(String(insertErr.message))) {
+	        const winner = db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND client_ref = ?').get(req.user.id, clientRef);
+	        if (winner) return res.status(200).json(createdSlateResponse(req.user.id, winner.slate_number, isE2E ? '' : title));
+	      }
+	      throw insertErr;
+	    }
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);

@@ -674,6 +674,16 @@ try {
     console.log('✓ Database migrated: Added adoption_pending column to slates');
   }
 
+  // Idempotent creation: a client sends the same client_ref when it retries a
+  // create whose response it lost (or flushes an offline-created slate), and
+  // gets the slate it already made instead of a duplicate. Unique per user.
+  const slateColsRef = db.pragma('table_info(slates)');
+  if (!slateColsRef.some(col => col.name === 'client_ref')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN client_ref TEXT;`);
+    console.log('✓ Database migrated: Added client_ref column to slates');
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_slates_client_ref ON slates(user_id, client_ref) WHERE client_ref IS NOT NULL;`);
+
   // Per-document editor mode: 'plain' (textarea) or 'wysiwyg' (rich markdown editor).
   // Deliberately unencrypted metadata: low sensitivity, needed before content decrypts.
   const slateCols4 = db.pragma('table_info(slates)');

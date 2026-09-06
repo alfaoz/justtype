@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
-import { cacheList, getCachedList, getCachedSlates, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan } from '../offlineStore';
+import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { getSlateKey } from '../keyStore';
@@ -85,11 +85,6 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy 
       {/* Whether a copy of this slate is on this device */}
       <DeviceMark slate={slate} offline={offline} onCopy={onCopy} />
       <span className={status.cls}>{status.label}</span>
-      {/* A slate saved offline that has no number yet. Whether a numbered
-          slate has a copy on this device is the mark after its title. */}
-      {slate.local && (
-        <span className="text-[var(--theme-orange)]">{strings.slates.offline.local}</span>
-      )}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
           {strings.slates.status.syncing}
@@ -184,22 +179,46 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
 }
 
 /**
- * The device mark: whether this slate would open with no network. A check
- * means a copy is on this device, dim when the app made it on its own and
- * green when you asked for it to stay. A cloud means it is not here yet;
- * clicking it copies the slate and keeps it. The icons are the ones people
- * already read this way in Drive, Spotify and iCloud.
+ * The device mark: where this slate stands between this device and the
+ * account. A check means a copy is here (dim when the app made it, green
+ * when you asked for it to stay, and a green pop the moment a sync lands).
+ * An orange ! means it is saved here but not in the account yet; while that
+ * upload runs the ring spins. A cloud means it is not here yet; clicking it
+ * copies the slate and keeps it. The icons are the ones people already read
+ * this way in Drive, Spotify and iCloud.
  */
 const DeviceMark = ({ slate, offline, onCopy }) => {
-  if (slate.local || slate.shared) return null;
+  if (slate.shared) return null;
   const o = strings.slates.offline;
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
-  if (slate.available) {
+  const icon = 'w-[1em] h-[1em]';
+  if (slate.syncing) {
     return (
-      <HoverNote plain note={slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.kept ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
+      <HoverNote plain note={o.syncing} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
+        <svg className={`${icon} mark-spin`} viewBox="0 0 24 24" {...stroke} aria-label={o.syncing} role="img">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+      </HoverNote>
+    );
+  }
+  if (slate.pending) {
+    return (
+      <HoverNote plain note={slate.local ? o.pending : o.pendingEdits} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
+        <svg className={icon} viewBox="0 0 24 24" {...stroke} aria-label={slate.local ? o.pending : o.pendingEdits} role="img">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" x2="12" y1="8" y2="12" />
+          <line x1="12" x2="12.01" y1="16" y2="16" />
+        </svg>
+      </HoverNote>
+    );
+  }
+  if (slate.available) {
+    const green = slate.kept || slate.justSynced;
+    return (
+      <HoverNote plain note={slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
         {/* The dimming sits on the icon, not the wrapper: the hover card is a
             child of the wrapper and must stay opaque */}
-        <svg className={`w-[1em] h-[1em] ${slate.kept ? '' : 'opacity-70'}`} viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
+        <svg className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
           <circle cx="12" cy="12" r="10" />
           <path d="m9 12 2 2 4-4" />
         </svg>
@@ -210,7 +229,7 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
   const canCopy = !offline && !copying;
   const note = copying ? o.copying : offline ? o.missingOffline : o.missing;
   return (
-    <HoverNote plain note={note} className={`device-mark p-1 -m-1 text-[var(--theme-text-dim)] ${copying ? 'animate-pulse is-copying' : ''}`}>
+    <HoverNote plain note={note} className={`device-mark p-1 -m-1 text-[var(--theme-text-dim)] ${copying ? 'animate-pulse is-live' : ''}`}>
       <button
         type="button"
         onClick={canCopy ? onCopy : undefined}
@@ -218,7 +237,7 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
         aria-label={note}
         className="flex items-center"
       >
-        <svg className="w-[1em] h-[1em]" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+        <svg className={icon} viewBox="0 0 24 24" {...stroke} aria-hidden="true">
           <path d="M12 13v8l-4-4" />
           <path d="m12 21 4-4" />
           <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
@@ -317,18 +336,30 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
 export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
-  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set() });
+  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), pending: new Set() });
   const [copying, setCopying] = useState(() => new Set());
   const refreshDeviceCopies = async () => {
     if (!userId) return;
     try {
-      const rows = await getCachedSlates(userId);
+      const [rows, queued] = await Promise.all([getCachedSlates(userId), getPending(userId)]);
       setDeviceCopies({
         available: new Set(rows.filter(r => r.data?.encryptedContent).map(r => r.slateNumber)),
         kept: new Set(rows.filter(r => r.keep).map(r => r.slateNumber)),
+        pending: new Set(queued.map(q => q.slateNumber)),
       });
     } catch { /* no local store: nothing is available offline */ }
   };
+  // Writes on their way to the account right now, and ones that just landed
+  // (the check pops green for a moment)
+  const [syncing, setSyncing] = useState(() => new Set());
+  const [justSynced, setJustSynced] = useState(() => new Set());
+  const popTimersRef = useRef(new Map());
+  const markSynced = (n) => {
+    setJustSynced(prev => new Set([...prev, n]));
+    clearTimeout(popTimersRef.current.get(n));
+    popTimersRef.current.set(n, setTimeout(() => setJustSynced(prev => { const s = new Set(prev); s.delete(n); return s; }), 1600));
+  };
+  useEffect(() => () => { for (const t of popTimersRef.current.values()) clearTimeout(t); }, []);
   const [slates, setSlates] = useState([]);
   const [loading, setLoading] = useState(true);
   // E2EE collaboration: invites waiting on me + slates others shared with me
@@ -576,7 +607,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       // Every slate gets a copy on this device, newest first within the
       // budget, and copies that fell behind the server are refreshed. The
       // marks fill in as each one lands.
-      if (!fromCache && userId) copyToDevice(copyPlan(data, copies));
+      if (!fromCache && userId) {
+        dropStaleCopies(userId, data.filter(r => !r.local).map(r => r.slate_number)).catch(() => {});
+        copyToDevice(copyPlan(data, copies));
+      }
     } catch (err) {
       console.error('Failed to load slates:', err);
     } finally {
@@ -639,8 +673,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
   // A local slate got its number, or a queued edit landed: refresh
   useEffect(() => onSync((ev) => {
-    if (ev.type === 'synced') loadSlates();
-    else if (ev.type === 'finished') refreshDeviceCopies();
+    const drop = (n) => setSyncing(prev => { const s = new Set(prev); s.delete(n); return s; });
+    if (ev.type === 'started') setSyncing(new Set(ev.slates || []));
+    else if (ev.type === 'synced') { drop(ev.from); markSynced(ev.to); loadSlates(); }
+    else if (ev.type === 'flushed') { drop(ev.slateNumber); markSynced(ev.slateNumber); refreshDeviceCopies(); }
+    else if (ev.type === 'failed') drop(ev.slateNumber);
+    else if (ev.type === 'finished') { setSyncing(new Set()); refreshDeviceCopies(); }
   }), [userId]);
 
   const showDeleteConfirmation = (id, title, e) => {
@@ -1177,7 +1215,15 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem
               key={slate.slate_number}
-              slate={{ ...slate, kept: deviceCopies.kept.has(slate.slate_number), available: deviceCopies.available.has(slate.slate_number), copying: copying.has(slate.slate_number) }}
+              slate={{
+                ...slate,
+                kept: deviceCopies.kept.has(slate.slate_number),
+                available: deviceCopies.available.has(slate.slate_number),
+                pending: slate.local || deviceCopies.pending.has(slate.slate_number),
+                syncing: syncing.has(slate.slate_number),
+                justSynced: justSynced.has(slate.slate_number),
+                copying: copying.has(slate.slate_number),
+              }}
               offline={!online}
               onCopy={(e) => copySlateNow(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}

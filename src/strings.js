@@ -181,7 +181,10 @@ const strings = {
       missing: 'not on this device yet. click to copy it',
       missingOffline: 'not on this device',
       copying: 'copying to this device',
-      local: 'saved on this device',
+      pending: 'saved on this device, not in your account yet',
+      pendingEdits: 'edits saved on this device, not in your account yet',
+      syncing: 'syncing to your account',
+      synced: 'synced',
       keep: 'keep on this device',
       unkeep: 'remove from this device'
     },

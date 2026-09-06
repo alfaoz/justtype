@@ -8,9 +8,10 @@
 // nothing is lost and the person resolves them in the editor at leisure.
 //
 // Listeners (Writer, SlateManager) subscribe with onSync(); events:
-//   { type: 'started' } | { type: 'synced', from, to, slate } for a local
-//   slate that got its number | { type: 'merged', slateNumber, conflicts }
-//   | { type: 'finished', failed }
+//   { type: 'started', count, slates } | { type: 'synced', from, to, slate }
+//   for a local slate that got its number | { type: 'flushed', slateNumber }
+//   for an edit that landed | { type: 'failed', slateNumber }
+//   | { type: 'merged', slateNumber, conflicts } | { type: 'finished', failed }
 import { API_URL } from './config';
 import { getSlateKey } from './keyStore';
 import { decryptContent, encryptContent, encryptTitle, unwrapKey } from './crypto';
@@ -70,7 +71,7 @@ export function flushPending(userId) {
   flushing = (async () => {
     const queue = await getPending(userId);
     if (!queue.length) return;
-    emit({ type: 'started', count: queue.length });
+    emit({ type: 'started', count: queue.length, slates: queue.map(p => p.slateNumber) });
     let failed = 0;
     for (const p of queue) {
       try {
@@ -78,6 +79,7 @@ export function flushPending(userId) {
         else await flushPut(userId, p);
       } catch (err) {
         failed++;
+        emit({ type: 'failed', slateNumber: p.slateNumber });
         console.warn('offline sync: could not flush', p.slateNumber, err);
         reportNetworkFailure();
         if (!isOnline()) break;
@@ -91,7 +93,10 @@ export function flushPending(userId) {
 async function flushPost(userId, p) {
   const res = await fetch(`${API_URL}/slates`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-    body: JSON.stringify({ ...p.body, editorMode: p.editorMode }),
+    // The local number doubles as the create's idempotency key: if the online
+    // save that spawned this queue entry did reach the server, this returns
+    // that slate instead of a second one.
+    body: JSON.stringify({ ...p.body, editorMode: p.editorMode, clientRef: p.slateNumber }),
   });
   if (!res.ok) throw new Error(`post ${res.status}`);
   const slate = await res.json();
@@ -118,6 +123,7 @@ async function flushPut(userId, p) {
     encryptedContent: sent.encryptedContent, encrypted_title: sent.encryptedTitle, updated_at: data.updated_at,
   });
   await deletePending(userId, p.slateNumber);
+  emit({ type: 'flushed', slateNumber: p.slateNumber });
   if (merged) emit({ type: 'merged', slateNumber: p.slateNumber, conflicts: merged.conflicts, text: merged.text });
 }
 

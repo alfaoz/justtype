@@ -296,6 +296,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [sharedRemoved, setSharedRemoved] = useState(false);
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
   const [confirmForget, setConfirmForget] = useState(false);
+  // One id per new slate, sent as the create's idempotency key and reused
+  // as the local number if the save falls back to the device, so a lost
+  // response or a queued retry can never create the slate twice.
+  const newSlateRefRef = useRef(null);
   const forgetTimerRef = useRef(null);
   // The settings strip scrolls when the window is narrow, so its popovers
   // (theme picker, share menu) anchor to the viewport instead of the strip —
@@ -1379,7 +1383,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (currentSlate) {
       await queueOfflineSave(userId, currentSlate.slate_number, body, loadedSlateRef.current ? { data: loadedSlateRef.current } : null);
     } else {
-      const local = newLocalSlateNumber();
+      const local = newSlateRefRef.current || newLocalSlateNumber();
+      newSlateRefRef.current = null;
       await cacheSlate(userId, local, {
         slate_number: local, local: true, encrypted: true,
         encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
@@ -1416,6 +1421,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         : `${API_URL}/slates`;
       // Existing slates say which version their edits started from
       if (currentSlate && loadedSlateRef.current?.updated_at) body.baseUpdatedAt = loadedSlateRef.current.updated_at;
+      if (!currentSlate) body.clientRef = (newSlateRefRef.current ||= newLocalSlateNumber());
 
       if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) return { local: true };
 
@@ -1476,6 +1482,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       if (!currentSlate) {
+        newSlateRefRef.current = null;
         onSlateChange(data);
       }
 
