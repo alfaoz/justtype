@@ -3786,17 +3786,17 @@ app.get('/api/admin/error-logs', authenticateAdmin, (req, res) => {
       if (continues && entries.length) entries[entries.length - 1].lines.push(line.replace(/\s+$/, ''));
       else entries.push({ first: line.trim(), lines: [] });
     }
-    // The same failure looping is one row with a count, newest first
-    const grouped = [];
-    for (const e of entries) {
-      const last = grouped[grouped.length - 1];
-      if (last && last.first === e.first) { last.count += 1; continue; }
-      grouped.push({ first: e.first, lines: e.lines.slice(0, 12), count: 1 });
+    // One row per distinct failure: its latest occurrence, with how many
+    // times it appears in this tail. Newest first.
+    const byFirst = new Map();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      const seen = byFirst.get(e.first);
+      if (seen) seen.count += 1;
+      else byFirst.set(e.first, { first: e.first, lines: e.lines.slice(0, 12), count: 1 });
     }
-    grouped.reverse();
-    const tally = {};
-    for (const e of entries) tally[e.first] = (tally[e.first] || 0) + 1;
-    const top = Object.entries(tally).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([first, count]) => ({ first, count }));
+    const grouped = [...byFirst.values()];
+    const top = grouped.slice().sort((x, y) => y.count - x.count).slice(0, 5).map(({ first, count }) => ({ first, count }));
 
     logAdminAction('view_error_logs', {
       ipAddress: req.adminIp || req.ip
