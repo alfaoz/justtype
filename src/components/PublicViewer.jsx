@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import pages from '../pages.json';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { applyThemeVariables, deviceDefaultTheme } from '../themes';
@@ -35,7 +36,7 @@ export function PublicViewer() {
         : slate.title;
 
       const description = `slate by ${slate.author}`;
-      const pageTitle = description; // Use "slate by [user]" as page title
+      const pageTitle = `${ogTitle} · ${pages.brand}`;
       const url = window.location.href;
 
       // Update page title
@@ -71,7 +72,7 @@ export function PublicViewer() {
 
     // Cleanup: reset to default when component unmounts
     return () => {
-      document.title = 'just type';
+      document.title = pages.home.title;
       const metaTags = ['description', 'og:title', 'og:description', 'og:type', 'og:url', 'twitter:card', 'twitter:title', 'twitter:description'];
       metaTags.forEach(tag => {
         const isOg = tag.startsWith('og:');
