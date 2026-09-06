@@ -33,11 +33,15 @@ jobs:
       - run: npm run build
         env:
           VITE_TURNSTILE_SITE_KEY: "0x4AAAAAACSJvMqEG5Z-iXyo"
-      # extract only the build manifest containing asset hashes
+      # pages carries: the hashes actions built, the off-origin verifier page,
+      # and the append-only releases log the integrity monitor checks against
       - name: prepare pages artifact
         run: |
           mkdir _pages
           cp dist/build-manifest.json _pages/build-hashes.json
+          cp verify-page/index.html _pages/index.html
+          curl -sf https://alfaoz.github.io/justtype/releases.json -o previous-releases.json || echo '[]' > previous-releases.json
+          node scripts/append-release.mjs dist/build-manifest.json previous-releases.json _pages/releases.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _pages

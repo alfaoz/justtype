@@ -8,7 +8,7 @@ import React, { useState, useRef, useEffect } from 'react';
  * the viewport so it never opens off-screen. Themed rather than hardcoded, so
  * it works in light as well.
  */
-export function HoverNote({ children, note, className = '' }) {
+export function HoverNote({ children, note, className = '', plain = false }) {
   const [show, setShow] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const timeoutRef = useRef(null);
@@ -45,7 +45,7 @@ export function HoverNote({ children, note, className = '' }) {
       onMouseEnter={handleEnter}
       onMouseMove={updatePos}
       onMouseLeave={handleLeave}
-      className={`cursor-help underline decoration-dotted underline-offset-4 decoration-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors ${className}`}
+      className={`${plain ? 'inline-flex items-center' : 'cursor-help underline decoration-dotted underline-offset-4 decoration-[var(--theme-text-dim)]'} hover:text-[var(--theme-accent)] transition-colors ${className}`}
     >
       {children}
       {show && (

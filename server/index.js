@@ -444,6 +444,15 @@ app.use(cors((req, callback) => {
     return callback(null, { origin: true, credentials: false });
   }
 
+  // The verification surface (loader html, manifest + signature, hashed
+  // assets) is public and must be readable cross-origin so the off-origin
+  // verifier on github pages can fetch and hash it. No credentials.
+  if (path === '/' || path === '/index.html'
+    || path === '/build-manifest.json' || path === '/build-manifest.sig'
+    || path.startsWith('/assets/')) {
+    return callback(null, { origin: true, credentials: false });
+  }
+
   // Allow requests with no origin (CLI, mobile apps, curl, etc.)
   if (!origin) {
     return callback(null, { origin: true, credentials: true });
@@ -468,12 +477,37 @@ app.use(cors((req, callback) => {
 // Cookie parser for HttpOnly auth cookies
 app.use(cookieParser());
 
+// CSP hashes for the verified bootstrap. The built index.html is a static
+// loader with a single inline <script> (see loader/template.html); at runtime
+// it injects an inline import map built from build-manifest.json. Both are
+// inline scripts and CSP has no 'unsafe-inline', so hash them at boot -- the
+// loader from its bytes on disk, the import map by constructing the exact
+// string the loader constructs (same file order, no whitespace; the two
+// expressions must be changed together). Deploys restart the server after
+// building, so these are always fresh. If dist/ is missing (dev), CSP simply
+// omits them; the vite dev server serves its own index.html anyway.
+const bootstrapCspHashes = [];
+try {
+  const bootFs = require('fs');
+  const bootPath = require('path');
+  const distIndexHtml = bootFs.readFileSync(bootPath.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
+  const inlineLoader = distIndexHtml.match(/<script>([\s\S]*?)<\/script>/);
+  if (inlineLoader) {
+    bootstrapCspHashes.push(`'sha256-${crypto.createHash('sha256').update(inlineLoader[1]).digest('base64')}'`);
+  }
+  const bootManifest = JSON.parse(bootFs.readFileSync(bootPath.join(__dirname, '..', 'dist', 'build-manifest.json'), 'utf8'));
+  const importMapJson = JSON.stringify({ integrity: Object.fromEntries(bootManifest.files.filter(f => f.file.endsWith('.js')).map(f => [`/assets/${f.file}`, `sha256-${Buffer.from(f.hash, 'hex').toString('base64')}`])) });
+  bootstrapCspHashes.push(`'sha256-${crypto.createHash('sha256').update(importMapJson).digest('base64')}'`);
+} catch (err) {
+  console.warn('verified bootstrap: no dist build found, CSP hashes skipped');
+}
+
 // Security headers with helmet.js
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "https://challenges.cloudflare.com"],
+      scriptSrc: ["'self'", "https://challenges.cloudflare.com", ...bootstrapCspHashes],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
       // wss origin listed explicitly — CSP3 'self' covers same-origin
@@ -879,6 +913,11 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
     }
     // Any other JS/CSS (e.g. root sw.js) keeps revalidating
     else if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    }
+    // Installable app manifest: express's mime table predates the extension
+    else if (filePath.endsWith('.webmanifest')) {
+      res.setHeader('Content-Type', 'application/manifest+json');
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }
   }
@@ -1752,7 +1791,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 // Get user preferences (theme and custom themes)
 app.get('/api/preferences', authenticateToken, (req, res) => {
   try {
-    const user = db.prepare('SELECT theme, custom_themes FROM users WHERE id = ?').get(req.user.id);
+    const user = db.prepare('SELECT theme, custom_themes, whats_new_seen FROM users WHERE id = ?').get(req.user.id);
 
     if (!user) {
       return res.status(404).json({ error: 'user not found' });
@@ -1772,7 +1811,8 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
       // to apply, and inventing one here overrode the client's device default
       // (dark-mode devices flipped to light right after signup).
       theme: user.theme || null,
-      customThemes
+      customThemes,
+      whatsNewSeen: user.whats_new_seen || null
     });
   } catch (error) {
     console.error('Get preferences error:', error);
@@ -1783,7 +1823,7 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
 // Update user preferences
 app.put('/api/preferences', authenticateToken, (req, res) => {
   try {
-    const { theme, customThemes } = req.body;
+    const { theme, customThemes, whatsNewSeen } = req.body;
     const updates = [];
     const params = [];
 
@@ -1818,6 +1858,15 @@ app.put('/api/preferences', authenticateToken, (req, res) => {
 
       updates.push('custom_themes = ?');
       params.push(JSON.stringify(customThemes));
+    }
+
+    // The announcement version the person has dismissed
+    if (whatsNewSeen !== undefined) {
+      if (typeof whatsNewSeen !== 'string' || !/^[a-z0-9.-]{1,20}$/.test(whatsNewSeen)) {
+        return res.status(400).json({ error: 'invalid whatsNewSeen' });
+      }
+      updates.push('whats_new_seen = ?');
+      params.push(whatsNewSeen);
     }
 
     if (updates.length === 0) {
@@ -2779,8 +2828,33 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
 });
 
 // Create new slate
+// A created slate, in the shape the create route answers with
+function createdSlateResponse(userId, slateNumber, title) {
+  const row = db.prepare('SELECT updated_at, word_count, char_count FROM slates WHERE slate_number = ? AND user_id = ?').get(slateNumber, userId);
+  const count = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(userId);
+  return {
+    slate_number: slateNumber,
+    updated_at: row.updated_at,
+    title,
+    word_count: row.word_count,
+    char_count: row.char_count,
+    is_published: 0,
+    share_id: null,
+    slateCount: count.count,
+  };
+}
+
 app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('createSlate'), async (req, res) => {
   const { title, encryptedTitle, content, encryptedContent, wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes } = req.body;
+
+  // Idempotent create: the same client_ref from this user returns the slate
+  // that first request made, so a retry after a lost response (or an offline
+  // queue flushing a slate the online save already created) never duplicates.
+  const clientRef = typeof req.body.clientRef === 'string' && /^[A-Za-z0-9_-]{4,64}$/.test(req.body.clientRef) ? req.body.clientRef : null;
+  if (clientRef) {
+    const existing = db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND client_ref = ?').get(req.user.id, clientRef);
+    if (existing) return res.status(200).json(createdSlateResponse(req.user.id, existing.slate_number, req.e2e ? '' : title));
+  }
 
   const isE2E = !!req.e2e;
   let encryptedBuffer = null;
@@ -2854,10 +2928,20 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 	    const editorModeToStore = req.body.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain';
 	    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
 	    const stmt = db.prepare(`
-	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode)
-	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode, client_ref)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	    `);
-	    const result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1, editorModeToStore);
+	    let result;
+	    try {
+	      result = stmt.run(req.user.id, nextNumber, titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, 1, editorModeToStore, clientRef);
+	    } catch (insertErr) {
+	      // Two creates with the same client_ref raced: answer with the one that won
+	      if (clientRef && /UNIQUE/.test(String(insertErr.message))) {
+	        const winner = db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND client_ref = ?').get(req.user.id, clientRef);
+	        if (winner) return res.status(200).json(createdSlateResponse(req.user.id, winner.slate_number, isE2E ? '' : title));
+	      }
+	      throw insertErr;
+	    }
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -2865,8 +2949,10 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
     // Get updated slate count
     const updatedSlateCount = db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id);
 
+	    const { updated_at: createdUpdatedAt } = db.prepare('SELECT updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(nextNumber, req.user.id);
 	    res.status(201).json({
 	      slate_number: nextNumber,
+	      updated_at: createdUpdatedAt,
 	      title: isE2E ? '' : title,
 	      word_count: wordCount,
 	      char_count: charCount,
@@ -2903,6 +2989,14 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // Optimistic concurrency: a client that says which version its edits
+    // started from gets a 409 when the slate moved on, and merges client-side
+    // (offline saves, two devices, agent edits). Clients that send no base
+    // keep last-writer-wins.
+    if (req.body && req.body.baseUpdatedAt != null && String(req.body.baseUpdatedAt) !== String(slate.updated_at)) {
+      return res.status(409).json({ error: 'Slate changed since it was loaded', code: 'SLATE_CHANGED', updated_at: slate.updated_at });
     }
 
     const isE2E = !!(userE2E && userE2E.e2e_migrated && !slate.is_system_slate);
@@ -3069,8 +3163,10 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       b2FileId,
     }, JWT_SECRET, { expiresIn: '7d' }) : null;
 
+    const { updated_at: updatedAt } = db.prepare('SELECT updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
     res.json({
       success: true,
+      updated_at: updatedAt,
       word_count: wordCount,
       char_count: charCount,
       was_unpublished: wasUnpublished,

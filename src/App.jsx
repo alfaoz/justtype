@@ -30,6 +30,7 @@ import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefau
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
+import { reportNetworkFailure } from './connectivity';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -104,24 +105,47 @@ export default function App() {
     applyThemeVariables(themeToApply);
   }, []);
 
-  // First open on v4 for someone who already had an account: say what changed,
-  // once. Signed-in only (there is nothing to announce to a visitor who has
-  // never used the old version), writer view only (so it never lands on top of
-  // /join, /verify or an auth flow), and recorded per browser.
+  // First open for someone who already had an account: say what changed,
+  // once per account. The account remembers which announcement was dismissed
+  // (preferences); this device keeps a copy so the check is free next time,
+  // and a device that dismissed it before the account could remember tells
+  // the account instead of asking again. Signed-in only, writer view only
+  // (so it never lands on top of /join, /verify or an auth flow).
+  const markWhatsNewSeen = () => {
+    try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+    fetch(`${API_URL}/preferences`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ whatsNewSeen: strings.whatsNewModal.version }),
+    }).catch(() => {});
+  };
+
   useEffect(() => {
     if (!token || token === 'checking') return;
     if (view !== 'writer') return;
-    try {
-      if (localStorage.getItem(WHATS_NEW_SEEN_KEY)) return;
-    } catch (e) {
-      return; // storage unavailable: never nag, since we could not remember
-    }
-    const t = setTimeout(() => setShowWhatsNewModal(true), 700);
-    return () => clearTimeout(t);
+    let seenHere = false;
+    try { seenHere = Boolean(localStorage.getItem(WHATS_NEW_SEEN_KEY)); } catch (e) { return; }
+    if (seenHere) { markWhatsNewSeen(); return; }
+    let cancelled = false;
+    let timer = null;
+    fetch(`${API_URL}/preferences`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((prefs) => {
+        if (cancelled) return;
+        if (prefs && prefs.whatsNewSeen === strings.whatsNewModal.version) {
+          try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+          return;
+        }
+        if (!prefs) return; // could not ask: never nag on a guess
+        timer = setTimeout(() => setShowWhatsNewModal(true), 700);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [token, view]);
 
   const dismissWhatsNew = () => {
-    try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+    markWhatsNewSeen();
     setShowWhatsNewModal(false);
   };
 
@@ -267,6 +291,7 @@ export default function App() {
         }
       } catch (err) {
         console.error('Failed to fetch user data:', err);
+        reportNetworkFailure();
       }
     };
 
@@ -365,7 +390,8 @@ export default function App() {
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
-          setCurrentSlate({ slate_number: parseInt(slateId) });
+          // Slates created offline carry a local id until they sync
+          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
           setView('writer');
         }
       } else if (path === '/slates') {
@@ -679,7 +705,7 @@ export default function App() {
       // A fresh signup has no "before" to compare against, so the v4
       // announcement would be meaningless noise on their very first slate.
       if (authData.isNewUser) {
-        try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+        markWhatsNewSeen();
       }
       setPendingRecoveryPhrase(authData.recoveryPhrase);
     } else {

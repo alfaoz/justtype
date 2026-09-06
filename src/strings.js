@@ -19,6 +19,25 @@ const strings = {
 
   // writer component
   writer: {
+    titlePlaceholder: 'slate title...',
+    contentPlaceholder: 'just start typing...',
+    editorMode: {
+      label: (mode) => `editor: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`,
+      menuTitle: 'editor',
+      value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
+    },
+    connectivity: {
+      offline: 'offline',
+      notSaved: 'not saved',
+      savedLocally: 'saved on this device',
+      notAvailableOffline: 'not available offline',
+      syncing: 'syncing',
+      merged: 'merged with edits made elsewhere',
+      conflicts: (n) => `${n} ${n === 1 ? 'conflict' : 'conflicts'} to resolve`,
+      offlineHint: 'no connection. keep writing; saving picks up when you are back online',
+      update: 'new version · reload',
+      updateHint: 'a newer justtype is live. reload to get it'
+    },
     // The theme picker's catalog: publishing a custom theme for others,
     // and picking one of theirs
     themeCatalog: {
@@ -37,12 +56,12 @@ const strings = {
       empty: 'nothing in the catalog yet',
       by: (name) => `by ${name}`
     },
-    titlePlaceholder: 'slate title...',
-    contentPlaceholder: 'just start typing...',
-    editorMode: {
-      label: (mode) => `editor: ${mode === 'wysiwyg' ? 'rich' : 'plain'}`,
-      menuTitle: 'editor',
-      value: (mode) => (mode === 'wysiwyg' ? 'rich' : 'plain'),
+    conflict: {
+      ours: 'this device',
+      theirs: 'elsewhere',
+      keepOurs: 'keep mine',
+      keepTheirs: 'keep theirs',
+      keepBoth: 'keep both'
     },
     publicState: {
       current: 'public',
@@ -171,6 +190,22 @@ const strings = {
       grid: 'grid view',
     },
     lockedTitle: 'locked slate',
+    offline: {
+      // The device mark after each title: a check for a copy on this device
+      // (dim when the app made it, green when you asked for it), a cloud
+      // for a slate that is not here yet
+      auto: 'on this device',
+      kept: 'kept on this device',
+      missing: 'not on this device yet. click to copy it',
+      missingOffline: 'not on this device',
+      copying: 'copying to this device',
+      pending: 'saved on this device, not in your account yet',
+      pendingEdits: 'edits saved on this device, not in your account yet',
+      syncing: 'syncing to your account',
+      synced: 'synced',
+      keep: 'keep on this device',
+      unkeep: 'remove from this device'
+    },
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
@@ -309,6 +344,39 @@ const strings = {
       naming: 'saving...',
       openAsNew: 'open as a new slate',
       openAsNewHint: 'opens this version as a fresh draft. this collab slate stays exactly as it is.'
+    },
+    nearby: {
+      tab: 'nearby',
+      chip: (n) => `nearby · ${n}`,
+      unavailable: 'nearby connections appear once this slate is collaborative.',
+      explainer: 'connect to a device next to you with no server in between. both devices need this slate and the same wi-fi; internet is not needed.',
+      showCode: 'show a code',
+      readCode: 'read a code',
+      preparing: 'preparing a code...',
+      showHint: 'the other device reads this code, then shows a reply code.',
+      readReply: 'read their reply',
+      replyHint: 'show this reply to the first device.',
+      pointCamera: 'point the camera at the other screen, or paste the code below.',
+      noCamera: 'no camera here. paste the code below.',
+      pastePlaceholder: 'paste a code...',
+      useCode: 'use this code',
+      badCode: 'that is not the code expected here',
+      connecting: 'connecting...',
+      connectedHeading: 'connected devices',
+      wordsHint: 'the same four words show on the other screen. if they differ, disconnect.',
+      disconnect: 'disconnect',
+      cancel: 'cancel',
+      qrLabel: 'connection code',
+      copy: 'copy code',
+      copied: 'copied',
+      network: {
+        title: 'the devices cannot reach each other. put both on the same wi-fi:',
+        mac: 'mac: system settings → general → sharing → internet sharing, share to wi-fi.',
+        android: 'android: hotspot on, mobile data can stay off.',
+        linux: 'linux: wi-fi menu → turn on hotspot.',
+        then: 'then read the codes again.',
+        retry: 'try again'
+      }
     },
     panel: {
       title: 'collab',
@@ -1033,65 +1101,25 @@ take care!
 
   // build verification
   verify: {
-    filesMatched: (matched, total) => `${matched} of ${total} files match`,
-    expandAll: 'show hashes',
-    collapseAll: 'hide hashes',
     title: 'verify build integrity',
-    description: 'verify that the code running on this site matches the open-source repository.',
-    verified: 'all sources match',
-    mismatch: 'mismatch detected',
-    rebuilding: 'server verified, waiting for github actions to rebuild...',
-    actionsRunning: 'server verified, waiting for github actions...',
-    actionsFailed: 'server verified, but github actions failed to build',
-    actionsHashMismatch: 'server verified, but github actions produced different hashes',
-    computing: 'computing hashes...',
-    error: 'failed to verify. try refreshing.',
-    jsBundle: 'javascript bundle',
-    cssBundle: 'css bundle',
-    chunk: 'lazy chunk',
-    sources: {
-      server: 'server',
-      github: 'github',
-      computed: 'computed',
-    },
-    version: (v) => `version ${v}`,
-    buildDate: (d) => `built ${d}`,
+    description: 'every page load is verified before it runs. independent checks live off justtype\'s servers.',
+    loaderVerified: (v, n) => `this page load was verified: the browser checked the signature on the v${v} manifest against the pinned release key, then pinned all ${n} files with subresource integrity before running anything.`,
+    loaderBeta: (v, n) => `beta build v${v}: all ${n} files pinned against the server manifest. releases on justtype.io are additionally signature-verified.`,
+    loaderDev: 'dev build: the verified loader only runs on built releases.',
+    whyExternal: 'a page served by justtype.io cannot prove justtype.io is honest, so the independent checks do not live here. they run on github pages, built by github actions from the public repository, on infrastructure justtype\'s servers cannot touch: every served file is re-hashed and compared against an independent build of the source, and a scheduled monitor repeats this every 15 minutes and raises a public alert on any mismatch.',
+    keyNote: 'releases are signed on the developer\'s machine. the server never holds the key, so a compromised server cannot ship modified code that this browser would accept.',
+    openVerifier: 'open the independent verifier',
+    verifierUrl: 'https://alfaoz.github.io/justtype/',
+    releasesLog: 'releases log',
+    releasesLogUrl: 'https://alfaoz.github.io/justtype/releases.json',
     githubSource: 'view source on github',
-    betaBuild: 'beta build: served code matches the server manifest. github comparison runs on production releases only.',
-    betaBadge: 'beta build',
-    betaGithubNote: 'beta builds are not published to github pages. full three-way verification runs on production (justtype.io) releases.',
-    github: {
-      label: 'github actions hashes',
-      hostedOn: 'built by github actions from the public repo, not controlled by justtype servers',
-      viewEndpoint: 'view raw hashes',
-      viewWorkflow: 'view workflow source',
-      viewLatestCommit: 'view latest commit',
-      loading: 'fetching from github...',
-      error: 'could not reach github pages',
-    },
-    trustModel: {
-      title: 'trust model',
-      quick: {
-        label: 'quick check',
-        description: 'this page computes hashes of the code your browser received and compares them against github actions (built independently from the public repo). protects against a compromised server.',
-      },
-      independent: {
-        label: 'independent check',
-        description: 'click the github link above and compare the hashes yourself. you can also inspect the workflow that produced them.',
-      },
-      full: {
-        label: 'full verification',
-        description: 'clone the repo, read the code, build it yourself, and compare hashes. proves the served code IS the open-source code with zero trust required.',
-      },
-    },
-    localVerify: {
-      title: 'verify locally',
-      description: 'run these commands in your terminal to verify independently:',
-    },
-    buildYourself: {
-      title: 'build it yourself',
-      description: 'clone the repo, build from source, and compare hashes:',
-      compare: 'compare the hashes in build-manifest.json with what github reports.',
+    badge: {
+      signed: 'verified, signed release',
+      beta: 'beta build, manifest pinned',
+      version: 'version',
+      files: 'files',
+      filesPinned: (n) => `${n} pinned`,
+      dev: 'dev build, loader inactive',
     },
     authFooter: (v) => `v${v}`,
     authFooterVerify: 'verify',
@@ -1440,7 +1468,10 @@ take care!
         previews: ['draft three, final', 'draft two, tighter', 'draft one, rough']
       },
       unpublish: { url: 'justtype.io/s/9f2ka1', after: 'fully private again' },
-      markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' }
+      markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' },
+      // The slate list: copies land on their own; `written` is the row that
+      // gets edited while offline and syncs back
+      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 }
     },
     features: [
       {
@@ -1467,8 +1498,13 @@ take care!
         id: 'brand',
         title: 'a new justtype',
         body: 'a new default identity, a new default font, a polished design, a new justtype.',
-        fontPhrase: 'a new default font',
-        fontNote: 'ibm plex mono'
+        notePhrase: 'a new default font',
+        note: 'ibm plex mono'
+      },
+      {
+        id: 'offline',
+        title: 'offline slates',
+        body: 'your slates are now kept on your device as well, not just on the server. lose your connection and keep writing; edits are saved locally and synced when you are back. automatic, and still end-to-end encrypted.'
       }
     ],
     backLink: 'back to writing'

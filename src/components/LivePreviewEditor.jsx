@@ -1,27 +1,37 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
-import { markdown, markdownLanguage, markdownKeymap } from '@codemirror/lang-markdown';
-import { livePreview } from './livePreview';
+import { markdownKeymap } from '@codemirror/lang-markdown';
+import { livePreview, richMarkdown } from './livePreview';
 import { strings } from '../strings';
 
 // Shared extensions: GFM markdown (headings, emphasis, strikethrough, code,
-// quotes, links, lists, task lists, tables, hr — no images/mermaid by design)
+// quotes, links, lists, task lists, tables, hr, dollar math — no images/mermaid by design)
 const baseExtensions = ({ reveal }) => [
-  markdown({ base: markdownLanguage }),
+  richMarkdown(),
   livePreview({ reveal }),
   EditorView.lineWrapping,
   indentUnit.of('    '),
 ];
 
+// Focus with the caret at the end of the document, where typing continues.
+// A fresh view's selection sits at 0, so a bare focus() lands on the first
+// letter of a restored draft.
+const focusEnd = (view) => {
+  const end = view.state.doc.length;
+  view.dispatch({ selection: { anchor: end }, scrollIntoView: true });
+  view.focus();
+};
+
 // Live-preview markdown editor (Typora/Obsidian-style). Same contract as the
 // plain textarea: markdown string in via `content`, markdown string out via
 // `onChange` — storage, encryption and export pipelines are unaffected.
-export default function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }) {
+const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
+  useImperativeHandle(ref, () => ({ focus: () => viewRef.current && focusEnd(viewRef.current) }), []);
   const lastContentRef = useRef(content || '');
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -48,7 +58,7 @@ export default function LivePreviewEditor({ content, onChange, puntoClass = '', 
       }),
     });
     viewRef.current = view;
-    if (autofocus) view.focus();
+    if (autofocus) focusEnd(view);
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -63,6 +73,7 @@ export default function LivePreviewEditor({ content, onChange, puntoClass = '', 
       lastContentRef.current = next;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: next },
+        selection: { anchor: next.length },
       });
     }
   }, [content]);
@@ -73,7 +84,9 @@ export default function LivePreviewEditor({ content, onChange, puntoClass = '', 
       className={`wysiwyg-editor w-full max-w-3xl p-8 ${puntoClass}`}
     />
   );
-}
+});
+
+export default LivePreviewEditor;
 
 // Read-only rendered view (public pages for rich slates). Syntax is always
 // hidden since there is no caret to reveal it for.
