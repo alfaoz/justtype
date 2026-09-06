@@ -89,7 +89,7 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false }) {
       ) : offline && !slate.available ? (
         <span className="text-[var(--theme-text-dim)]">{strings.slates.offline.unavailable}</span>
       ) : slate.kept ? (
-        <span className="text-[var(--theme-text-dim)]">{strings.slates.offline.kept}</span>
+        <span className="text-[var(--theme-green)]">{strings.slates.offline.kept}</span>
       ) : null}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>

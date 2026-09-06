@@ -34,8 +34,13 @@ const strings = {
       syncing: 'syncing',
       merged: 'merged with edits made elsewhere',
       conflicts: (n) => `${n} ${n === 1 ? 'conflict' : 'conflicts'} to resolve`,
-      keepOffline: 'keep offline',
-      keptOffline: 'kept offline',
+      offlineAvailable: 'available offline',
+      offlineHint: 'a copy of this slate lives on this device and stays synced. click to remove the copy',
+      offlineRemoveConfirm: 'remove offline copy?',
+      offlineMaking: 'making available offline',
+      offlineMade: 'available offline on this device',
+      offlineRemoved: 'offline copy removed',
+      offlineFailed: 'could not make this slate available offline',
       offlineHint: 'no connection. keep writing; saving picks up when you are back online',
       update: 'new version · reload',
       updateHint: 'a newer justtype is live. reload to get it'
@@ -175,11 +180,11 @@ const strings = {
     },
     lockedTitle: 'locked slate',
     offline: {
-      kept: 'offline',
+      kept: 'available offline',
       unavailable: 'not available offline',
       local: 'saved on this device',
-      keep: 'keep offline',
-      unkeep: 'stop keeping offline'
+      keep: 'make available offline',
+      unkeep: 'remove offline copy'
     },
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
