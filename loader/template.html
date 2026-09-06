@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>justtype</title>
+    <meta name="description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <!-- jt:home -->
+    <link rel="canonical" href="https://justtype.io/" />
+    <meta property="og:site_name" content="justtype" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="justtype" />
+    <meta property="og:description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <meta property="og:url" content="https://justtype.io/" />
+    <meta property="og:image" content="https://justtype.io/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="justtype" />
+    <meta name="twitter:description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <meta name="twitter:image" content="https://justtype.io/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"justtype","alternateName":["just type","justtype.io"],"url":"https://justtype.io/","description":"an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share.","applicationCategory":"Productivity","operatingSystem":"Web","browserRequirements":"requires javascript","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"alfa","url":"https://alfaoz.dev"},"sameAs":["https://github.com/alfaoz/justtype"]}</script>
+    <!-- /jt:home -->
+    <style>
+      /* what is on the page before the app mounts: the pitch on the home
+         page, the text of a published slate. neutral on every theme. */
+      .jt-pre { max-width: 42rem; margin: 0 auto; padding: 4rem 1.5rem; font: 15px/1.7 'IBM Plex Mono', ui-monospace, Menlo, monospace; color: #808080; animation: jtPreIn 0s linear 1.2s both; }
+      /* invisible while the app is mounting; shows only if it never does */
+      @keyframes jtPreIn { from { opacity: 0; } to { opacity: 1; } }
+      .jt-pre h1, .jt-pre h2, .jt-pre h3, .jt-pre h4 { font-size: 1.25rem; font-weight: 600; color: inherit; margin: 1.5rem 0 0.75rem; }
+      .jt-pre h1 { font-size: 1.5rem; margin-top: 0; }
+      .jt-pre a { color: #a78bfa; text-decoration: none; }
+      .jt-pre .jt-pre-by { font-size: 0.85rem; opacity: 0.7; margin-top: -0.5rem; }
+      .jt-pre pre, .jt-pre code { font: inherit; }
+    </style>
+    <meta name="theme-color" content="#050505" />
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <script>
+// justtype verified bootstrap.
+//
+// This file is the entire index.html of a built release and it is meant to be
+// byte-stable across releases: nothing version-specific is baked in. It fetches
+// /build-manifest.json, checks its signature against the pinned public key
+// (production only; the key lives on the dev machine, never on the server),
+// then loads the app bundles with subresource integrity taken from the
+// verified manifest. A server that cannot produce a valid signature cannot get
+// this browser to run modified code -- its only move is replacing this file,
+// which the github actions integrity monitor and the off-origin verifier at
+// https://alfaoz.github.io/justtype/ both watch for.
+//
+// server/seo.js turns this file into every other page: it swaps the <title>
+// and description, drops the jt:home block and the jt:prerender pitch, and
+// adds that page's own tags. The home page is this file, untouched, so `/`
+// and /index.html stay byte-identical for the integrity monitor.
+//
+// CSP note: server/index.js hashes this inline script and the import map at
+// boot and adds both to script-src, so there is no 'unsafe-inline' anywhere.
+// The import-map JSON below must be built with the exact same expression the
+// server uses (same file order, no whitespace) or its CSP hash will not match.
+(function () {
+  'use strict';
+
+  // theme pre-paint, so a dark-theme user does not get a white first frame.
+  // keep the map in sync with the built-in themes in src/themes.js.
+  try {
+    var bg = {
+      dark: '#050505',
+      legacy: '#111111',
+      light: '#faf9f7',
+      sepia: '#f4ecd8',
+      midnight: '#0a0a14',
+    }[localStorage.getItem('justtype-theme')
+      || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
+    if (bg) {
+      document.documentElement.style.setProperty('--theme-bg', bg);
+      document.documentElement.style.backgroundColor = bg;
+      var themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', bg);
+    }
+  } catch (e) { /* storage unavailable: stylesheet default is fine */ }
+
+  // beta builds are not signed (they are not published to github pages either);
+  // they still pin every file against the server manifest via SRI.
+  var BETA = __JT_BETA__;
+
+  // pinned release-signing public key (base64 SPKI, P-256). also pinned in
+  // verify-page/index.html and scripts/monitor.mjs -- keep all three in sync.
+  var PUBKEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEy7qq+j94vQ2FgDkQQP/57wfPb/pPpoQmzrgNDQBczCS2e1PCNXWduhcfHLrW15RByVrq3AgdocGUuUIXcBU/ow==';
+
+  var b64ToBytes = function (b64) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  };
+
+  var hexToB64 = function (hex) {
+    var bytes = '';
+    for (var i = 0; i < hex.length; i += 2) bytes += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+    return btoa(bytes);
+  };
+
+  // this script runs in <head>; anything that touches #root or injects the
+  // entry module must wait for the parser. a dynamically inserted module
+  // script is NOT deferred (unlike vite's parser-inserted one), so without
+  // this gate a warm-cache bundle could execute before #root exists.
+  var onReady = function (fn) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else fn();
+  };
+
+  var failed = false;
+  var fail = function (kind) {
+    if (failed) return;
+    failed = true;
+    onReady(function () { renderFail(kind); });
+  };
+  var renderFail = function (kind) {
+    var isTamper = kind === 'tamper';
+    var root = document.getElementById('root');
+    root.textContent = '';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:2rem;background:#050505;color:#a3a3a3;';
+    var box = document.createElement('div');
+    box.style.cssText = 'max-width:26rem;font-size:0.8125rem;line-height:1.6;';
+    var h = document.createElement('div');
+    h.style.cssText = 'margin-bottom:0.75rem;font-size:0.9375rem;color:' + (isTamper ? '#f87171' : '#e5e5e5') + ';';
+    h.textContent = isTamper ? 'integrity check failed' : 'can\'t reach the server';
+    var p = document.createElement('p');
+    p.style.cssText = 'margin:0 0 1rem 0;';
+    p.textContent = isTamper
+      ? 'the code this server sent does not match a signed justtype release. this can mean a tampered or misconfigured server. do not sign in or type anything private here.'
+      : 'the app could not load its build manifest. check your connection and try again.';
+    box.appendChild(h);
+    box.appendChild(p);
+    var links = document.createElement('div');
+    links.style.cssText = 'display:flex;gap:1rem;';
+    var retry = document.createElement('a');
+    retry.href = '';
+    retry.textContent = 'try again';
+    retry.style.cssText = 'color:#e5e5e5;';
+    links.appendChild(retry);
+    if (isTamper) {
+      var v = document.createElement('a');
+      v.href = 'https://alfaoz.github.io/justtype/';
+      v.textContent = 'independent verifier';
+      v.style.cssText = 'color:#e5e5e5;';
+      links.appendChild(v);
+    }
+    box.appendChild(links);
+    wrap.appendChild(box);
+    root.appendChild(wrap);
+  };
+
+  var boot = function () {
+    var fetches = [fetch('/build-manifest.json', { cache: 'no-cache' })];
+    if (!BETA) fetches.push(fetch('/build-manifest.sig', { cache: 'no-cache' }));
+    return Promise.all(fetches).then(function (responses) {
+      var mRes = responses[0];
+      if (!mRes.ok) { fail('network'); return; }
+      return mRes.arrayBuffer().then(function (mBytes) {
+        var verified;
+        if (BETA) {
+          verified = Promise.resolve(true);
+        } else {
+          var sRes = responses[1];
+          if (!sRes.ok) { fail('tamper'); return; }
+          verified = sRes.text().then(function (sigText) {
+            return crypto.subtle.importKey('spki', b64ToBytes(PUBKEY), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']).then(function (key) {
+              return crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64ToBytes(sigText.trim()), mBytes);
+            });
+          });
+        }
+        return verified.then(function (ok) {
+          if (!ok) { fail('tamper'); return; }
+          var manifest = JSON.parse(new TextDecoder().decode(mBytes));
+          onReady(function () { mount(manifest); });
+        });
+      });
+    }).catch(function () { fail('network'); });
+  };
+
+  var mount = function (manifest) {
+    // import map with integrity metadata for every js chunk, so lazily
+    // imported chunks are pinned too. browsers that ignore import maps
+    // just lose enforcement on lazy chunks; nothing breaks.
+    // this exact expression is mirrored in server/index.js for the CSP
+    // hash -- change both together.
+    var importMap = JSON.stringify({ integrity: Object.fromEntries(manifest.files.filter(function (f) { return f.file.endsWith('.js'); }).map(function (f) { return ['/assets/' + f.file, 'sha256-' + hexToB64(f.hash)]; })) });
+    var imTag = document.createElement('script');
+    imTag.type = 'importmap';
+    imTag.textContent = importMap;
+    document.head.appendChild(imTag);
+
+    manifest.files.forEach(function (f) {
+      if (!f.file.endsWith('.css')) return;
+      var l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = '/assets/' + f.file;
+      l.integrity = 'sha256-' + hexToB64(f.hash);
+      document.head.appendChild(l);
+    });
+
+    window.__jtIntegrity = { version: manifest.version, signed: !BETA, beta: BETA, files: manifest.files.length };
+
+    var entry = document.createElement('script');
+    entry.type = 'module';
+    entry.src = '/assets/' + manifest.jsFile;
+    entry.integrity = 'sha256-' + hexToB64(manifest.jsHash);
+    // fires on network failure AND on an SRI mismatch; when the browser
+    // knows it is offline, say so instead of crying tamper
+    entry.onerror = function () { fail(navigator.onLine === false ? 'network' : 'tamper'); };
+    document.head.appendChild(entry);
+  };
+
+  boot();
+})();
+    </script>
+  </head>
+  <body>
+    <div id="root"><!-- jt:prerender --><main class="jt-pre">
+      <h1>just type</h1>
+      <p>an end to end encrypted notepad on the web. open it and start typing; it saves as you go. keep a slate private, publish it when you want a link, or write one together, live.</p>
+      <p><a href="/s/project">about the project</a> · <a href="/whats-new">what's new</a> · <a href="/dev">for developers</a> · <a href="/cli">command line</a></p>
+    </main><!-- /jt:prerender --></div>
+  </body>
+</html>

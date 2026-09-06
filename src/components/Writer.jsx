@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { createPortal } from 'react-dom';
 import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
@@ -11,6 +12,22 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
+import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
+import { cacheSlate, getCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
+import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
+import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
+import { SettingsRow, controlLabel } from './SettingsRow';
+
+// Colour of the status word in the strip and the mobile sheet: failures
+// red, private-draft states orange, everything else green
+const statusTone = (status) => {
+  const { privateDraft, savedAsPrivate } = strings.writer.status;
+  if (status === strings.errors.saveFailed || status === strings.writer.connectivity.notSaved) return 'text-red-400';
+  if (status === privateDraft || status === savedAsPrivate) return 'text-orange-400';
+  return 'text-green-500';
+};
+// Offline, a failed save is expected and reads as a state, not a failure
+const saveFailedStatus = () => isOnline() ? strings.errors.saveFailed : strings.writer.connectivity.notSaved;
 
 // The rich editor and the collab editor are separate chunks: they are
 // content-hashed, so a deploy that only touches app code leaves the ~500 kB of
@@ -50,6 +67,8 @@ if (typeof window !== 'undefined') {
 }
 
 const TiptapEditor = React.lazy(() => loadEditorChunk());
+// Read-only rendered view, used as the print copy for pdf export of rich slates
+const MarkdownViewLazy = React.lazy(() => loadEditorChunk().then(m => ({ default: m.MarkdownView })));
 // Collaborative editor (yjs + remote carets) — its own on-demand chunk
 const CollabEditorLazy = React.lazy(() => loadCollabChunk());
 // Collab side panel (people + version history; carries yjs) — on demand, and
@@ -278,6 +297,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [sharedRemoved, setSharedRemoved] = useState(false);
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
   const [confirmForget, setConfirmForget] = useState(false);
+  // One id per new slate, sent as the create's idempotency key and reused
+  // as the local number if the save falls back to the device, so a lost
+  // response or a queued retry can never create the slate twice.
+  const newSlateRefRef = useRef(null);
   const forgetTimerRef = useRef(null);
   // The settings strip scrolls when the window is narrow, so its popovers
   // (theme picker, share menu) anchor to the viewport instead of the strip —
@@ -301,6 +324,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [isMenuClosing, setIsMenuClosing] = useState(false);
   const [showMenuButton, setShowMenuButton] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
+  const { online, updateAvailable } = useConnectivity();
+  // Devices connected directly to this slate (nearby collab)
+  const [nearbyCount, setNearbyCount] = useState(0);
+  useEffect(() => {
+    const refresh = () => setNearbyCount(collabSlateDbId ? nearbyPeerCount(collabSlateDbId) : 0);
+    refresh();
+    return onNearbyChange(refresh);
+  }, [collabSlateDbId]);
+  // The version of the open slate as loaded (server timestamp + encrypted
+  // blob): the base its edits started from, for conflict detection and merge
+  const loadedSlateRef = useRef(null);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   // Catalog: which custom theme has its menu open, where each one stands in
@@ -322,6 +357,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
+  const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
   const lastSavedContentRef = useRef('');
@@ -530,10 +566,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }, [currentSlate, token]);
 
-  // Autofocus textarea on blank slate (so user can "just type")
+  // Autofocus the editor on a blank slate (so user can "just type"). The rich
+  // editor is a lazy chunk that may mount after this runs; its `autofocus`
+  // prop covers that first mount.
   useEffect(() => {
-    if (!currentSlate && !isLoading && textareaRef.current) {
-      textareaRef.current.focus();
+    if (currentSlate || isLoading) return;
+    const ta = textareaRef.current;
+    if (ta) {
+      // Caret at the end, same as the rich editor's focus handle
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      ta.focus();
+    } else if (richEditorRef.current) {
+      richEditorRef.current.focus();
     }
   }, [currentSlate, isLoading]);
 
@@ -646,14 +690,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // Wait for animation to complete before hiding
     setTimeout(() => {
       setShowSettingsMenu(false);
+      setShowMenuButton(false);
       setIsMenuClosing(false);
     }, 500); // Match the animation duration
   };
 
   const handleToggleMenu = () => {
     if (showSettingsMenu) {
+      // The strip plays its exit (the open animation reversed) before it unmounts
       handleCloseMenu();
-      setShowMenuButton(false);
     } else {
       // Calculate distance to align with zen mode button's left edge
       if (threeDotsRef.current) {
@@ -796,6 +841,34 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setStatus(strings.writer.status.privateDraft);
     }
   }, [wasPublishedBeforeEdit, status]);
+
+  // Queued offline writes flush whenever the network is back
+  useEffect(() => {
+    if (!userId) return;
+    watchConnectivity(userId);
+    pruneCache(userId).catch(() => {});
+  }, [userId]);
+
+  // A local slate that got its number, or a merge that changed the open
+  // slate: follow it without a reload
+  useEffect(() => onSync((e) => {
+    const open = currentSlate?.slate_number;
+    if (e.type === 'synced' && open != null && open === e.from) {
+      loadedSlateRef.current = { updated_at: e.slate.updated_at ?? null, encryptedContent: loadedSlateRef.current?.encryptedContent ?? null };
+      onSlateChange({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
+      window.history.replaceState({}, '', `/slate/${e.to}`);
+    } else if (e.type === 'merged' && open != null && open === e.slateNumber) {
+      setContent(e.text);
+      lastSavedContentRef.current = JSON.stringify({ content: e.text });
+      setHasUnsavedChanges(false);
+      setStatus(e.conflicts ? strings.writer.connectivity.conflicts(e.conflicts) : strings.writer.connectivity.merged);
+      if (!e.conflicts) setTimeout(() => setStatus('ready'), 4000);
+    } else if (e.type === 'started') {
+      setStatus(strings.writer.connectivity.syncing);
+    } else if (e.type === 'finished' && !e.failed) {
+      setStatus((prev) => prev === strings.writer.connectivity.syncing ? 'ready' : prev);
+    }
+  }), [currentSlate, onSlateChange]);
 
   // Auto-save
   useEffect(() => {
@@ -974,21 +1047,50 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const loadSlate = async (id) => {
     try {
-      const response = await fetch(`${API_URL}/slates/${id}`, {
-        credentials: 'include'
-      });
+      // The device copy: the truth for slates created offline and for slates
+      // with an edit still waiting to sync; the fallback when the network
+      // fails. Everything else comes from the server and refreshes the copy.
+      const cached = userId ? await getCachedSlate(userId, id).catch(() => null) : null;
+      const pending = userId ? await getPendingFor(userId, id).catch(() => null) : null;
+      let data = null;
+      let fromCache = false;
+      if (isLocalSlateNumber(id) || pending) {
+        if (!cached?.data?.encryptedContent) throw new Error('local copy missing');
+        data = cached.data;
+        fromCache = true;
+      } else {
+        try {
+          if (!isOnline()) throw new Error('offline');
+          const response = await fetch(`${API_URL}/slates/${id}`, {
+            credentials: 'include'
+          });
 
-      // Check if encryption key is missing (server restarted)
-      if (response.status === 401) {
-        const data = await response.json();
-        if (data.code === 'ENCRYPTION_KEY_MISSING') {
-          setIsLoading(false);
-          onLogin();
-          return;
+          // Check if encryption key is missing (server restarted)
+          if (response.status === 401) {
+            const body = await response.json();
+            if (body.code === 'ENCRYPTION_KEY_MISSING') {
+              setIsLoading(false);
+              onLogin();
+              return;
+            }
+          }
+          if (!response.ok) throw new Error(`load ${response.status}`);
+          data = await response.json();
+        } catch (netErr) {
+          reportNetworkFailure();
+          if (!cached?.data?.encryptedContent) {
+            setStatus(strings.writer.connectivity.notAvailableOffline);
+            setIsLoading(false);
+            setLoadingFadeOut(false);
+            return;
+          }
+          data = cached.data;
+          fromCache = true;
         }
       }
-
-      const data = await response.json();
+      if (!fromCache && userId && data.encrypted) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
+      else if (cached && userId) cacheSlate(userId, id, {}, { opened: true }).catch(() => {});
+      loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: data.encryptedContent ?? null };
       let slateContent;
       let slateTitle = data.title;
       let slateKey = null;
@@ -1030,7 +1132,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
       // (Collab slates are never app-shared — enforced server-side.)
-      if (data.encrypted && slateKey && !data.is_published && !data.is_collab) {
+      if (!fromCache && data.encrypted && slateKey && !data.is_published && !data.is_collab) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -1094,58 +1196,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   };
 
+  // Save before leaving the slate: same path as autosave
   const saveSlateSync = async () => {
-    if (isShared) return; // shared slates persist through the collab relay
-    if (!title.trim() || !token || !currentSlate) return;
-
-    setStatus('saving...');
-
-    try {
-      const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
-      const titleToSave = firstLine || 'untitled slate';
-
-      // Try E2E encryption (collab slates encrypt under the shared doc key)
-      const slateKey = userId ? await getSlateKey(userId) : null;
-      const contentKey = collabDocKey || slateKey;
-      let body;
-      if (contentKey) {
-        const encrypted = await encryptContent(content, contentKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
-        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-        const charCount = content.length;
-        const sizeBytes = new TextEncoder().encode(content).length;
-        // ZK titles: do not send plaintext titles to the server for E2E slates.
-        body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
-      } else {
-        body = { title: titleToSave, content };
-      }
-
-      const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-
-      // Check if encryption key is missing (server restarted)
-      if (response.status === 401) {
-        const data = await response.json();
-        if (data.code === 'ENCRYPTION_KEY_MISSING') {
-          setStatus(strings.errors.sessionExpired);
-          onLogin();
-          return;
-        }
-      }
-
-      if (response.ok) {
-        lastSavedContentRef.current = JSON.stringify({ content });
-        setHasUnsavedChanges(false);
-        setStatus('saved');
-        setTimeout(() => setStatus('ready'), 2000);
-      }
-    } catch (err) {
-      console.error('Save failed:', err);
-    }
+    if (isShared || !token || !currentSlate) return;
+    await saveSlate();
   };
 
   // Expose save function to parent via ref
@@ -1307,50 +1361,92 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setCollabPanel(tab);
   }
 
-  const saveSlate = async () => {
-    if (isShared) return null; // shared slates persist through the collab relay
-    // Extract title from first line of content
+  // The encrypted payload a save sends (collab slates encrypt under the
+  // shared doc key; new slates are never collab). ZK titles: no plaintext
+  // title leaves the browser for E2E slates.
+  const buildSavePayload = async () => {
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
+    const slateKey = userId ? await getSlateKey(userId) : null;
+    const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
+    let body;
+    if (contentKey) {
+      const encrypted = await encryptContent(content, contentKey);
+      const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
+      const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
+      body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount: content.length, sizeBytes: new TextEncoder().encode(content).length };
+    } else {
+      body = { title: titleToSave, content };
+    }
+    // New slates carry their editor mode; existing slates persist it via metadata PATCH
+    if (!currentSlate) body.editorMode = editorMode;
+    return { body, titleToSave, slateKey };
+  };
 
+  // Offline, or the network fell over mid-save: the edit stays on this
+  // device and syncs later. A new slate gets a local number until then.
+  // Collab slates persist through the relay and are not queued here.
+  const saveOffline = async (body) => {
+    if (!userId || collabDocKey || !body.encryptedContent) return false;
+    if (currentSlate) {
+      await queueOfflineSave(userId, currentSlate.slate_number, body, loadedSlateRef.current ? { data: loadedSlateRef.current } : null);
+    } else {
+      const local = newSlateRefRef.current || newLocalSlateNumber();
+      newSlateRefRef.current = null;
+      await cacheSlate(userId, local, {
+        slate_number: local, local: true, encrypted: true,
+        encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
+        editor_mode: editorMode, is_published: 0, share_id: null, updated_at: null,
+        word_count: body.wordCount, char_count: body.charCount,
+      }, { opened: true });
+      await queuePending(userId, local, { op: 'post', body, editorMode });
+      onSlateChange({ slate_number: local, local: true });
+    }
+    lastSavedContentRef.current = JSON.stringify({ content });
+    setHasUnsavedChanges(false);
+    localStorage.removeItem('justtype-draft');
+    setStatus(strings.writer.connectivity.savedLocally);
+    return true;
+  };
+
+  const saveSlate = async () => {
+    if (isShared) return null; // shared slates persist through the collab relay
     if (!content.trim()) return null;
+    // Collab slates persist through the Yjs document, which lives on this
+    // device too; the canonical blob catches up when the network is back
+    if (collabDocKey && !isOnline()) {
+      setStatus(strings.writer.connectivity.savedLocally);
+      return null;
+    }
 
     setStatus('saving...');
 
     try {
+      const { body, titleToSave, slateKey } = await buildSavePayload();
       const method = currentSlate ? 'PUT' : 'POST';
       const url = currentSlate
         ? `${API_URL}/slates/${currentSlate.slate_number}`
         : `${API_URL}/slates`;
+      // Existing slates say which version their edits started from
+      if (currentSlate && loadedSlateRef.current?.updated_at) body.baseUpdatedAt = loadedSlateRef.current.updated_at;
+      if (!currentSlate) body.clientRef = (newSlateRefRef.current ||= newLocalSlateNumber());
 
-      // Try E2E encryption (collab slates encrypt under the shared doc key;
-      // new slates are never collab)
-      const slateKey = userId ? await getSlateKey(userId) : null;
-      const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
-      let body;
-      if (contentKey) {
-        const encrypted = await encryptContent(content, contentKey);
-        const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
-        const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
-        const charCount = content.length;
-        const sizeBytes = new TextEncoder().encode(content).length;
-        // ZK titles: do not send plaintext titles to the server for E2E slates.
-        body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount, sizeBytes };
-      } else {
-        body = { title: titleToSave, content };
-      }
+      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) return { local: true };
 
-      // New slates carry their editor mode; existing slates persist it via metadata PATCH
-      if (!currentSlate) {
-        body.editorMode = editorMode;
-      }
-
-      const response = await fetch(url, {
+      const send = (payload) => fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       });
+      let response;
+      try {
+        response = await send(body);
+      } catch (netErr) {
+        reportNetworkFailure();
+        if (await saveOffline(body)) return { local: true };
+        throw netErr;
+      }
 
       // Check if encryption key is missing (server restarted)
       if (response.status === 401) {
@@ -1362,14 +1458,39 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         }
       }
 
+      // The slate moved on since it was loaded (another device, an agent):
+      // three-way merge and send the result. Regions both sides changed
+      // become conflict blocks the editor renders with keep-mine/theirs.
+      let sentBody = body;
+      let mergeInfo = null;
+      if (response.status === 409 && currentSlate && userId) {
+        mergeInfo = await mergeWithServer(userId, currentSlate.slate_number, body, loadedSlateRef.current?.encryptedContent);
+        sentBody = mergeInfo.body;
+        response = await send(sentBody);
+      }
+
       if (!response.ok) {
-        setStatus(strings.errors.saveFailed);
+        setStatus(saveFailedStatus());
         return null;
       }
 
       const data = await response.json();
 
+      if (currentSlate && sentBody.encryptedContent) {
+        loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent };
+        cacheSlate(userId, currentSlate.slate_number, { encryptedContent: sentBody.encryptedContent, encrypted_title: sentBody.encryptedTitle, updated_at: data.updated_at ?? null }).catch(() => {});
+      }
+      if (mergeInfo) {
+        setContent(mergeInfo.text);
+        lastSavedContentRef.current = JSON.stringify({ content: mergeInfo.text });
+        setHasUnsavedChanges(false);
+        setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
+        if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
+        return data;
+      }
+
       if (!currentSlate) {
+        newSlateRefRef.current = null;
         onSlateChange(data);
       }
 
@@ -1423,7 +1544,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       return data; // Return the saved slate data
     } catch (err) {
-      setStatus(strings.errors.saveFailed);
+      setStatus(saveFailedStatus());
       console.error('Save failed:', err);
       return null;
     }
@@ -1625,42 +1746,41 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setShowSaveMenu(false);
   };
 
+  // Export as pdf = print. A print-only copy of the slate is mounted on body
+  // (see the portal below and .print-root in index.css): rich slates print
+  // the rendered view, math included, plain slates print the text. The
+  // popup + document.write approach this replaces printed raw markdown,
+  // broke on any `<` in the content and raced its own 250ms timer.
   const exportToPdf = () => {
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title || 'Slate'}</title>
-          <style>
-            body {
-              font-family: 'IBM Plex Mono', monospace;
-              padding: 40px;
-              max-width: 800px;
-              margin: 0 auto;
-              line-height: 1.6;
-              color: #333;
-            }
-            h1 { margin-bottom: 20px; }
-            pre {
-              white-space: pre-wrap;
-              word-wrap: break-word;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${title || 'Untitled Slate'}</h1>
-          <pre>${content}</pre>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 250);
     setShowSaveMenu(false);
+    setShowExportMenu(false);
+    setPrintJob(n => n + 1);
   };
+
+  useEffect(() => {
+    if (!printJob) return;
+    let cancelled = false;
+    document.body.dataset.printing = '';
+    const done = () => setPrintJob(0);
+    window.addEventListener('afterprint', done, { once: true });
+    // Print once the copy has settled: lazy chunk mounted, math typeset,
+    // fonts loaded. Bounded so a stuck chunk still gets a (plainer) print.
+    (async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const root = document.querySelector('.print-root');
+        if (root && !root.querySelector('.print-fallback, .cm-lp-math-pending')) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+      await document.fonts?.ready;
+      if (!cancelled) window.print();
+    })();
+    return () => {
+      cancelled = true;
+      delete document.body.dataset.printing;
+      window.removeEventListener('afterprint', done);
+    };
+  }, [printJob]);
 
   const wordCount = content?.trim() === '' ? 0 : content?.trim().split(/\s+/).length || 0;
   const charCount = content?.length || 0;
@@ -1691,13 +1811,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (token) {
       syncThemeToServer(themeId);
     }
-  };
-
-  const cycleTheme = () => {
-    const themes = getThemeIds();
-    const currentIndex = themes.indexOf(theme);
-    const nextIndex = (currentIndex + 1) % themes.length;
-    setTheme(themes[nextIndex]);
   };
 
   const downloadExampleTheme = () => {
@@ -1814,14 +1927,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setPunto(sizes[nextIndex]);
   };
 
-  const getPuntoLabel = () => {
-    switch (punto) {
-      case 'small': return 'Aa−';
-      case 'large': return 'Aa+';
-      default: return 'Aa';
-    }
-  };
-
   const cycleFocus = () => {
     const modes = ['off', 'on', 'auto'];
     const currentIndex = modes.indexOf(focusMode);
@@ -1829,203 +1934,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setFocusMode(modes[nextIndex]);
   };
 
-  const getFocusLabel = () => {
-    switch (focusMode) {
-      case 'on': return 'focus';
-      case 'auto': return 'smart focus';
-      default: return 'focus off';
-    }
-  };
 
-  const getCounterLabel = () => {
-    return showCounter ? 'hide counter' : 'show counter';
-  };
-
-  return (
-    <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
-      {/* LOADING OVERLAY */}
-      {isLoading && (
-        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
-          <div className="text-[var(--theme-text-dim)] text-sm animate-pulse">loading slate...</div>
-        </div>
-      )}
-
-      {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
-          instead of covering the text you are comparing against) */}
-      <div className="flex-grow flex min-h-0 w-full">
-      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
-        {collabDocKey && collabSlateDbId ? (
-          // Collaborative slate: one live CM6 surface for BOTH modes (remote
-          // carets need it); `editorMode` only toggles the live preview.
-          <React.Suspense fallback={<EditorSkeleton text={loadedContentRef.current} punto={punto} />}>
-            <CollabEditorLazy
-              key={`ce-${collabSlateDbId}-${collabKeyGen}`}
-              slateId={collabSlateDbId}
-              docKey={collabDocKey}
-              onRekeyed={handleCollabRekeyed}
-              apiRef={collabApiRef}
-              username={localStorage.getItem('justtype-username')}
-              mode={editorMode}
-              initialContent={loadedContentRef.current}
-              onChange={setContent}
-              onRemoved={() => setSharedRemoved(true)}
-              onError={isShared ? () => setSharedRemoved(true) : undefined}
-              puntoClass={`punto-${punto}`}
-            />
-          </React.Suspense>
-        ) : editorMode === 'wysiwyg' ? (
-          <React.Suspense fallback={<EditorSkeleton text={content} punto={punto} />}>
-            <TiptapEditor
-              content={content}
-              onChange={setContent}
-              puntoClass={`punto-${punto}`}
-            />
-          </React.Suspense>
-        ) : (
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            onKeyDown={handleTextareaKeyDown}
-            placeholder={strings.writer.contentPlaceholder}
-            spellCheck={false}
-            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
-          />
-        )}
-      </main>
-
-      {collabPanel && (currentSlate || isShared) && (
-        <React.Suspense fallback={null}>
-          <CollabPanelLazy
-            tab={collabPanel}
-            onTabChange={setCollabPanel}
-            onClose={() => setCollabPanel(null)}
-            canHistory={!!(collabDocKey && collabSlateDbId)}
-            slateId={collabSlateDbId}
-            docKey={collabDocKey}
-            currentText={content}
-            onRestore={(text) => {
-              if (collabApiRef.current) collabApiRef.current.replaceText(text);
-              setCollabPanel(null);
-            }}
-            onOpenAsNewSlate={(text) => {
-              setCollabPanel(null);
-              if (onOpenAsNewSlate) onOpenAsNewSlate(text);
-            }}
-            shareProps={{
-              slateNumber: currentSlate ? currentSlate.slate_number : null,
-              userId,
-              username: localStorage.getItem('justtype-username'),
-              docKey: collabDocKey,
-              memberView: isShared,
-              sharedSlateId,
-              onLeave: () => {
-                setCollabPanel(null);
-                window.history.pushState({}, '', '/slates');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-              },
-              getCurrent: () => ({
-                content,
-                title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
-              }),
-              onDocKeyChange: (key, slateDbId) => {
-                loadedContentRef.current = content;
-                setCollabDocKey(key);
-                setCollabKeyGen((g) => g + 1);
-                // undefined = key rotation, same slate; null = collab disabled
-                setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
-              },
-              onClose: () => setCollabPanel(null),
-            }}
-          />
-        </React.Suspense>
-      )}
-      </div>
-
-      {/* DESKTOP FOOTER */}
-      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
-        <div className="flex justify-between items-center gap-4 text-sm">
-
-          {/* Left Controls */}
-          <div className="flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0" ref={settingsMenuRef}>
-            {/* Three dots button - animates to horizontal line when open */}
-            <button
-              ref={threeDotsRef}
-              onClick={handleToggleMenu}
-              className="opacity-50 hover:opacity-100 flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--theme-bg-secondary)] relative transition-transform duration-500 ease-in-out"
-              style={{
-                zIndex: 100,
-                transform: showSettingsMenu && !isMenuClosing ? `translateX(-${threeDotsTransform}px)` : 'translateX(0)'
-              }}
-              aria-label="Settings menu"
-            >
-              <svg className="w-5 h-5 transition-all duration-300" viewBox="0 0 24 24" fill="currentColor">
-                {showSettingsMenu && !isMenuClosing ? (
-                  // Horizontal line when open
-                  <rect x="4" y="11" width="16" height="2" rx="1"/>
-                ) : (
-                  // Three dots when closed
-                  <>
-                    <circle cx="5" cy="12" r="2"/>
-                    <circle cx="12" cy="12" r="2"/>
-                    <circle cx="19" cy="12" r="2"/>
-                  </>
-                )}
-              </svg>
-            </button>
-
-            {/* Menu buttons - appear after animation, slide in from three dots
-                position. Bounded to the space before the right controls: on
-                narrow windows the strip scrolls, fading out at the cutoff. */}
-            {showMenuButton && (
-              <div
-                ref={stripRef}
-                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
-                style={{ zIndex: 150 }}
-                onScroll={() => {
-                  setShowThemePicker(false);
-                  setShowPublishMenu(false);
-                  updateStripScroll();
-                  const track = stripTrackRef.current;
-                  if (track) {
-                    track.classList.add('scrolling');
-                    clearTimeout(stripScrollEndTimerRef.current);
-                    stripScrollEndTimerRef.current = setTimeout(() => track.classList.remove('scrolling'), 600);
-                  }
-                }}
-              >
-                <div className="relative" data-theme-picker>
-                  <button
-                    onClick={(e) => { anchorPopover(e); toggleTheme(); }}
-                    className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                    style={{ color: 'var(--theme-accent)' }}
-                  >
-                    theme: {theme}
-                  </button>
-                  {showThemePicker && popoverAnchor && (
-                    <div
-                      className="fixed rounded shadow-2xl overflow-hidden w-[260px] animate-[fadeInUp_0.15s_ease-out]"
-                      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
-                      onMouseLeave={() => setPreviewTheme(null)}
-                    >
-                      {/* Built-in themes */}
-                      {Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id)).map(themeId => (
-                        <button
-                          key={themeId}
-                          onClick={() => selectTheme(themeId)}
-                          onMouseEnter={() => setPreviewTheme(themeId)}
-                          className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                          style={{
-                            color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
-                            backgroundColor: 'transparent'
-                          }}
-                          onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                        >
-                          {themeId}
-                        </button>
-                      ))}
-                      {/* Custom themes: each row has a menu for the catalog and deleting */}
+  const themePickerPopover = showThemePicker && popoverAnchor && (
+    <div data-theme-picker
+      className="fixed rounded shadow-2xl overflow-hidden w-[260px] animate-[fadeInUp_0.15s_ease-out]"
+      style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
+      onMouseLeave={() => setPreviewTheme(null)}
+    >
+      {/* Built-in themes */}
+      {Object.keys(builtInThemes).filter(id => !hiddenThemes.includes(id)).map(themeId => (
+        <button
+          key={themeId}
+          onClick={() => selectTheme(themeId)}
+          onMouseEnter={() => setPreviewTheme(themeId)}
+          className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+          style={{
+            color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
+            backgroundColor: 'transparent'
+          }}
+          onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        >
+          {themeId}
+        </button>
+      ))}
+      {/* Custom themes: each row has a menu for the catalog and deleting */}
       {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
         <>
           <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
@@ -2153,162 +2086,297 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         </div>
       )}
       {/* Hidden file input */}
-                      <input
-                        ref={themeFileInputRef}
-                        type="file"
-                        accept=".json,application/json"
-                        onChange={handleThemeImport}
-                        className="hidden"
-                      />
-                    </div>
-                  )}
+      <input
+        ref={themeFileInputRef}
+        type="file"
+        accept=".json,application/json"
+        onChange={handleThemeImport}
+        className="hidden"
+      />
+    </div>
+  );
+
+  const publishPopover = showPublishMenu && popoverAnchor && (
+    <div
+      className="fixed bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+      style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
+    >
+      {!shareUrl && !wasPublishedBeforeEdit && (
+        collabDocKey ? (
+          // Collab slates cannot be published yet. Greyed and
+          // inert; the label swaps on hover instead of a
+          // native tooltip, matching the inline `sure?` style.
+          <div
+            className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
+            title={strings.writer.collabState.publishBlockedHint}
+          >
+            <span className="group-hover:hidden">make public</span>
+            <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
+          </div>
+        ) : (
+          <button
+            onClick={handlePublish}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+          >
+            make public
+          </button>
+        )
+      )}
+      {shareUrl && (
+        <>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(shareUrl);
+              setStatus(strings.writer.status.linkCopied);
+              setTimeout(() => setStatus('ready'), 2000);
+              setShowPublishMenu(false);
+            }}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+          >
+            copy link
+          </button>
+          <button
+            onClick={handlePublish}
+            className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+          >
+            make private
+          </button>
+        </>
+      )}
+      {wasPublishedBeforeEdit && !shareUrl && (
+        <button
+          onClick={handlePublish}
+          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
+        >
+          update public version
+        </button>
+      )}
+      {(shareUrl || wasPublishedBeforeEdit) && (
+        <button
+          onClick={() => {
+            clearTimeout(forgetTimerRef.current);
+            if (confirmForget) {
+              setConfirmForget(false);
+              handleForgetPublic();
+            } else {
+              setConfirmForget(true);
+              forgetTimerRef.current = setTimeout(() => setConfirmForget(false), 3000);
+            }
+          }}
+          title={strings.writer.publishMenu.forgetHint}
+          className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
+        >
+          {confirmForget ? strings.writer.publishMenu.forgetConfirm : strings.writer.publishMenu.forget}
+        </button>
+      )}
+    </div>
+  );
+
+  // The settings row renders from one control model (see SettingsRow.jsx)
+  const stripControls = {
+    device: [
+      { id: 'theme', label: 'theme', kind: 'menu', value: theme, options: getThemeIds(), onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
+      { id: 'size', label: 'size', kind: 'cycle', value: punto, options: ['small', 'base', 'large'], onCycle: cyclePunto, onSet: setPunto },
+      { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
+      { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
+    ],
+    slate: [
+      { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
+    ].filter(Boolean),
+    actions: [
+      token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => openCollab('people'), active: !!collabDocKey, pulse: highlightNew },
+      token && collabDocKey && collabSlateDbId && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
+      token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: (e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); } },
+    ].filter(Boolean),
+  };
+
+  return (
+    <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
+      {/* LOADING OVERLAY */}
+      {isLoading && (
+        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
+          <div className="text-[var(--theme-text-dim)] text-sm animate-pulse">loading slate...</div>
+        </div>
+      )}
+
+      {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
+          instead of covering the text you are comparing against) */}
+      <div className="flex-grow flex min-h-0 w-full">
+      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
+        {collabDocKey && collabSlateDbId ? (
+          // Collaborative slate: one live CM6 surface for BOTH modes (remote
+          // carets need it); `editorMode` only toggles the live preview.
+          <React.Suspense fallback={<EditorSkeleton text={loadedContentRef.current} punto={punto} />}>
+            <CollabEditorLazy
+              key={`ce-${collabSlateDbId}-${collabKeyGen}`}
+              slateId={collabSlateDbId}
+              docKey={collabDocKey}
+              onRekeyed={handleCollabRekeyed}
+              apiRef={collabApiRef}
+              username={localStorage.getItem('justtype-username')}
+              mode={editorMode}
+              initialContent={loadedContentRef.current}
+              onChange={setContent}
+              onRemoved={() => setSharedRemoved(true)}
+              onError={isShared ? () => setSharedRemoved(true) : undefined}
+              puntoClass={`punto-${punto}`}
+            />
+          </React.Suspense>
+        ) : editorMode === 'wysiwyg' ? (
+          <React.Suspense fallback={<EditorSkeleton text={content} punto={punto} />}>
+            <TiptapEditor
+              ref={richEditorRef}
+              content={content}
+              onChange={setContent}
+              autofocus={!currentSlate}
+              puntoClass={`punto-${punto}`}
+            />
+          </React.Suspense>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={handleTextareaKeyDown}
+            placeholder={strings.writer.contentPlaceholder}
+            spellCheck={false}
+            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
+          />
+        )}
+      </main>
+
+      {printJob > 0 && createPortal(
+        <div className={`print-root punto-${punto}`}>
+          {title && <h1 className="print-title">{title}</h1>}
+          {editorMode === 'wysiwyg' ? (
+            <React.Suspense fallback={<pre className="print-fallback">{content}</pre>}>
+              <MarkdownViewLazy content={content} puntoClass={`punto-${punto}`} />
+            </React.Suspense>
+          ) : (
+            <pre>{content}</pre>
+          )}
+        </div>,
+        document.body
+      )}
+
+      {collabPanel && (currentSlate || isShared) && (
+        <React.Suspense fallback={null}>
+          <CollabPanelLazy
+            tab={collabPanel}
+            onTabChange={setCollabPanel}
+            onClose={() => setCollabPanel(null)}
+            canHistory={!!(collabDocKey && collabSlateDbId)}
+            slateId={collabSlateDbId}
+            docKey={collabDocKey}
+            currentText={content}
+            getDoc={() => collabApiRef.current?.getDoc?.()}
+            onRestore={(text) => {
+              if (collabApiRef.current) collabApiRef.current.replaceText(text);
+              setCollabPanel(null);
+            }}
+            onOpenAsNewSlate={(text) => {
+              setCollabPanel(null);
+              if (onOpenAsNewSlate) onOpenAsNewSlate(text);
+            }}
+            shareProps={{
+              slateNumber: currentSlate ? currentSlate.slate_number : null,
+              userId,
+              username: localStorage.getItem('justtype-username'),
+              docKey: collabDocKey,
+              memberView: isShared,
+              sharedSlateId,
+              onLeave: () => {
+                setCollabPanel(null);
+                window.history.pushState({}, '', '/slates');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              },
+              getCurrent: () => ({
+                content,
+                title: (content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate')
+              }),
+              onDocKeyChange: (key, slateDbId) => {
+                loadedContentRef.current = content;
+                setCollabDocKey(key);
+                setCollabKeyGen((g) => g + 1);
+                // undefined = key rotation, same slate; null = collab disabled
+                setCollabSlateDbId((prev) => (slateDbId === undefined ? prev : slateDbId));
+                // The device copy follows: it is what an offline open reads
+                if (userId && currentSlate) {
+                  (async () => {
+                    const master = await getSlateKey(userId);
+                    if (!master) return;
+                    const patch = key
+                      ? { is_collab: 1, collab_wrapped_key: await wrapKey(key, master), ...(slateDbId ? { id: slateDbId } : {}) }
+                      : { is_collab: 0, collab_wrapped_key: null };
+                    await cacheSlate(userId, currentSlate.slate_number, patch);
+                  })().catch(() => {});
+                }
+              },
+              onClose: () => setCollabPanel(null),
+            }}
+          />
+        </React.Suspense>
+      )}
+      </div>
+
+      {/* DESKTOP FOOTER */}
+      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
+        <div className="flex justify-between items-center gap-4 text-sm">
+
+          {/* Left Controls */}
+          <div className="flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0" ref={settingsMenuRef}>
+            {/* Three dots button - animates to horizontal line when open */}
+            <button
+              ref={threeDotsRef}
+              onClick={handleToggleMenu}
+              className="opacity-50 hover:opacity-100 flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--theme-bg-secondary)] relative transition-transform duration-500 ease-in-out"
+              style={{
+                zIndex: 100,
+                transform: showSettingsMenu && !isMenuClosing ? `translateX(-${threeDotsTransform}px)` : 'translateX(0)'
+              }}
+              aria-label="Settings menu"
+            >
+              <svg className="w-5 h-5 transition-all duration-300" viewBox="0 0 24 24" fill="currentColor">
+                {showSettingsMenu && !isMenuClosing ? (
+                  // Horizontal line when open
+                  <rect x="4" y="11" width="16" height="2" rx="1"/>
+                ) : (
+                  // Three dots when closed
+                  <>
+                    <circle cx="5" cy="12" r="2"/>
+                    <circle cx="12" cy="12" r="2"/>
+                    <circle cx="19" cy="12" r="2"/>
+                  </>
+                )}
+              </svg>
+            </button>
+
+            {/* Menu buttons - appear after animation, slide in from three dots
+                position. Bounded to the space before the right controls: on
+                narrow windows the strip scrolls, fading out at the cutoff. */}
+            {showMenuButton && (
+              <>
+                <div
+                  ref={stripRef}
+                  className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'animate-[fadeOutToLeft_0.4s_ease-in_forwards]' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
+                  style={{ zIndex: 150 }}
+                  onScroll={() => {
+                    setShowThemePicker(false);
+                    setShowPublishMenu(false);
+                    updateStripScroll();
+                    const track = stripTrackRef.current;
+                    if (track) {
+                      track.classList.add('scrolling');
+                      clearTimeout(stripScrollEndTimerRef.current);
+                      stripScrollEndTimerRef.current = setTimeout(() => track.classList.remove('scrolling'), 600);
+                    }
+                  }}
+                >
+                  <SettingsRow controls={stripControls} />
                 </div>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={cyclePunto}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getPuntoLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={cycleFocus}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getFocusLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={() => setShowCounter(!showCounter)}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getCounterLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={toggleEditorMode}
-                  className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {strings.writer.editorMode.label(editorMode)}
-                </button>
-                {token && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button
-                      onClick={() => openCollab('people')}
-                      className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
-                      style={{ color: collabDocKey ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
-                    >
-                      {strings.collab.menuButton}
-                    </button>
-                  </>
-                )}
-                {token && collabDocKey && collabSlateDbId && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button
-                      onClick={() => setCollabPanel('history')}
-                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                      style={{ color: 'var(--theme-accent)' }}
-                    >
-                      {strings.collab.history.button}
-                    </button>
-                  </>
-                )}
-                {token && !isShared && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <div className="relative">
-                      <button
-                        onClick={(e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); }}
-                        className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                        style={{ color: 'var(--theme-accent)' }}
-                      >
-                        share
-                      </button>
-                      {showPublishMenu && popoverAnchor && (
-                        <div
-                          className="fixed bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
-                          style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
-                        >
-                          {!shareUrl && !wasPublishedBeforeEdit && (
-                            collabDocKey ? (
-                              // Collab slates cannot be published yet. Greyed and
-                              // inert; the label swaps on hover instead of a
-                              // native tooltip, matching the inline `sure?` style.
-                              <div
-                                className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
-                                title={strings.writer.collabState.publishBlockedHint}
-                              >
-                                <span className="group-hover:hidden">make public</span>
-                                <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={handlePublish}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                              >
-                                make public
-                              </button>
-                            )
-                          )}
-                          {shareUrl && (
-                            <>
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(shareUrl);
-                                  setStatus(strings.writer.status.linkCopied);
-                                  setTimeout(() => setStatus('ready'), 2000);
-                                  setShowPublishMenu(false);
-                                }}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                              >
-                                copy link
-                              </button>
-                              <button
-                                onClick={handlePublish}
-                                className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
-                              >
-                                make private
-                              </button>
-                            </>
-                          )}
-                          {wasPublishedBeforeEdit && !shareUrl && (
-                            <button
-                              onClick={handlePublish}
-                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors duration-200"
-                            >
-                              update public version
-                            </button>
-                          )}
-                          {(shareUrl || wasPublishedBeforeEdit) && (
-                            <button
-                              onClick={() => {
-                                clearTimeout(forgetTimerRef.current);
-                                if (confirmForget) {
-                                  setConfirmForget(false);
-                                  handleForgetPublic();
-                                } else {
-                                  setConfirmForget(true);
-                                  forgetTimerRef.current = setTimeout(() => setConfirmForget(false), 3000);
-                                }
-                              }}
-                              title={strings.writer.publishMenu.forgetHint}
-                              className="w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] text-red-400 hover:text-red-300 transition-colors duration-200"
-                            >
-                              {confirmForget ? strings.writer.publishMenu.forgetConfirm : strings.writer.publishMenu.forget}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+                {themePickerPopover}
+                {publishPopover}
+              </>
             )}
 
             {/* Scroll hint for the strip: a slim thumb that appears only when
@@ -2321,7 +2389,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
             {/* Counter - shown when enabled, fades when menu opens */}
             {showCounter && (
-              <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu && !isMenuClosing ? 'opacity-0' : 'opacity-50'}`}>
+              <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu ? 'opacity-0' : 'opacity-50'}`}>
                 <span>{strings.writer.stats.words(wordCount)}</span>
                 <span>{strings.writer.stats.chars(charCount)}</span>
               </div>
@@ -2333,11 +2401,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             <span
               className={`transition-opacity duration-300 ${
                 status === 'ready' ? 'opacity-0' : 'opacity-100'
-              } ${
-                status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate ? 'text-orange-400' :
-                status === 'saved' ? 'text-green-500' :
-                'text-green-500'
-              } ${
+              } ${statusTone(status)} ${
                 (status.includes('create account') || status.includes('support us')) ? 'cursor-pointer hover:text-white' : ''
               }`}
               onClick={() => {
@@ -2352,6 +2416,28 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </span>
 
             {status !== 'ready' && <span className="opacity-30">·</span>}
+
+            {/* Connectivity, in the same voice as the status word: offline is
+                orange like a private draft, a newer build is blue like a
+                current public copy */}
+            {!online && (
+              <>
+                <span className="text-orange-400" title={strings.writer.connectivity.offlineHint}>{strings.writer.connectivity.offline}</span>
+                <span className="opacity-30">·</span>
+              </>
+            )}
+            {online && updateAvailable && (
+              <>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-blue-400 hover:text-white transition-colors duration-200"
+                  title={strings.writer.connectivity.updateHint}
+                >
+                  {strings.writer.connectivity.update}
+                </button>
+                <span className="opacity-30">·</span>
+              </>
+            )}
 
             <button
               onClick={() => setShowAboutModal(true)}
@@ -2374,6 +2460,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     title={strings.writer.publicState.outdatedHint}
                   >
                     {strings.writer.publicState.outdated}
+                  </button>
+                )}
+
+                {/* Devices connected directly (nearby): one click to the tab */}
+                {nearbyCount > 0 && (
+                  <button
+                    onClick={() => setCollabPanel('nearby')}
+                    className="text-sm text-violet-400 hover:text-white transition-colors duration-200"
+                  >
+                    {strings.collab.nearby.chip(nearbyCount)}
                   </button>
                 )}
 
@@ -2547,13 +2643,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               {/* quick toggles: tapping one changes it in place */}
               <ScrollRow className="mb-4">
-                {[
-                  { key: 'theme', label: theme, onClick: cycleTheme },
-                  { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
-                  { key: 'focus', label: getFocusLabel(), onClick: cycleFocus },
-                  { key: 'counter', label: showCounter ? strings.writer.mobile.counterOn : strings.writer.mobile.counterOff, onClick: () => setShowCounter(!showCounter) },
-                  { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode, highlight: highlightNew },
-                ].map((c) => (
+                {[...stripControls.device, ...stripControls.slate].map((c) => ({ key: c.id, label: controlLabel(c), onClick: c.kind === 'menu' ? c.onOpen : c.onCycle, highlight: c.pulse })).map((c) => (
                   <button
                     key={c.key}
                     onClick={c.onClick}
@@ -2563,16 +2653,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 ))}
               </ScrollRow>
+              {/* The theme list opens from the chip; the desktop copy sits in
+                  a footer that is display none here */}
+              {themePickerPopover}
 
               {/* status */}
               {status !== 'ready' && (
-                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${
-                  status === strings.writer.status.privateDraft || status === strings.writer.status.savedAsPrivate
-                    ? 'text-orange-400'
-                    : 'text-green-500'
-                }`}>
+                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${statusTone(status)}`}>
                   {status}
                 </div>
+              )}
+              {!online && (
+                <div className="mb-3 py-2 rounded-lg text-center text-sm text-orange-400">{strings.writer.connectivity.offline}</div>
+              )}
+              {online && updateAvailable && (
+                <button onClick={() => window.location.reload()} className="w-full mb-3 py-2 rounded-lg text-center text-sm text-blue-400">
+                  {strings.writer.connectivity.update}
+                </button>
               )}
 
               {/* primary action */}

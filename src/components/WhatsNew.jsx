@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { PageHeader } from './PageHeader';
 import { HoverNote } from './HoverNote';
+import { MarkGlyph } from './MarkGlyph';
 import { strings } from '../strings';
 import { VERSION } from '../version';
 
@@ -102,12 +103,57 @@ export function WhatsNew() {
       </div>
     </div>
     ),
+
+    // Offline: the real list, marks only. Copies land on their own, cloud by
+    // cloud; then one slate is written while offline, waits orange, spins,
+    // lands green and settles.
+    offline: (
+    <div className="wn-frame wn-frame-list" key="offline">
+      <div className="wn-slates">
+        {d.offline.slates.map((title, i) => (
+          <div key={title} className="wn-slate">
+            <span className="wn-slate-title">{title}</span>
+            <span className="wn-slate-meta">
+              <span className={`wn-mark wn-mark-${i + 1}`}>
+                <span className="wn-mk wn-mk-cloud"><MarkGlyph kind="cloud" /></span>
+                <span className="wn-mk wn-mk-check"><MarkGlyph kind="check" /></span>
+                {i === d.offline.written && (
+                  <>
+                    <span className="wn-mk wn-mk-alert"><MarkGlyph kind="alert" /></span>
+                    <span className="wn-mk wn-mk-spin"><MarkGlyph kind="spin" className="mark-spin" /></span>
+                    <span className="wn-mk wn-mk-green"><MarkGlyph kind="check" /></span>
+                  </>
+                )}
+              </span>
+              <span>{strings.slates.status.private}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+    ),
   };
+
+  // Offline demo timeline, in percent of one 12s loop. Each row's copy lands
+  // at its own moment (cloud out, check in); the written row then goes orange
+  // at 40%, spins at 60%, pops green at 70% and settles dim at 86%. The list
+  // dips out at the end so the marks reset out of sight.
+  const offlineCss = d.offline.slates.map((_, i) => {
+    const t = 8 + i * 4;
+    const n = i + 1;
+    const check = i === d.offline.written
+      ? `0%, ${t}% { opacity: 0; } ${t + 2}%, 40% { opacity: 0.7; } 42%, 84% { opacity: 0; } 86%, 96% { opacity: 0.7; } 98%, 100% { opacity: 0; }`
+      : `0%, ${t}% { opacity: 0; } ${t + 2}%, 96% { opacity: 0.7; } 98%, 100% { opacity: 0; }`;
+    return `
+        .wn-mark-${n} .wn-mk-cloud { animation: wnCloud${n} 12s infinite; }
+        .wn-mark-${n} .wn-mk-check { animation: wnCheck${n} 12s infinite; }
+        @keyframes wnCloud${n} { 0%, ${t}% { opacity: 1; } ${t + 2}%, 96% { opacity: 0; } 98%, 100% { opacity: 1; } }
+        @keyframes wnCheck${n} { ${check} }`;
+  }).join('');
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
         body { font-family: 'IBM Plex Mono', monospace; background-color: var(--theme-bg, #111111); margin: 0; }
 
         .wn-fade-in { animation: wnFadeIn 0.7s ease-out both; }
@@ -183,6 +229,33 @@ export function WhatsNew() {
         .wn-brand-type { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; animation: wnBrand 7s steps(11, end) infinite; }
         @keyframes wnBrand { 0%, 10% { width: 0; } 45% { width: 11ch; } 94% { width: 11ch; } 100% { width: 0; } }
 
+        /* Offline: the slate list as the list draws it, marks stacked in one
+           cell and crossfaded on the timeline in offlineCss */
+        .wn-frame-list { padding: 1rem 1.25rem; }
+        .wn-slates { display: flex; flex-direction: column; font-size: 0.75rem; animation: wnSlates 12s infinite; }
+        @keyframes wnSlates { 0%, 93% { opacity: 1; } 95%, 98% { opacity: 0; } 100% { opacity: 1; } }
+        .wn-slate { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.45rem 0; border-top: 1px solid var(--theme-border-light); }
+        .wn-slate:first-child { border-top: 0; }
+        .wn-slate-title { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wn-slate-meta { display: flex; align-items: center; gap: 0.6rem; color: var(--theme-text-dim); flex-shrink: 0; }
+        .wn-mark { position: relative; display: inline-block; width: 1em; height: 1em; }
+        .wn-mk { position: absolute; inset: 0; opacity: 0; transform-origin: center; }
+        .wn-mk svg { width: 100%; height: 100%; display: block; }
+        .wn-mk-alert, .wn-mk-spin { color: var(--theme-orange); }
+        .wn-mk-green { color: var(--theme-green); }
+        .wn-mk-alert { animation: wnMkAlert 12s infinite; }
+        .wn-mk-spin { animation: wnMkSpin 12s infinite; }
+        .wn-mk-green { animation: wnMkGreen 12s infinite; }
+        @keyframes wnMkAlert { 0%, 40% { opacity: 0; } 42%, 58% { opacity: 1; } 60%, 100% { opacity: 0; } }
+        @keyframes wnMkSpin { 0%, 58% { opacity: 0; } 60%, 68% { opacity: 1; } 70%, 100% { opacity: 0; } }
+        @keyframes wnMkGreen {
+          0%, 68% { opacity: 0; transform: scale(0.4); }
+          70% { opacity: 1; transform: scale(1.35); }
+          72%, 82% { opacity: 1; transform: scale(1); }
+          84%, 100% { opacity: 0; transform: scale(1); }
+        }
+        ${offlineCss}
+
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }
         @media (min-width: 768px) {
@@ -220,13 +293,13 @@ export function WhatsNew() {
                 <p className="text-xs text-[var(--theme-text-dim)] mb-2">{String(i + 1).padStart(2, '0')}</p>
                 <h2 className="text-xl md:text-2xl text-white mb-3">{f.title}</h2>
                 <p className="text-sm text-[var(--theme-text-muted)] leading-relaxed">
-                  {f.fontPhrase && f.body.includes(f.fontPhrase)
+                  {f.notePhrase && f.body.includes(f.notePhrase)
                     ? (() => {
-                        const [before, after] = f.body.split(f.fontPhrase);
+                        const [before, after] = f.body.split(f.notePhrase);
                         return (
                           <>
                             {before}
-                            <HoverNote note={f.fontNote}>{f.fontPhrase}</HoverNote>
+                            <HoverNote note={f.note}>{f.notePhrase}</HoverNote>
                             {after}
                           </>
                         );

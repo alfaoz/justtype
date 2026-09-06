@@ -4,6 +4,7 @@ import * as Y from 'yjs';
 import { strings } from '../strings';
 import { fetchCheckpoints, fetchCheckpointState, labelCheckpoint } from '../collab';
 import { CollabShareModal } from './CollabShareModal';
+import { NearbyTab } from './NearbyTab';
 
 // One home for everything collaborative on a slate: who is in it (people) and
 // where it has been (history). It is a side panel rather than a modal on
@@ -373,7 +374,7 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
 export default function CollabPanel({
   tab, onTabChange, onClose,
   slateId, docKey, currentText, onRestore, onOpenAsNewSlate,
-  canHistory, shareProps,
+  canHistory, shareProps, getDoc,
 }) {
   const p = strings.collab.panel;
   const [closing, setClosing] = useState(false);
@@ -426,6 +427,7 @@ export default function CollabPanel({
           <div className="flex items-center gap-4">
             <Tab id="people" label={p.tabPeople} />
             <Tab id="history" label={p.tabHistory} disabled={!canHistory} />
+            <Tab id="nearby" label={strings.collab.nearby.tab} disabled={!canHistory} />
           </div>
           <button
             onClick={requestClose}
@@ -441,6 +443,12 @@ export default function CollabPanel({
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
               <CollabShareModal embedded {...shareProps} />
             </div>
+          </div>
+
+          <div className={`collab-tabpanel ${tab === 'nearby' ? 'is-active' : ''}`}>
+            {canHistory && getDoc
+              ? (tab === 'nearby' && <NearbyTab slateId={slateId} getDoc={getDoc} />)
+              : <p className="text-sm text-[var(--theme-text-muted)] p-4">{strings.collab.nearby.unavailable}</p>}
           </div>
 
           <div className={`collab-tabpanel ${tab === 'history' ? 'is-active' : ''}`}>

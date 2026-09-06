@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>justtype verify</title>
+<meta name="description" content="independent build verification for justtype.io, hosted off justtype's servers" />
+<style>
+  :root {
+    --bg: #050505; --bg2: #0f0f0f; --text: #a3a3a3; --dim: #6b6b6b;
+    --accent: #e5e5e5; --border: #262626; --green: #4ade80; --red: #f87171;
+    --orange: #fb923c; --blue: #60a5fa;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #faf9f7; --bg2: #f0efec; --text: #57534e; --dim: #a8a29e;
+      --accent: #1a1a1a; --border: #e0ddd7; --green: #15803d; --red: #b91c1c;
+      --orange: #c2410c; --blue: #1d4ed8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 1.6;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 2.5rem 1rem 4rem; }
+  h1 { font-size: 1.125rem; font-weight: 500; color: var(--accent); margin: 0 0 0.25rem; }
+  a { color: var(--text); }
+  a:hover { color: var(--accent); }
+  .dim { color: var(--dim); font-size: 12px; }
+  .banner {
+    margin: 1.5rem 0; padding: 0.75rem 1rem; border: 1px solid var(--border);
+    border-radius: 4px; font-size: 13px;
+  }
+  .banner.green { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); background: color-mix(in srgb, var(--green) 8%, transparent); }
+  .banner.red { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); background: color-mix(in srgb, var(--red) 8%, transparent); }
+  .banner.orange { color: var(--orange); border-color: color-mix(in srgb, var(--orange) 30%, transparent); background: color-mix(in srgb, var(--orange) 8%, transparent); }
+  .row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .row:last-child { border-bottom: 0; }
+  .ok { color: var(--green); } .bad { color: var(--red); } .wait { color: var(--dim); }
+  section { margin-top: 2.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+  section > p.head { color: var(--accent); margin: 0 0 0.5rem; font-size: 13px; }
+  details { border: 1px solid var(--border); border-radius: 4px; margin-bottom: 0.4rem; }
+  summary { padding: 0.5rem 0.75rem; cursor: pointer; font-size: 12px; display: flex; gap: 0.6rem; align-items: baseline; }
+  summary code { color: var(--text); overflow-wrap: anywhere; }
+  details .hashes { padding: 0 0.75rem 0.5rem; border-top: 1px solid var(--border); }
+  details .hashes .row code { overflow-wrap: anywhere; text-align: right; }
+  pre {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 0.9rem 1rem; font-size: 12px; overflow-x: auto; line-height: 1.8; color: var(--text);
+  }
+  button {
+    background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text);
+    font: inherit; font-size: 12px; padding: 0.3rem 0.8rem; cursor: pointer;
+  }
+  button:hover { color: var(--accent); border-color: var(--dim); }
+  .links { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 12px; margin-top: 0.75rem; }
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); font-size: 12px; color: var(--dim); }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>justtype verify</h1>
+  <p class="dim">this page is hosted on github pages and built by github actions from the
+  <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer">public repository</a>.
+  justtype's servers cannot change it, which is the point: a page served by justtype.io cannot honestly audit justtype.io.</p>
+
+  <div id="banner" class="banner"><span class="pulse">checking justtype.io...</span></div>
+
+  <div id="checks"></div>
+
+  <section>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+      <p class="head" style="margin:0;">files</p>
+      <span id="meta" class="dim"></span>
+    </div>
+    <div id="files" style="margin-top:0.75rem;"></div>
+  </section>
+
+  <section>
+    <p class="head">what gets checked</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">every javascript and css file justtype.io serves, plus index.html
+    (the loader that decides what runs), is downloaded by your browser here, hashed, and compared against the hashes
+    github actions produced by building the public repository. the release signature is checked against the pinned
+    release key, which lives on the developer's machine and never on the server. in the app itself the loader repeats
+    the signature check on every page load and pins every file with subresource integrity, so a server that cannot
+    sign a release cannot get your browser to run modified code.</p>
+    <p class="dim" style="margin:0;">beta builds (beta.justtype.io) are not published here and are not signed;
+    they pin files against the server manifest only.</p>
+  </section>
+
+  <section>
+    <p class="head">verify from your terminal</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">hash what the server sends without trusting any web page:</p>
+    <pre id="curl">loading...</pre>
+    <p class="dim" style="margin:0;">compare against <a href="./build-hashes.json" target="_blank" rel="noopener noreferrer">build-hashes.json</a>, which github actions publishes here.</p>
+  </section>
+
+  <section>
+    <p class="head">build it yourself</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">zero trust required: clone, build, compare.</p>
+    <pre>git clone https://github.com/alfaoz/justtype.git
+cd justtype
+npm ci
+VITE_TURNSTILE_SITE_KEY="0x4AAAAAACSJvMqEG5Z-iXyo" npm run build
+cat dist/build-manifest.json</pre>
+    <p class="dim" style="margin:0;">the turnstile site key is public and baked into the bundle; without it the hashes will not match.</p>
+  </section>
+
+  <section>
+    <div class="links">
+      <a href="./build-hashes.json" target="_blank" rel="noopener noreferrer">raw hashes</a>
+      <a href="./releases.json" target="_blank" rel="noopener noreferrer">releases log</a>
+      <a href="https://github.com/alfaoz/justtype/blob/master/.github/workflows/publish-hashes.yml" target="_blank" rel="noopener noreferrer">workflow source</a>
+      <a href="https://github.com/alfaoz/justtype/blob/master/.github/workflows/monitor-integrity.yml" target="_blank" rel="noopener noreferrer">monitor source</a>
+      <a href="https://github.com/alfaoz/justtype/actions" target="_blank" rel="noopener noreferrer">actions runs</a>
+    </div>
+  </section>
+
+  <footer>
+    <a href="https://justtype.io">just type</a>
+    <span style="margin:0 0.5rem;">&middot;</span>
+    <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer">github</a>
+    <span style="margin:0 0.5rem;">&middot;</span>
+    <button id="rerun" style="border:0;padding:0;font-size:12px;text-decoration:underline;">run again</button>
+    <span id="checkedAt" style="float:right;"></span>
+  </footer>
+</main>
+<script>
+// pinned release-signing public key (base64 SPKI, P-256). also pinned in
+// loader/template.html and scripts/monitor.mjs -- keep all three in sync.
+const PUBKEY = 'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEy7qq+j94vQ2FgDkQQP/57wfPb/pPpoQmzrgNDQBczCS2e1PCNXWduhcfHLrW15RByVrq3AgdocGUuUIXcBU/ow==';
+const ORIGIN = 'https://justtype.io';
+
+const $ = (id) => document.getElementById(id);
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+const sha256 = async (buf) => toHex(await crypto.subtle.digest('SHA-256', buf));
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function banner(cls, html) { $('banner').className = 'banner ' + cls; $('banner').innerHTML = html; }
+function checkRow(label, state, detail) {
+  const mark = state === 'ok' ? '&#10003;' : state === 'bad' ? '&#10007;' : '&middot;';
+  return '<div class="row"><span>' + esc(label) + '</span><span class="' + state + '">' + mark + ' ' + esc(detail) + '</span></div>';
+}
+function fileRow(name, state, hashes) {
+  const mark = state === 'ok' ? '&#10003;' : state === 'bad' ? '&#10007;' : '&middot;';
+  let inner = '';
+  for (const [src, val, cls] of hashes) {
+    inner += '<div class="row"><span class="dim" style="flex-shrink:0;">' + esc(src) + '</span><code class="' + cls + '">' + esc(val || '...') + '</code></div>';
+  }
+  return '<details><summary><span class="' + state + '">' + mark + '</span><code>' + esc(name) + '</code></summary><div class="hashes">' + inner + '</div></details>';
+}
+
+async function fetchBytes(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(url + ' http ' + res.status);
+  return res.arrayBuffer();
+}
+
+async function run() {
+  banner('', '<span class="pulse">checking justtype.io...</span>');
+  $('checks').innerHTML = '';
+  $('files').innerHTML = '';
+  $('checkedAt').textContent = '';
+  const problems = [];
+
+  // 1. what github actions built (same origin, the reference)
+  let pages;
+  try {
+    pages = JSON.parse(new TextDecoder().decode(await fetchBytes('./build-hashes.json')));
+  } catch (e) {
+    banner('red', 'could not load build-hashes.json from github pages. try refreshing.');
+    return;
+  }
+  $('curl').textContent = ['curl -s ' + ORIGIN + '/index.html | sha256sum']
+    .concat((pages.files || []).map(f => 'curl -s ' + ORIGIN + '/assets/' + f.file + ' | sha256sum')).join('\n');
+
+  // 2. what justtype.io is serving
+  let manifestBytes, manifest;
+  try {
+    manifestBytes = await fetchBytes(ORIGIN + '/build-manifest.json');
+    manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+  } catch (e) {
+    banner('red', 'could not fetch justtype.io from this page. the server may be down, or blocking cross-origin reads. you can still verify from your terminal below.');
+    return;
+  }
+  $('meta').textContent = 'server v' + manifest.version + ' / github v' + pages.version;
+
+  // 3. release signature over the exact manifest bytes the server is sending
+  let sigState = 'bad', sigDetail = 'invalid';
+  try {
+    const sigText = new TextDecoder().decode(await fetchBytes(ORIGIN + '/build-manifest.sig'));
+    const key = await crypto.subtle.importKey('spki', b64ToBytes(PUBKEY), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    if (await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64ToBytes(sigText.trim()), manifestBytes)) {
+      sigState = 'ok'; sigDetail = 'signed by the pinned release key';
+    } else {
+      problems.push('the manifest signature does not validate');
+    }
+  } catch (e) {
+    problems.push('no valid release signature is being served');
+    sigDetail = 'missing';
+  }
+  $('checks').innerHTML += checkRow('release signature', sigState, sigDetail);
+
+  const skew = pages.version !== manifest.version;
+
+  // 4. the loader: the one file that decides what actually runs
+  let loaderHtml = '';
+  try {
+    const got = await sha256(await fetchBytes(ORIGIN + '/index.html'));
+    const wantPages = pages.indexHtmlHash;
+    const wantServer = manifest.indexHtmlHash;
+    const okVsPages = !skew && wantPages && got === wantPages;
+    const state = okVsPages ? 'ok' : (skew ? 'wait' : 'bad');
+    if (!okVsPages && !skew) problems.push('index.html does not match the github actions build');
+    $('checks').innerHTML += checkRow('index.html (loader)', state, okVsPages ? 'matches the github build' : skew ? 'version skew' : 'mismatch');
+    loaderHtml = fileRow('index.html', state, [
+      ['github', wantPages, okVsPages ? 'ok' : ''],
+      ['server manifest', wantServer, got === wantServer ? 'ok' : 'bad'],
+      ['computed', got, okVsPages ? 'ok' : (skew ? '' : 'bad')],
+    ]);
+  } catch (e) {
+    problems.push('could not fetch index.html');
+    $('checks').innerHTML += checkRow('index.html (loader)', 'bad', 'unfetchable');
+  }
+
+  // 5. every asset, hashed here in your browser
+  const names = [...new Set([...(pages.files || []).map(f => f.file), ...(manifest.files || []).map(f => f.file)])].sort();
+  let matched = 0;
+  let filesHtml = '';
+  for (const name of names) {
+    const wantPages = (pages.files || []).find(f => f.file === name)?.hash;
+    const wantServer = (manifest.files || []).find(f => f.file === name)?.hash;
+    let got = null;
+    try { got = await sha256(await fetchBytes(ORIGIN + '/assets/' + name)); } catch (e) {}
+    const ok = !!got && !!wantPages && got === wantPages && got === wantServer;
+    if (ok) matched++;
+    else if (!skew) problems.push('file ' + name + ' does not match the github actions build');
+    const state = ok ? 'ok' : (skew ? 'wait' : 'bad');
+    filesHtml += fileRow(name, state, [
+      ['github', wantPages || 'not built', wantPages && got === wantPages ? 'ok' : 'bad'],
+      ['server manifest', wantServer || 'not listed', wantServer && got === wantServer ? 'ok' : 'bad'],
+      ['computed', got || 'unfetchable', ok ? 'ok' : (skew ? '' : 'bad')],
+    ]);
+  }
+  $('files').innerHTML = loaderHtml + filesHtml;
+  $('checks').innerHTML += checkRow('served files', skew && problems.length === 0 ? 'wait' : (matched === names.length ? 'ok' : 'bad'),
+    matched + ' of ' + names.length + ' match');
+
+  // verdict
+  if (skew && problems.length === 0) {
+    banner('orange', 'version skew: justtype.io serves v' + esc(manifest.version) + ' but github actions last built v' + esc(pages.version)
+      + '. if a release just shipped, actions may still be rebuilding. <a href="https://github.com/alfaoz/justtype/actions" target="_blank" rel="noopener noreferrer">check actions</a> and run again in a minute.');
+  } else if (problems.length === 0) {
+    banner('green', '&#10003; verified: justtype.io is serving exactly what github actions built from the public repository, and the release is signed.');
+  } else {
+    banner('red', '&#10007; mismatch detected: the code justtype.io is serving does not match the public repository build.<br><span class="dim">' + esc(problems[0]) + (problems.length > 1 ? ' (+' + (problems.length - 1) + ' more)' : '') + '</span>');
+  }
+  $('checkedAt').textContent = 'checked ' + new Date().toLocaleTimeString();
+}
+
+$('rerun').addEventListener('click', run);
+run();
+</script>
+</body>
+</html>

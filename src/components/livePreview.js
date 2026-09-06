@@ -9,7 +9,37 @@
 
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { ViewPlugin } from '@codemirror/view';
+import { StateEffect, StateField } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { markdownMath } from './markdownMath';
+import { markdownConflict } from './markdownConflict';
+import { strings } from '../strings';
+
+// The markdown dialect both editors and the read-only view parse: GFM plus
+// dollar-delimited math. Defined once so the three call sites cannot drift.
+export const richMarkdown = () => markdown({ base: markdownLanguage, extensions: [markdownMath, markdownConflict] });
+
+// KaTeX is a lazy chunk. Widgets built before it arrives show the raw TeX;
+// when the import resolves, one no-op transaction carrying `mathReady`
+// makes the plugin recompute, and since `ready` is part of widget equality
+// the stale widgets are rebuilt with real typesetting.
+const mathReady = StateEffect.define();
+let renderMath = null;
+let mathLoading = null;
+const awaitingMath = new Set();
+function loadMath(view) {
+  awaitingMath.add(view);
+  if (!mathLoading) {
+    mathLoading = import('./mathRender').then((m) => {
+      renderMath = m.renderMath;
+      for (const v of awaitingMath) {
+        try { v.dispatch({ effects: mathReady.of(null) }); } catch { /* view destroyed */ }
+      }
+      awaitingMath.clear();
+    });
+  }
+}
 
 // Inline replacement for a list marker ("-" -> "•", nested "2." -> "ii.")
 class TextMarkerWidget extends WidgetType {
@@ -62,6 +92,81 @@ class PadWidget extends WidgetType {
     return span;
   }
   ignoreEvent() { return false; }
+}
+
+// Typeset math replacing a `$...$` / `$$...$$` span while the caret is elsewhere
+class MathWidget extends WidgetType {
+  constructor(tex, source, block, display) {
+    super();
+    this.tex = tex;
+    this.source = source;
+    this.block = block;
+    this.display = display;
+    this.ready = !!renderMath;
+  }
+  eq(other) {
+    return other.tex === this.tex && other.block === this.block
+      && other.display === this.display && other.ready === this.ready;
+  }
+  toDOM(view) {
+    const el = document.createElement(this.block ? 'div' : 'span');
+    el.className = this.block ? 'cm-lp-math cm-lp-mathblock' : 'cm-lp-math';
+    if (!renderMath) {
+      loadMath(view);
+      el.classList.add('cm-lp-math-pending');
+      el.textContent = this.source;
+    } else if (!renderMath(el, this.tex, this)) {
+      el.classList.add('cm-lp-math-error');
+      el.textContent = this.source;
+    }
+    return el;
+  }
+  ignoreEvent() { return false; }
+}
+
+// A merge conflict as one card: both versions side by side, three ways out.
+// The buttons edit the document (replace the whole block with the choice),
+// so resolving is just another edit, undoable and autosaved.
+class ConflictWidget extends WidgetType {
+  constructor(ours, theirs, from, to) { super(); this.ours = ours; this.theirs = theirs; this.from = from; this.to = to; }
+  eq(other) { return other.ours === this.ours && other.theirs === this.theirs && other.from === this.from && other.to === this.to; }
+  toDOM(view) {
+    const el = document.createElement('div');
+    el.className = 'cm-lp-conflict';
+    const t = strings.writer.conflict;
+    const pane = (label, text) => {
+      const p = document.createElement('div');
+      p.className = 'cm-lp-conflict-pane';
+      const h = document.createElement('div'); h.className = 'cm-lp-conflict-label'; h.textContent = label;
+      const b = document.createElement('pre'); b.className = 'cm-lp-conflict-text'; b.textContent = text;
+      p.append(h, b);
+      return p;
+    };
+    const panes = document.createElement('div');
+    panes.className = 'cm-lp-conflict-panes';
+    panes.append(pane(t.ours, this.ours), pane(t.theirs, this.theirs));
+    const actions = document.createElement('div');
+    actions.className = 'cm-lp-conflict-actions';
+    const choose = (label, text) => {
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'cm-lp-conflict-btn'; btn.textContent = label; btn.cmIgnore = true;
+      btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+      btn.onclick = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        view.dispatch({ changes: { from: this.from, to: this.to, insert: text }, selection: { anchor: this.from + text.length } });
+        view.focus();
+      };
+      return btn;
+    };
+    actions.append(
+      choose(t.keepOurs, this.ours),
+      choose(t.keepTheirs, this.theirs),
+      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n')),
+    );
+    el.append(panes, actions);
+    return el;
+  }
+  ignoreEvent(e) { return e.type !== 'mousedown' || e.target.closest?.('.cm-lp-conflict-btn') != null; }
 }
 
 const ROMAN = [[50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
@@ -154,6 +259,70 @@ function normalizeUrl(raw) {
   return null;
 }
 
+const touchesSelection = (state, from, to) =>
+  state.selection.ranges.some(r => r.from <= to && r.to >= from);
+
+// A Math node's shape: `$$` delimiters that own their lines are a block
+function mathInfo(doc, node) {
+  const marks = node.getChildren('MathMark');
+  if (marks.length !== 2) return null;
+  const display = marks[0].to - marks[0].from === 2;
+  const firstLine = doc.lineAt(node.from);
+  const lastLine = doc.lineAt(node.to);
+  const block = display
+    && doc.sliceString(firstLine.from, node.from).trim() === ''
+    && doc.sliceString(node.to, lastLine.to).trim() === '';
+  return {
+    marks, display, block,
+    // Anything crossing a line break must be replaced from the state field
+    multiline: firstLine.from !== lastLine.from,
+    from: block ? firstLine.from : node.from,
+    to: block ? lastLine.to : node.to,
+    tex: doc.sliceString(marks[0].to, marks[1].from).trim(),
+    source: doc.sliceString(node.from, node.to),
+  };
+}
+
+// Decorations that swallow line breaks must come from a state field, not a
+// view plugin. This field carries the collapsed multi-line math (blocks, and
+// `$$` pairs that cross lines inside prose); single-line math and the
+// revealed state for everything stay in the plugin below.
+function mathBlocks(reveal) {
+  const compute = (state) => {
+    const doc = state.doc;
+    const tree = syntaxTree(state);
+    const out = [];
+    tree.iterate({
+      enter: (node) => {
+        if (node.name === 'Conflict') {
+          if (reveal && touchesSelection(state, node.from, node.to)) return false;
+          const n = node.node;
+          const part = (name) => { const c = n.getChild(name); return c ? doc.sliceString(c.from, c.to) : ''; };
+          const from = doc.lineAt(node.from).from, to = doc.lineAt(node.to).to;
+          out.push(Decoration.replace({ widget: new ConflictWidget(part('ConflictOurs'), part('ConflictTheirs'), from, to) }).range(from, to));
+          return false;
+        }
+        if (node.name !== 'Math') return;
+        const m = mathInfo(doc, node.node);
+        if (!m || !m.multiline || (reveal && touchesSelection(state, node.from, node.to))) return false;
+        out.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, m.block, m.display) }).range(m.from, m.to));
+        return false;
+      },
+    });
+    return { tree, deco: Decoration.set(out, true) };
+  };
+  return StateField.define({
+    create: compute,
+    update(value, tr) {
+      // The tree identity changes as the background parser advances
+      if (!tr.docChanged && !tr.selection && syntaxTree(tr.state) === value.tree
+        && !tr.effects.some(e => e.is(mathReady))) return value;
+      return compute(tr.state);
+    },
+    provide: f => EditorView.decorations.from(f, v => v.deco),
+  });
+}
+
 export function livePreview({ reveal = true } = {}) {
   const plugin = ViewPlugin.fromClass(class {
     constructor(view) {
@@ -161,7 +330,8 @@ export function livePreview({ reveal = true } = {}) {
     }
 
     update(update) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged
+        || update.transactions.some(tr => tr.effects.some(e => e.is(mathReady)))) {
         this.compute(update.view);
       }
     }
@@ -173,8 +343,7 @@ export function livePreview({ reveal = true } = {}) {
       const hidden = [];
       const quoteLines = new Map(); // line start -> nesting depth
 
-      const touches = (from, to) =>
-        reveal && state.selection.ranges.some(r => r.from <= to && r.to >= from);
+      const touches = (from, to) => reveal && touchesSelection(state, from, to);
 
       const hideOrDim = (from, to, revealed) => {
         if (from >= to) return;
@@ -190,9 +359,17 @@ export function livePreview({ reveal = true } = {}) {
       const withTrailingSpace = (to) =>
         to < doc.length && doc.sliceString(to, to + 1) === ' ' ? to + 1 : to;
 
-      const addLines = (from, to, deco) => {
-        let line = doc.lineAt(from);
+      // Code-styled lines with rounded first/last so the block reads as a
+      // card, not a slab (fenced code, and math source while revealed)
+      const addCodeCard = (from, to) => {
+        const firstLine = doc.lineAt(from);
+        const lastLine = doc.lineAt(to);
+        let line = firstLine;
         for (;;) {
+          const deco = line.from === firstLine.from && line.from === lastLine.from ? CODE_LINE_ONLY
+            : line.from === firstLine.from ? CODE_LINE_FIRST
+            : line.from === lastLine.from ? CODE_LINE_LAST
+            : CODE_LINE;
           all.push(deco.range(line.from));
           if (line.to >= to) break;
           line = doc.lineAt(line.to + 1);
@@ -218,6 +395,29 @@ export function livePreview({ reveal = true } = {}) {
             if (name === 'Link' || name === 'Autolink') {
               all.push(LINK.range(node.from, node.to));
               return;
+            }
+
+            if (name === 'Conflict') {
+              if (touches(node.from, node.to)) {
+                addCodeCard(node.from, node.to);
+                for (const mark of node.node.getChildren('ConflictMark')) all.push(MARK_DIM.range(mark.from, mark.to));
+              }
+              return false;
+            }
+
+            if (name === 'Math') {
+              const m = mathInfo(doc, node.node);
+              if (!m) return false;
+              if (touches(node.from, node.to)) {
+                // Revealed: the source reads as code, delimiters dimmed
+                if (m.block) addCodeCard(node.from, node.to);
+                else all.push(INLINE_CODE.range(m.marks[0].to, m.marks[1].from));
+                for (const mark of m.marks) all.push(MARK_DIM.range(mark.from, mark.to));
+              } else if (!m.multiline) {
+                all.push(Decoration.replace({ widget: new MathWidget(m.tex, m.source, false, m.display) }).range(m.from, m.to));
+              }
+              // Collapsed multi-line math is drawn by the mathBlocks field
+              return false;
             }
 
             if (name === 'HeaderMark') {
@@ -292,19 +492,7 @@ export function livePreview({ reveal = true } = {}) {
             }
 
             if (name === 'FencedCode' || name === 'CodeBlock') {
-              // Rounded first/last lines so the block reads as a card, not a slab
-              const firstLine = doc.lineAt(node.from);
-              const lastLine = doc.lineAt(node.to);
-              let line = firstLine;
-              for (;;) {
-                const deco = line.from === firstLine.from && line.from === lastLine.from ? CODE_LINE_ONLY
-                  : line.from === firstLine.from ? CODE_LINE_FIRST
-                  : line.from === lastLine.from ? CODE_LINE_LAST
-                  : CODE_LINE;
-                all.push(deco.range(line.from));
-                if (line.to >= node.to) break;
-                line = doc.lineAt(line.to + 1);
-              }
+              addCodeCard(node.from, node.to);
               if (name === 'FencedCode') {
                 const codeChild = node.node.getChild('CodeText');
                 const code = codeChild ? doc.sliceString(codeChild.from, codeChild.to) : '';
@@ -455,5 +643,5 @@ export function livePreview({ reveal = true } = {}) {
     },
   });
 
-  return [plugin, clickHandler];
+  return [mathBlocks(reveal), plugin, clickHandler];
 }

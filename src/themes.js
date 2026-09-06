@@ -196,6 +196,8 @@ const generateGoogleFontsUrl = (fonts) => {
 };
 
 // Load fonts for a theme
+const SELF_HOSTED_FONTS = new Set(['IBM Plex Mono']);
+
 export const loadThemeFonts = async (theme) => {
   fontLoadError = null;
 
@@ -204,7 +206,9 @@ export const loadThemeFonts = async (theme) => {
   const writerFont = parseFontSpec(fonts.writer);
   const codeFont = parseFontSpec(fonts.code);
 
-  const fontsToLoad = [uiFont, writerFont, codeFont].filter(f => f && f.family);
+  // IBM Plex Mono ships with the app (see index.css); only other families
+  // come from Google Fonts
+  const fontsToLoad = [uiFont, writerFont, codeFont].filter(f => f && f.family && !SELF_HOSTED_FONTS.has(f.family));
 
   // Filter out already loaded fonts
   const newFonts = fontsToLoad.filter(f => !loadedFonts.has(f.family));

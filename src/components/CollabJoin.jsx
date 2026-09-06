@@ -69,7 +69,6 @@ export function CollabJoin({ token, userId, onLogin }) {
   return (
     <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
         html, body, #root { height: 100%; overflow: hidden; }
         body { font-family: 'IBM Plex Mono', monospace; background-color: var(--theme-bg, #111111); margin: 0; }
       `}</style>

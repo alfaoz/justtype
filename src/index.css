@@ -1,4 +1,12 @@
 @import "tailwindcss";
+/* IBM Plex Mono is self-hosted (fontsource, latin subset): no third-party
+   request for the default face, and the offline shell can cache it */
+@import "@fontsource/ibm-plex-mono/latin-300.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+@import "@fontsource/ibm-plex-mono/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400-italic.css";
+@import "@fontsource/ibm-plex-mono/latin-500-italic.css";
 
 /* ========================================
    CSS VARIABLES - Theme System
@@ -1031,3 +1039,88 @@ body.custom-theme ::-webkit-scrollbar-track {
 
 /* invisible spacer used for live table column alignment */
 .wysiwyg-editor .cm-lp-tablepad { display: inline-block; }
+
+/* Math: `$...$` inline, `$$...$$` on its own lines centered as a block; the
+   raw TeX reads as code while the caret is inside or before KaTeX loads */
+.wysiwyg-editor .cm-lp-math { cursor: text; }
+.wysiwyg-editor .cm-lp-math .katex { font-size: 1.1em; }
+.wysiwyg-editor .cm-lp-mathblock { display: block; text-align: center; padding: 0.35em 0; overflow-x: auto; }
+.wysiwyg-editor .cm-lp-mathblock .katex-display { margin: 0; }
+.wysiwyg-editor .cm-lp-math-pending,
+.wysiwyg-editor .cm-lp-math-error { font-family: var(--theme-font-code); color: var(--theme-text-muted); white-space: pre-wrap; }
+.wysiwyg-editor .cm-lp-math-error { text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* Merge conflict card: the two versions and three ways out. Same card
+   language as code blocks; the caret inside reveals the raw markers. */
+.wysiwyg-editor .cm-lp-conflict { margin: 0.35em 0; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); overflow: hidden; }
+.wysiwyg-editor .cm-lp-conflict-panes { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-panes { grid-template-columns: 1fr; } }
+.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; }
+.wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 1px solid var(--theme-border); }
+@media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 0; border-top: 1px solid var(--theme-border); } }
+.wysiwyg-editor .cm-lp-conflict-label { font-size: 0.75em; color: var(--theme-orange); margin-bottom: 0.4em; }
+.wysiwyg-editor .cm-lp-conflict-text { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--theme-text); }
+.wysiwyg-editor .cm-lp-conflict-actions { display: flex; gap: 1em; padding: 0.5em 0.75em; border-top: 1px solid var(--theme-border); font-size: 0.85em; }
+.wysiwyg-editor .cm-lp-conflict-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--theme-text-muted); cursor: pointer; }
+.wysiwyg-editor .cm-lp-conflict-btn:hover { color: var(--theme-text); }
+
+/* Slates list while offline: rows that are not on this device step back */
+.slate-unavailable { opacity: 0.4; cursor: default !important; }
+.slate-unavailable:hover { background: transparent !important; }
+
+/* The device mark shows itself only while its slate is hovered (or focused),
+   on devices that can hover. Touch screens always see it. A live state (an
+   unsynced save, an upload, a copy in flight, a sync that just landed)
+   stays visible: that is the feedback. */
+.device-mark { transition: opacity 0.15s ease; }
+@media (hover: hover) {
+  .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-live) { opacity: 0; }
+}
+@keyframes markSpin { to { transform: rotate(360deg); } }
+@keyframes markPop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.35); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.mark-spin { animation: markSpin 0.9s linear infinite; transform-origin: center; }
+.mark-pop { animation: markPop 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) {
+  .mark-spin { animation: pulse 1.5s ease-in-out infinite; }
+  .mark-pop { animation: none; }
+}
+
+/* Nearby collab: the code on a white card so cameras read it, the camera view */
+.nearby-qr { width: 240px; height: 240px; max-width: 100%; background: #fff; padding: 8px; border-radius: 6px; image-rendering: pixelated; }
+.nearby-video { width: 100%; max-height: 220px; object-fit: cover; border-radius: 6px; background: #000; }
+
+/* Export as pdf: a print-only copy of the slate is mounted on body while
+   printing; the app chrome is hidden and the theme swaps for ink on paper */
+.print-root { display: none; }
+@media print {
+  @page { margin: 18mm; }
+  body[data-printing] { background: #fff !important; }
+  body[data-printing] > *:not(.print-root) { display: none !important; }
+  .print-root {
+    display: block;
+    --theme-bg: #fff;
+    --theme-bg-secondary: #f2f2f2;
+    --theme-bg-tertiary: #e8e8e8;
+    --theme-text: #111;
+    --theme-text-muted: #555;
+    --theme-text-dim: #888;
+    --theme-border: #ccc;
+    --theme-border-light: #ddd;
+    --theme-accent: #111;
+    --theme-blue: #1d4ed8;
+    --theme-green: #15803d;
+    --theme-orange: #c2410c;
+    --theme-red: #b91c1c;
+    background: #fff;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .print-title { font-size: 1.6em; font-weight: 600; margin: 0 0 1em; }
+  .print-root pre { font: inherit; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .print-root .cm-content { min-height: 0; }
+  .print-root .cm-lp-copy { display: none; }
+}

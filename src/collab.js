@@ -14,6 +14,25 @@ import {
 import { getSlateKey } from './keyStore';
 import { getUserPrivateKey } from './userKeys';
 
+import { cacheSlate, getCachedSlate, cacheList, getCachedList } from './offlineStore';
+import { reportNetworkFailure } from './connectivity';
+
+// GET with the device copy as fallback: shared slates and their list are
+// cached under `shared-…` keys, encrypted as the server holds them
+async function cachedGet(path, userId, cacheKey, kind) {
+  try {
+    const data = await api(path);
+    if (userId) (kind === 'list' ? cacheList(`${userId}:${cacheKey}`, data) : cacheSlate(userId, cacheKey, data, { opened: true })).catch(() => {});
+    return data;
+  } catch (err) {
+    if (err.status) throw err; // the server answered: not a network problem
+    reportNetworkFailure();
+    const cached = userId ? await (kind === 'list' ? getCachedList(`${userId}:${cacheKey}`).then(c => c?.rows) : getCachedSlate(userId, cacheKey).then(c => c?.data)).catch(() => null) : null;
+    if (!cached) throw err;
+    return cached;
+  }
+}
+
 async function api(path, opts = {}) {
   const init = { credentials: 'include', method: opts.method || (opts.body ? 'POST' : 'GET') };
   if (opts.body) {
@@ -257,7 +276,7 @@ async function resolveMemberDocKey(row, slateId, userId, masterKey) {
 
 // Accepted shared slates (not mine), titles decrypted where possible.
 export async function fetchSharedSlates(userId) {
-  const { shared } = await api('/collab/slates');
+  const { shared } = await cachedGet('/collab/slates', userId, 'shared-list', 'list');
   if (!shared || !shared.length) return [];
   const masterKey = userId ? await getSlateKey(userId) : null;
   const out = [];
@@ -287,7 +306,7 @@ export async function fetchSharedSlates(userId) {
 
 // Full shared slate for the read view: resolve my doc key copy, decrypt.
 export async function fetchSharedSlate(slateId, userId) {
-  const data = await api(`/collab/slates/${slateId}`);
+  const data = await cachedGet(`/collab/slates/${slateId}`, userId, `shared-${slateId}`, 'slate');
   const masterKey = await requireMasterKey(userId);
   const docKey = await resolveMemberDocKey(data, slateId, userId, masterKey);
   const content = data.encryptedContent ? await decryptContent(data.encryptedContent, docKey) : '';

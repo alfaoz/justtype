@@ -1,148 +1,26 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
+import { strings } from '../strings';
 
-const GITHUB_HASHES_URL = 'https://alfaoz.github.io/justtype/build-hashes.json';
-
-// Beta builds only verify against the server manifest (no github pages publish for beta)
-const IS_BETA = import.meta.env.VITE_BETA === '1';
-
-let cachedResult = null;
-
-const bustCache = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+// The verified bootstrap (dist/index.html) checks the manifest signature and
+// pins every file with SRI before the app runs, then records the outcome on
+// window.__jtIntegrity. This badge just reports that verdict: if the running
+// code had not verified, it would not be running. Deep, independent
+// verification lives off-origin (linked from /verify).
+const integrity = typeof window !== 'undefined' ? window.__jtIntegrity : null;
 
 export function VerifyBadge({ children, className }) {
   const [show, setShow] = useState(false);
-  const [result, setResult] = useState(cachedResult);
-  const [loading, setLoading] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
-  const fetchedRef = useRef(false);
   const timeoutRef = useRef(null);
-  const pollRef = useRef(null);
-  const showRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      clearTimeout(timeoutRef.current);
-      clearInterval(pollRef.current);
-    };
-  }, []);
 
   const handleMouseEnter = (e) => {
-    updatePos(e);
-    timeoutRef.current = setTimeout(() => {
-      setShow(true);
-      showRef.current = true;
-      if (!fetchedRef.current && !cachedResult) {
-        fetchedRef.current = true;
-        runVerification();
-      } else if (!IS_BETA && cachedResult && !cachedResult.verified && !cachedResult.error) {
-        startPolling();
-      }
-    }, 200);
+    setPos({ x: e.clientX, y: e.clientY });
+    timeoutRef.current = setTimeout(() => setShow(true), 200);
   };
 
   const handleMouseLeave = () => {
     clearTimeout(timeoutRef.current);
-    clearInterval(pollRef.current);
     setShow(false);
-    showRef.current = false;
-  };
-
-  const updatePos = (e) => {
-    setPos({ x: e.clientX, y: e.clientY });
-  };
-
-  const startPolling = () => {
-    clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      if (!showRef.current) {
-        clearInterval(pollRef.current);
-        return;
-      }
-      const gh = await fetchGithubHashes();
-      if (!gh || !cachedResult) return;
-      const ghMatch = gh.jsHash === cachedResult.jsHash && gh.cssHash === cachedResult.cssHash;
-      if (ghMatch || !showRef.current) {
-        clearInterval(pollRef.current);
-      }
-      const updated = { ...cachedResult, ghMatch, ghJsHash: gh.jsHash, verified: cachedResult.serverMatch && ghMatch };
-      cachedResult = updated;
-      setResult(updated);
-    }, 5000);
-  };
-
-  const fetchGithubHashes = async () => {
-    try {
-      const res = await fetch(bustCache(GITHUB_HASHES_URL));
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  };
-
-  const runVerification = async () => {
-    setLoading(true);
-    try {
-      const [manifestRes, ghRes] = await Promise.all([
-        fetch(bustCache('/build-manifest.json')),
-        IS_BETA ? Promise.resolve(null) : fetch(bustCache(GITHUB_HASHES_URL))
-      ]);
-
-      if (!manifestRes.ok) throw new Error('manifest');
-      const manifest = await manifestRes.json();
-      const gh = ghRes && ghRes.ok ? await ghRes.json() : null;
-
-      // Hash every manifest-listed file (entry + lazy chunks); legacy manifests
-      // without a files array fall back to the two entry files.
-      const filesToHash = manifest.files || [
-        { file: manifest.jsFile, hash: manifest.jsHash },
-        { file: manifest.cssFile, hash: manifest.cssHash },
-      ];
-
-      const hex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-      const computed = {};
-      await Promise.all(filesToHash.map(async (f) => {
-        const res = await fetch(bustCache(`/assets/${f.file}`));
-        const buf = await res.arrayBuffer();
-        computed[f.file] = hex(await crypto.subtle.digest('SHA-256', buf));
-      }));
-
-      const ghHashFor = (name) => {
-        if (!gh) return undefined;
-        if (gh.files) return gh.files.find(x => x.file === name)?.hash;
-        if (name === manifest.jsFile) return gh.jsHash;
-        if (name === manifest.cssFile) return gh.cssHash;
-        return undefined;
-      };
-
-      const computedJs = computed[manifest.jsFile];
-      const computedCss = computed[manifest.cssFile];
-      const serverMatch = filesToHash.every(f => computed[f.file] === f.hash);
-      const ghMatch = gh ? filesToHash.every(f => ghHashFor(f.file) === computed[f.file]) : null;
-
-      const r = {
-        verified: IS_BETA ? serverMatch : (serverMatch && ghMatch === true),
-        serverMatch,
-        ghMatch,
-        jsHash: computedJs,
-        cssHash: computedCss,
-        ghJsHash: gh?.jsHash || null,
-        version: manifest.version,
-        fileCount: filesToHash.length,
-      };
-      cachedResult = r;
-      setResult(r);
-
-      if (!IS_BETA && !r.verified && !r.error && showRef.current) {
-        startPolling();
-      }
-    } catch {
-      const r = { error: true };
-      cachedResult = r;
-      setResult(r);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const tooltipStyle = {
@@ -159,13 +37,13 @@ export function VerifyBadge({ children, className }) {
     tooltipStyle.top = pos.y + 16;
   }
 
-  const truncate = (h) => h ? h.slice(0, 8) + '...' + h.slice(-8) : '...';
+  const s = strings.verify.badge;
 
   return (
     <span
       className={className}
       onMouseEnter={handleMouseEnter}
-      onMouseMove={updatePos}
+      onMouseMove={(e) => setPos({ x: e.clientX, y: e.clientY })}
       onMouseLeave={handleMouseLeave}
       style={{ position: 'relative' }}
     >
@@ -176,49 +54,24 @@ export function VerifyBadge({ children, className }) {
       {show && (
         <div style={tooltipStyle}>
           <div className="bg-[#1a1a1a] border border-[#333] rounded px-3 py-2 text-xs font-mono shadow-lg" style={{ minWidth: '220px' }}>
-            {loading && !result && (
-              <span className="text-[#666] animate-pulse">verifying...</span>
-            )}
-            {result && result.error && (
-              <span className="text-red-400/70">verification failed</span>
-            )}
-            {result && !result.error && (
+            {integrity ? (
               <div className="space-y-1.5">
-                <div className={`text-xs font-medium ${
-                  result.verified ? 'text-green-400' :
-                  (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? 'text-red-400' :
-                  'text-yellow-400'
-                }`}>
-                  {result.verified ? (IS_BETA ? '\u2713 beta build \u00b7 server match' : '\u2713 verified') :
-                   (result.serverMatch && result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash) ? '\u2717 github mismatch' :
-                   '\u2713 server match'}
+                <div className={`text-xs font-medium ${integrity.signed ? 'text-green-400' : 'text-blue-400'}`}>
+                  {integrity.signed ? `✓ ${s.signed}` : `✓ ${s.beta}`}
                 </div>
                 <div className="text-[#666] space-y-0.5">
                   <div className="flex justify-between gap-4">
-                    <span>js</span>
-                    <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{truncate(result.jsHash)}</span>
+                    <span>{s.version}</span>
+                    <span>{integrity.version}</span>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <span>css</span>
-                    <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{truncate(result.cssHash)}</span>
+                    <span>{s.files}</span>
+                    <span>{s.filesPinned(integrity.files)}</span>
                   </div>
-                  {result.fileCount > 2 && (
-                    <div className="flex justify-between gap-4">
-                      <span>chunks</span>
-                      <span className={result.serverMatch ? 'text-green-400/60' : 'text-red-400/60'}>{result.fileCount} files checked</span>
-                    </div>
-                  )}
-                  {result.ghMatch === false && result.ghJsHash && result.ghJsHash !== result.jsHash && (
-                    <div className="text-red-400/70 pt-1">server and github hashes differ</div>
-                  )}
-                  {result.ghMatch === false && (!result.ghJsHash || result.ghJsHash === result.jsHash) && (
-                    <div className="text-yellow-400/50 pt-1 animate-pulse">github actions: rebuilding...</div>
-                  )}
-                  {result.ghMatch === null && !IS_BETA && (
-                    <div className="text-[#555] pt-1 animate-pulse">github: checking...</div>
-                  )}
                 </div>
               </div>
+            ) : (
+              <span className="text-[#666]">{s.dev}</span>
             )}
           </div>
         </div>
