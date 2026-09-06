@@ -3632,9 +3632,6 @@ app.patch('/api/admin/users/:id/plan', authenticateAdmin, async (req, res) => {
 app.get('/api/admin/b2-stats', authenticateAdmin, (req, res) => {
   try {
     const stats = b2Monitor.getStats();
-    logAdminAction('view_b2_stats', {
-      ipAddress: req.adminIp || req.ip
-    });
     res.json(stats);
   } catch (error) {
     console.error('Admin get B2 stats error:', error);
@@ -3702,9 +3699,19 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
       FROM slates
     `).get().total;
 
-    logAdminAction('view_health', {
-      ipAddress: req.adminIp || req.ip
-    });
+    // Who is behind the numbers: the people who joined and the people who
+    // wrote in the last day
+    const newUsers = db.prepare(`
+      SELECT username, created_at FROM users
+      WHERE datetime(created_at) > datetime('now', '-1 day')
+      ORDER BY created_at DESC LIMIT 30
+    `).all();
+    const writers = db.prepare(`
+      SELECT u.username, COUNT(*) AS slates, MAX(s.created_at) AS last_at
+      FROM slates s JOIN users u ON u.id = s.user_id
+      WHERE datetime(s.created_at) > datetime('now', '-1 day')
+      GROUP BY u.id ORDER BY slates DESC, last_at DESC LIMIT 30
+    `).all();
 
     res.json({
       system: {
@@ -3731,7 +3738,9 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
       },
       growth: {
         newUsers24h,
-        newSlates24h
+        newSlates24h,
+        newUsers,
+        writers
       },
       startup: global.startupHealth || null,
       timestamp: new Date().toISOString()
@@ -3745,22 +3754,58 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
 // Get error logs from PM2
 app.get('/api/admin/error-logs', authenticateAdmin, (req, res) => {
   try {
-    const { execSync } = require('child_process');
-
-    // Get last 100 lines of PM2 error logs for justtype process
-    const errorLogs = execSync('pm2 logs justtype --err --lines 100 --nostream', {
-      encoding: 'utf-8',
-      timeout: 5000
-    });
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    // pm2 tells its child where its own error log is; the fallback is the
+    // conventional path for this process name
+    const file = process.env.pm_err_log_path
+      || path.join(os.homedir(), '.pm2', 'logs', `${process.env.name || 'justtype'}-error.log`);
+    let size = 0;
+    let text = '';
+    try {
+      size = fs.statSync(file).size;
+      const len = Math.min(size, 128 * 1024);
+      const fd = fs.openSync(file, 'r');
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      fs.closeSync(fd);
+      text = buf.toString('utf8');
+      if (size > len) text = text.slice(text.indexOf('\n') + 1);
+    } catch (err) {
+      return res.json({ file: path.basename(file), entries: [], top: [], lineCount: 0, note: 'no error log at this path' });
+    }
+    const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split('\n');
+    // An entry starts at a line that is not indented and not a brace: the
+    // first line of one console.error call. Stack frames and object dumps
+    // that follow belong to it.
+    const entries = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const continues = /^[\s{}\]]/.test(line) || /^\s*at /.test(line);
+      if (continues && entries.length) entries[entries.length - 1].lines.push(line.replace(/\s+$/, ''));
+      else entries.push({ first: line.trim(), lines: [] });
+    }
+    // The same failure looping is one row with a count, newest first
+    const grouped = [];
+    for (const e of entries) {
+      const last = grouped[grouped.length - 1];
+      if (last && last.first === e.first) { last.count += 1; continue; }
+      grouped.push({ first: e.first, lines: e.lines.slice(0, 12), count: 1 });
+    }
+    grouped.reverse();
+    const tally = {};
+    for (const e of entries) tally[e.first] = (tally[e.first] || 0) + 1;
+    const top = Object.entries(tally).sort((x, y) => y[1] - x[1]).slice(0, 5).map(([first, count]) => ({ first, count }));
 
     logAdminAction('view_error_logs', {
       ipAddress: req.adminIp || req.ip
     });
 
-    res.json({ logs: errorLogs || 'No error logs found' });
+    res.json({ file: path.basename(file), sizeBytes: size, entries: grouped.slice(0, 150), top, lineCount: lines.length });
   } catch (error) {
     console.error('Failed to fetch error logs:', error);
-    res.status(500).json({ error: 'Failed to fetch error logs', logs: error.message });
+    res.status(500).json({ error: 'Failed to fetch error logs' });
   }
 });
 
@@ -4430,7 +4475,7 @@ app.get('/api/account/check-username/:username', authenticateToken, (req, res) =
 
 // Submit feedback (authenticated users only)
 // Theme catalog: submissions, review, the public list. See server/themeCatalog.js.
-require('./themeCatalog')(app, { db, b2Storage, authenticateToken, authenticateAdmin, createRateLimitMiddleware });
+require('./themeCatalog')(app, { db, b2Storage, authenticateToken, authenticateAdmin, createRateLimitMiddleware, logAdminAction });
 
 app.post('/api/feedback', authenticateToken, (req, res) => {
   const { message, contact_email } = req.body;
