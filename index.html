@@ -26,7 +26,9 @@
     <style>
       /* what is on the page before the app mounts: the pitch on the home
          page, the text of a published slate. neutral on every theme. */
-      .jt-pre { max-width: 42rem; margin: 0 auto; padding: 4rem 1.5rem; font: 15px/1.7 'IBM Plex Mono', ui-monospace, Menlo, monospace; color: #808080; }
+      .jt-pre { max-width: 42rem; margin: 0 auto; padding: 4rem 1.5rem; font: 15px/1.7 'IBM Plex Mono', ui-monospace, Menlo, monospace; color: #808080; animation: jtPreIn 0s linear 1.2s both; }
+      /* invisible while the app is mounting; shows only if it never does */
+      @keyframes jtPreIn { from { opacity: 0; } to { opacity: 1; } }
       .jt-pre h1, .jt-pre h2, .jt-pre h3, .jt-pre h4 { font-size: 1.25rem; font-weight: 600; color: inherit; margin: 1.5rem 0 0.75rem; }
       .jt-pre h1 { font-size: 1.5rem; margin-top: 0; }
       .jt-pre a { color: #a78bfa; text-decoration: none; }
