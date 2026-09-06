@@ -124,7 +124,7 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy 
 const menuItemCls = (danger) =>
   `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm ${
     danger ? 'text-[var(--theme-red)]' : 'hover:text-[var(--theme-text)]'
-  }`;
+  } whitespace-nowrap`;
 
 /**
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
@@ -158,7 +158,7 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
       </button>
 
       {isOpen && (
-        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] whitespace-nowrap z-10`}>
+        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
