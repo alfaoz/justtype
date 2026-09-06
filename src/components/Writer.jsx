@@ -1937,7 +1937,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const themePickerPopover = showThemePicker && popoverAnchor && (
     <div data-theme-picker
-      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] max-w-[240px] animate-[fadeInUp_0.15s_ease-out]"
+      className="fixed rounded shadow-2xl overflow-hidden w-[260px] animate-[fadeInUp_0.15s_ease-out]"
       style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
       onMouseLeave={() => setPreviewTheme(null)}
     >
@@ -1969,61 +1969,46 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             const open = themeMenuId === themeId;
             const stateColor = { approved: 'var(--theme-green)', rejected: 'var(--theme-red)', pending: 'var(--theme-orange)' };
             return (
-              <div key={themeId}>
-                <div className="flex items-center">
-                  <button
-                    onClick={() => selectTheme(themeId)}
-                    onMouseEnter={() => setPreviewTheme(themeId)}
-                    className="flex-1 px-4 py-2 text-left transition-colors duration-200 text-sm hover:bg-[var(--theme-bg-tertiary)]"
-                    style={{ color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)' }}
-                  >
-                    {themeId}
-                  </button>
-                  {state?.status && (
-                    <span className="text-xs shrink-0" style={{ color: stateColor[state.status] }}>{t[state.status]}</span>
-                  )}
-                  <button
-                    onClick={() => setThemeMenuId(open ? null : themeId)}
-                    onMouseEnter={() => setPreviewTheme(themeId)}
-                    className="px-3 py-2 text-sm transition-colors duration-200 hover:bg-[var(--theme-bg-tertiary)]"
-                    style={{ color: open ? 'var(--theme-text)' : 'var(--theme-text-dim)' }}
-                    aria-label={t.more}
-                  >
-                    ···
-                  </button>
-                </div>
-                {open && (
-                  <div className="py-0.5" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
+              <div key={themeId} className="flex items-center h-9">
+                {open ? (
+                  // The row's own actions, in its place: nothing moves
+                  <div className="flex-1 min-w-0 px-4 text-xs flex items-center gap-2 whitespace-nowrap" style={{ color: 'var(--theme-text-muted)' }}>
                     {token ? (
-                      <button
-                        onClick={() => handlePublishTheme(themeId)}
-                        disabled={publishingTheme === themeId}
-                        className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)] disabled:opacity-60"
-                        style={{ color: 'var(--theme-text-muted)' }}
-                      >
+                      <button onClick={() => handlePublishTheme(themeId)} disabled={publishingTheme === themeId} className="hover:text-[var(--theme-text)] disabled:opacity-60">
                         {publishingTheme === themeId ? t.publishing : state?.status ? t.resubmit : t.publish}
                       </button>
                     ) : (
-                      <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</div>
+                      <span style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</span>
                     )}
                     {token && state?.status && (
-                      <button
-                        onClick={() => handleWithdrawTheme(themeId)}
-                        className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)]"
-                        style={{ color: 'var(--theme-text-muted)' }}
-                      >
-                        {t.withdraw}
-                      </button>
+                      <>
+                        <span style={{ color: 'var(--theme-text-dim)' }}>·</span>
+                        <button onClick={() => handleWithdrawTheme(themeId)} className="hover:text-[var(--theme-text)]">{t.withdraw}</button>
+                      </>
                     )}
-                    <button
-                      onClick={() => handleDeleteTheme(themeId)}
-                      className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)] hover:text-[var(--theme-red)]"
-                      style={{ color: 'var(--theme-text-dim)' }}
-                    >
-                      {t.delete}
-                    </button>
+                    <span style={{ color: 'var(--theme-text-dim)' }}>·</span>
+                    <button onClick={() => handleDeleteTheme(themeId)} className="hover:text-[var(--theme-red)]">{t.delete}</button>
                   </div>
+                ) : (
+                  <button
+                    onClick={() => selectTheme(themeId)}
+                    onMouseEnter={() => setPreviewTheme(themeId)}
+                    className="flex-1 min-w-0 h-full px-4 text-left transition-colors duration-200 text-sm flex items-center justify-between gap-3 hover:bg-[var(--theme-bg-tertiary)]"
+                    style={{ color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)' }}
+                  >
+                    <span className="truncate">{themeId}</span>
+                    {state?.status && <span className="text-xs shrink-0" style={{ color: stateColor[state.status] }}>{t[state.status]}</span>}
+                  </button>
                 )}
+                <button
+                  onClick={() => setThemeMenuId(open ? null : themeId)}
+                  onMouseEnter={() => setPreviewTheme(themeId)}
+                  className="h-full px-3 text-sm transition-colors duration-200 hover:text-[var(--theme-text)]"
+                  style={{ color: open ? 'var(--theme-text)' : 'var(--theme-text-dim)' }}
+                  aria-label={t.more}
+                >
+                  ···
+                </button>
               </div>
             );
           })}
