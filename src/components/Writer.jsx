@@ -1937,7 +1937,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const themePickerPopover = showThemePicker && popoverAnchor && (
     <div data-theme-picker
-      className="fixed rounded shadow-2xl overflow-hidden min-w-[200px] animate-[fadeInUp_0.15s_ease-out]"
+      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] max-w-[240px] animate-[fadeInUp_0.15s_ease-out]"
       style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
       onMouseLeave={() => setPreviewTheme(null)}
     >
@@ -1979,6 +1979,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   >
                     {themeId}
                   </button>
+                  {state?.status && (
+                    <span className="text-xs shrink-0" style={{ color: stateColor[state.status] }}>{t[state.status]}</span>
+                  )}
                   <button
                     onClick={() => setThemeMenuId(open ? null : themeId)}
                     onMouseEnter={() => setPreviewTheme(themeId)}
@@ -1990,28 +1993,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 </div>
                 {open && (
-                  <div className="pb-1" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
-                    {state?.status && (
-                      <div className="px-4 py-1 text-xs" style={{ color: stateColor[state.status] }}>
-                        {t[state.status]}{state.note ? ` · ${state.note}` : ''}
-                      </div>
-                    )}
+                  <div className="py-0.5" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
                     {token ? (
                       <button
                         onClick={() => handlePublishTheme(themeId)}
                         disabled={publishingTheme === themeId}
-                        className="w-full px-4 py-1.5 text-left text-sm hover:bg-[var(--theme-bg-secondary)] disabled:opacity-60"
+                        className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)] disabled:opacity-60"
                         style={{ color: 'var(--theme-text-muted)' }}
                       >
                         {publishingTheme === themeId ? t.publishing : state?.status ? t.resubmit : t.publish}
                       </button>
                     ) : (
-                      <div className="px-4 py-1.5 text-sm" style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</div>
+                      <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</div>
                     )}
                     {token && state?.status && (
                       <button
                         onClick={() => handleWithdrawTheme(themeId)}
-                        className="w-full px-4 py-1.5 text-left text-sm hover:bg-[var(--theme-bg-secondary)]"
+                        className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)]"
                         style={{ color: 'var(--theme-text-muted)' }}
                       >
                         {t.withdraw}
@@ -2019,7 +2017,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     )}
                     <button
                       onClick={() => handleDeleteTheme(themeId)}
-                      className="w-full px-4 py-1.5 text-left text-sm hover:bg-[var(--theme-bg-secondary)] hover:text-[var(--theme-red)]"
+                      className="w-full px-4 py-1 text-left text-xs hover:bg-[var(--theme-bg-secondary)] hover:text-[var(--theme-red)]"
                       style={{ color: 'var(--theme-text-dim)' }}
                     >
                       {t.delete}
@@ -2031,7 +2029,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           })}
         </>
       )}
-      {/* The catalog: other people's approved themes, previewed on hover */}
+      {/* Import/Download buttons, and the catalog: other people's approved
+          themes, previewed on hover */}
       <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
       <button
         onClick={toggleCatalog}
@@ -2041,27 +2040,25 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         {showCatalog ? '– ' : '+ '}{strings.writer.themeCatalog.browse}
       </button>
       {showCatalog && (
-        <div className="max-h-56 overflow-y-auto">
+        <div className="max-h-40 overflow-y-auto" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
           {catalog === null ? (
-            <div className="px-4 py-1.5 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.loading}</div>
+            <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.loading}</div>
           ) : catalog.length === 0 ? (
-            <div className="px-4 py-1.5 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.empty}</div>
+            <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.empty}</div>
           ) : catalog.map((entry) => (
             <button
               key={entry.shareId}
               onClick={() => handleUseCatalogTheme(entry)}
               onMouseEnter={() => setPreviewTheme(entry)}
-              className="w-full px-4 py-1.5 text-left text-sm flex items-baseline justify-between gap-3 hover:bg-[var(--theme-bg-tertiary)]"
+              className="w-full px-4 py-1 text-left text-xs flex items-baseline justify-between gap-3 hover:bg-[var(--theme-bg-secondary)]"
               style={{ color: 'var(--theme-text-muted)' }}
             >
               <span className="truncate">{entry.name}</span>
-              <span className="text-xs shrink-0" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.by(entry.author)}</span>
+              <span className="shrink-0" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.by(entry.author)}</span>
             </button>
           ))}
         </div>
       )}
-      {/* Import/Download buttons */}
-      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
       <button
         onClick={() => themeFileInputRef.current?.click()}
         className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
