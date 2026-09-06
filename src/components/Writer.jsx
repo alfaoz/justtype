@@ -1969,46 +1969,63 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             const open = themeMenuId === themeId;
             const stateColor = { approved: 'var(--theme-green)', rejected: 'var(--theme-red)', pending: 'var(--theme-orange)' };
             return (
-              <div key={themeId} className="flex items-center h-9">
-                {open ? (
-                  // The row's own actions, in its place: nothing moves
-                  <div className="flex-1 min-w-0 px-4 text-xs flex items-center gap-2 whitespace-nowrap" style={{ color: 'var(--theme-text-muted)' }}>
-                    {token ? (
-                      <button onClick={() => handlePublishTheme(themeId)} disabled={publishingTheme === themeId} className="hover:text-[var(--theme-text)] disabled:opacity-60">
-                        {publishingTheme === themeId ? t.publishing : state?.status ? t.resubmit : t.publish}
-                      </button>
-                    ) : (
-                      <span style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</span>
-                    )}
-                    {token && state?.status && (
-                      <>
-                        <span style={{ color: 'var(--theme-text-dim)' }}>·</span>
-                        <button onClick={() => handleWithdrawTheme(themeId)} className="hover:text-[var(--theme-text)]">{t.withdraw}</button>
-                      </>
-                    )}
-                    <span style={{ color: 'var(--theme-text-dim)' }}>·</span>
-                    <button onClick={() => handleDeleteTheme(themeId)} className="hover:text-[var(--theme-red)]">{t.delete}</button>
-                  </div>
-                ) : (
+              <div key={themeId}>
+                <div className="flex items-center h-9">
                   <button
                     onClick={() => selectTheme(themeId)}
                     onMouseEnter={() => setPreviewTheme(themeId)}
-                    className="flex-1 min-w-0 h-full px-4 text-left transition-colors duration-200 text-sm flex items-center justify-between gap-3 hover:bg-[var(--theme-bg-tertiary)]"
+                    className="flex-1 min-w-0 h-full px-4 text-left transition-colors duration-200 text-sm truncate hover:bg-[var(--theme-bg-tertiary)]"
                     style={{ color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)' }}
                   >
-                    <span className="truncate">{themeId}</span>
-                    {state?.status && <span className="text-xs shrink-0" style={{ color: stateColor[state.status] }}>{t[state.status]}</span>}
+                    {themeId}
                   </button>
+                  {/* The dots carry the review state by colour; the word is
+                      inside the menu */}
+                  <button
+                    onClick={() => setThemeMenuId(open ? null : themeId)}
+                    onMouseEnter={() => setPreviewTheme(themeId)}
+                    className="h-full px-3 text-sm transition-colors duration-200 hover:text-[var(--theme-text)]"
+                    style={{ color: state?.status ? stateColor[state.status] : open ? 'var(--theme-text)' : 'var(--theme-text-dim)' }}
+                    aria-label={t.more}
+                  >
+                    ···
+                  </button>
+                </div>
+                {open && (
+                  <div className="py-0.5 text-xs" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
+                    {state?.status && (
+                      <div className="px-4 py-1" style={{ color: stateColor[state.status] }}>{t[state.status]}{state.note ? ` · ${state.note}` : ''}</div>
+                    )}
+                    {token ? (
+                      <button
+                        onClick={() => handlePublishTheme(themeId)}
+                        disabled={publishingTheme === themeId}
+                        className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)] disabled:opacity-60"
+                        style={{ color: 'var(--theme-text-muted)' }}
+                      >
+                        {publishingTheme === themeId ? t.publishing : state?.status ? t.resubmit : t.publish}
+                      </button>
+                    ) : (
+                      <div className="px-4 py-1" style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</div>
+                    )}
+                    {token && state?.status && (
+                      <button
+                        onClick={() => handleWithdrawTheme(themeId)}
+                        className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)]"
+                        style={{ color: 'var(--theme-text-muted)' }}
+                      >
+                        {t.withdraw}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteTheme(themeId)}
+                      className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)] hover:text-[var(--theme-red)]"
+                      style={{ color: 'var(--theme-text-dim)' }}
+                    >
+                      {t.delete}
+                    </button>
+                  </div>
                 )}
-                <button
-                  onClick={() => setThemeMenuId(open ? null : themeId)}
-                  onMouseEnter={() => setPreviewTheme(themeId)}
-                  className="h-full px-3 text-sm transition-colors duration-200 hover:text-[var(--theme-text)]"
-                  style={{ color: open ? 'var(--theme-text)' : 'var(--theme-text-dim)' }}
-                  aria-label={t.more}
-                >
-                  ···
-                </button>
               </div>
             );
           })}
