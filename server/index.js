@@ -825,66 +825,9 @@ app.get('/llms.txt', (req, res) => {
   ].join('\n'));
 });
 
-// System slate routes with custom meta descriptions
-const systemSlatesMeta = {
-  '/terms': {
-    title: 'terms of service',
-    description: 'terms of service for justtype.io',
-    redirect: '/s/terms'
-  },
-  '/privacy': {
-    title: 'privacy policy',
-    description: 'privacy policy for justtype.io',
-    redirect: '/s/privacy'
-  },
-  '/limits': {
-    title: 'storage limits',
-    description: 'storage limits and supporter tiers for justtype.io',
-    redirect: '/s/limits'
-  },
-  '/project': {
-    title: 'about the project',
-    description: 'about justtype - a minimal, encrypted writing app',
-    redirect: '/s/project'
-  }
-};
-
-Object.entries(systemSlatesMeta).forEach(([route, meta]) => {
-  app.get(route, (req, res) => {
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    let html = fs.readFileSync(indexPath, 'utf8');
-
-    // Replace default meta tags
-    html = html.replace(
-      '<title>just type</title>',
-      `<title>${meta.title} - just type</title>`
-    );
-    html = html.replace(
-      '<meta name="description" content="need to jot something down real quick? just start typing." />',
-      `<meta name="description" content="${meta.description}" />`
-    );
-
-    // Add redirect meta tag for immediate redirect
-    html = html.replace(
-      '</head>',
-      `  <meta http-equiv="refresh" content="0;url=${meta.redirect}" />\n  </head>`
-    );
-
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.send(html);
-  });
-});
-
-// Handle /cli page (exact match) - serve React app
-app.get('/cli', (req, res) => {
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
-});
+// Crawl-facing html: robots, sitemap, per-page titles, the doc redirects and
+// the published slate pages with their text in the markup. See server/seo.js.
+require('./seo')(app, { db, b2Storage });
 
 // Serve CLI binaries from public/cli directory (for /cli/*)
 app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
@@ -5684,99 +5627,6 @@ app.post('/api/account/unlink-google', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Unlink Google error:', error);
     res.status(500).json({ error: 'Failed to unlink Google account' });
-  }
-});
-
-// Server-side rendering for published slates (for proper OpenGraph meta tags)
-app.get('/s/:shareId', async (req, res) => {
-  try {
-    // Fetch slate data
-    const slate = db.prepare(`
-      SELECT slates.*, users.username, users.is_system_user
-      FROM slates
-      JOIN users ON slates.user_id = users.id
-      WHERE slates.share_id = ? AND slates.is_published = 1
-    `).get(req.params.shareId);
-
-    // If slate not found, serve regular index.html (React will show error)
-    if (!slate) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      return res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
-    }
-
-    // HTML escape helper
-    const escapeHtml = (text) => {
-      return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    };
-
-    // Prepare meta tag values
-    const maxOgTitleLength = 70;
-    const ogTitle = slate.title.length > maxOgTitleLength
-      ? `${slate.title.substring(0, maxOgTitleLength)}...`
-      : slate.title;
-    // Display "alfaoz" for system users
-    const displayUsername = slate.is_system_user ? 'alfaoz' : slate.username;
-    const description = `slate by ${displayUsername}`;
-    const pageTitle = description; // Use "slate by [user]" as page title
-    const url = `${process.env.PUBLIC_URL}/s/${slate.share_id}`;
-
-    // Escape all values for HTML
-    const escapedPageTitle = escapeHtml(pageTitle);
-    const escapedOgTitle = escapeHtml(ogTitle);
-    const escapedDescription = escapeHtml(description);
-
-    // Read the built index.html
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    const fs = require('fs');
-    let html = fs.readFileSync(indexPath, 'utf8');
-
-    // Inject meta tags (replace the default ones)
-    html = html.replace(
-      '<title>just type</title>',
-      `<title>${escapedPageTitle}</title>`
-    );
-    html = html.replace(
-      '<meta name="description" content="need to jot something down real quick? just start typing." />',
-      `<meta name="description" content="${escapedDescription}" />`
-    );
-
-    // Add OpenGraph and Twitter meta tags after the description tag
-    const additionalMetaTags = `
-    <meta property="og:title" content="${escapedOgTitle}" />
-    <meta property="og:description" content="${escapedDescription}" />
-    <meta property="og:type" content="article" />
-    <meta property="og:url" content="${url}" />
-    <meta property="og:site_name" content="just type" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="${escapedOgTitle}" />
-    <meta name="twitter:description" content="${escapedDescription}" />`;
-
-    html = html.replace(
-      '</head>',
-      `${additionalMetaTags}\n  </head>`
-    );
-
-    // Set cache headers to prevent caching entirely
-    // This ensures users always get fresh HTML with correct JS/CSS hashes
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.send(html);
-  } catch (error) {
-    console.error('Error rendering slate page:', error);
-    // Fallback to regular index.html
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 });
 
