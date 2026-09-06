@@ -136,29 +136,19 @@ function robotsTxt(host) {
   return ['User-agent: *', ...pages.private.map((p) => `Disallow: ${p}`), '', `Sitemap: ${SITE}/sitemap.xml`, ''].join('\n');
 }
 
-const isoDate = (v) => {
-  if (!v) return null;
-  const s = String(v);
-  const d = new Date(s.includes('T') ? s : `${s.replace(' ', 'T')}Z`);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
-};
-
-let sitemapCache = { at: 0, xml: '' };
-function sitemapXml(db) {
-  if (Date.now() - sitemapCache.at < 10 * 60 * 1000) return sitemapCache.xml;
-  const rows = db.prepare(
-    'SELECT share_id, updated_at FROM slates WHERE is_published = 1 AND share_id IS NOT NULL ORDER BY updated_at DESC'
-  ).all();
+// The sitemap is the site: its pages and the four documents. A published
+// slate is a link its author hands out, not a page to be found by search,
+// so none of them are listed here and the ones that are not the documents
+// carry noindex below.
+function sitemapXml() {
   const urls = [
-    ['/', null],
-    ...Object.entries(pages.pages).filter(([, p]) => p.index !== false).map(([route]) => [route, null]),
-    ...rows.map((r) => [`/s/${r.share_id}`, isoDate(r.updated_at)]),
+    '/',
+    ...Object.entries(pages.pages).filter(([, p]) => p.index !== false).map(([route]) => route),
+    ...Object.keys(pages.docs).map((id) => `/s/${id}`),
   ];
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${
-    urls.map(([p, mod]) => `  <url><loc>${SITE}${escapeHtml(p)}</loc>${mod ? `<lastmod>${mod}</lastmod>` : ''}</url>`).join('\n')
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${
+    urls.map((p) => `  <url><loc>${SITE}${escapeHtml(p)}</loc></url>`).join('\n')
   }\n</urlset>\n`;
-  sitemapCache = { at: Date.now(), xml };
-  return xml;
 }
 
 module.exports = function mountSeo(app, { db, b2Storage }) {
@@ -172,7 +162,7 @@ module.exports = function mountSeo(app, { db, b2Storage }) {
     res.type('text/plain').send(robotsTxt(req.hostname));
   });
   app.get('/sitemap.xml', (req, res) => {
-    res.type('application/xml').send(sitemapXml(db));
+    res.type('application/xml').send(sitemapXml());
   });
 
   // /terms and friends: a real redirect to the slate, which is the url that
@@ -230,6 +220,7 @@ module.exports = function mountSeo(app, { db, b2Storage }) {
       title: (slate.title || doc?.title || 'untitled').slice(0, 70),
       description: doc ? doc.description : (summary(content) || `slate by ${author}`),
       canonical: `${SITE}/s/${encodeURIComponent(id)}`,
+      robots: doc ? undefined : 'noindex',
       type: 'article',
       body: article(slate, content, author),
     }));
