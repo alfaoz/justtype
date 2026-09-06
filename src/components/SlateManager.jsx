@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
@@ -132,8 +132,19 @@ const menuItemCls = (danger) =>
  */
 function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
+  // Near the bottom of the window the menu opens upward instead of running
+  // off the page. Measured before paint, so it never shows in the wrong place.
+  const wrapRef = useRef(null);
+  const menuRef = useRef(null);
+  const [openUp, setOpenUp] = useState(false);
+  useLayoutEffect(() => {
+    if (!isOpen || !wrapRef.current || !menuRef.current) return;
+    const r = wrapRef.current.getBoundingClientRect();
+    const h = menuRef.current.offsetHeight + 8;
+    setOpenUp(window.innerHeight - r.bottom < h && r.top > h);
+  }, [isOpen]);
   return (
-    <div className="relative flex items-center flex-shrink-0">
+    <div ref={wrapRef} className="relative flex items-center flex-shrink-0">
       <button
         onClick={onToggle}
         className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
@@ -147,7 +158,7 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
