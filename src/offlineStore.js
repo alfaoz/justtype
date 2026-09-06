@@ -54,7 +54,16 @@ const all = (index, value) => new Promise((resolve, reject) => {
   req.onerror = () => reject(req.error);
 });
 
-export const slateKeyOf = (userId, slateNumber) => `${userId}:${slateNumber}`;
+// The app hands us the user id as a string (from local storage) or a number
+// (from the server) depending on when it asks. IndexedDB indexes compare by
+// type, so every record is stored and every index query made with the string
+// form; reads also check the number form so records written before this
+// stay visible.
+const uid = (userId) => String(userId);
+const byUser = (index, userId) => Promise.all([all(index, uid(userId)), all(index, Number(userId))])
+  .then(([a, b]) => { const seen = new Set(a.map(r => r.key)); return [...a, ...b.filter(r => !seen.has(r.key))]; });
+
+export const slateKeyOf = (userId, slateNumber) => `${uid(userId)}:${slateNumber}`;
 export const isLocalSlateNumber = (n) => typeof n === 'string' && n.startsWith('local-');
 export const newLocalSlateNumber = () => `local-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -66,7 +75,7 @@ export async function cacheSlate(userId, slateNumber, data, { opened = false } =
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('slates', 'readonly', s => s.get(key));
   const rec = {
-    key, userId, slateNumber,
+    key, userId: uid(userId), slateNumber,
     data: { ...(prev?.data || {}), ...data },
     keep: prev?.keep || false,
     cachedAt: Date.now(),
@@ -76,13 +85,14 @@ export async function cacheSlate(userId, slateNumber, data, { opened = false } =
   return rec;
 }
 export const getCachedSlate = (userId, slateNumber) => tx('slates', 'readonly', s => s.get(slateKeyOf(userId, slateNumber)));
-export const getCachedSlates = (userId) => openDB().then(db => all(db.transaction('slates').objectStore('slates').index('user'), userId));
+export const getCachedSlates = (userId) => openDB().then(db => byUser(db.transaction('slates').objectStore('slates').index('user'), userId));
 export const deleteCachedSlate = (userId, slateNumber) => tx('slates', 'readwrite', s => s.delete(slateKeyOf(userId, slateNumber)));
 
 export async function setKeepOffline(userId, slateNumber, keep) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('slates', 'readonly', s => s.get(key));
-  const rec = prev || { key, userId, slateNumber, data: {}, cachedAt: 0, lastOpenedAt: 0 };
+  const rec = prev || { key, userId: uid(userId), slateNumber, data: {}, cachedAt: 0, lastOpenedAt: 0 };
+  rec.userId = uid(userId);
   rec.keep = keep;
   await tx('slates', 'readwrite', s => s.put(rec));
 }
@@ -139,8 +149,8 @@ export function copyPlan(rows, cached) {
 
 // ---- list ------------------------------------------------------------------
 
-export const cacheList = (userId, rows) => tx('lists', 'readwrite', s => s.put({ userId, rows, cachedAt: Date.now() }));
-export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(userId));
+export const cacheList = (userId, rows) => tx('lists', 'readwrite', s => s.put({ userId: uid(userId), rows, cachedAt: Date.now() }));
+export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(uid(userId)));
 
 // ---- pending writes --------------------------------------------------------
 
@@ -152,7 +162,7 @@ export async function queuePending(userId, slateNumber, record) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('pending', 'readonly', s => s.get(key));
   const rec = {
-    key, userId, slateNumber,
+    key, userId: uid(userId), slateNumber,
     ...record,
     // A slate that has not been created on the server yet stays a POST no
     // matter how many times it is saved again offline
@@ -166,7 +176,7 @@ export async function queuePending(userId, slateNumber, record) {
   await tx('pending', 'readwrite', s => s.put(rec));
   return rec;
 }
-export const getPending = (userId) => openDB().then(db => all(db.transaction('pending').objectStore('pending').index('user'), userId)).then(r => r.sort((a, b) => a.createdAt - b.createdAt));
+export const getPending = (userId) => openDB().then(db => byUser(db.transaction('pending').objectStore('pending').index('user'), userId)).then(r => r.sort((a, b) => a.createdAt - b.createdAt));
 export const getPendingFor = (userId, slateNumber) => tx('pending', 'readonly', s => s.get(slateKeyOf(userId, slateNumber)));
 export const deletePending = (userId, slateNumber) => tx('pending', 'readwrite', s => s.delete(slateKeyOf(userId, slateNumber)));
 
