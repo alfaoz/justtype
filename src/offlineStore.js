@@ -74,6 +74,9 @@ export const newLocalSlateNumber = () => `local-${Math.random().toString(36).sli
 export async function cacheSlate(userId, slateNumber, data, { opened = false } = {}) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('slates', 'readonly', s => s.get(key));
+  // An offloaded slate stays off this device: opening it, saving it or
+  // syncing it does not put a copy back. Keep or copy clears the flag first.
+  if (prev?.offloaded) return prev;
   const rec = {
     key, userId: uid(userId), slateNumber,
     data: { ...(prev?.data || {}), ...data },
