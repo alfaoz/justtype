@@ -158,7 +158,7 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
       </button>
 
       {isOpen && (
-        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10`}>
+        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] whitespace-nowrap z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
