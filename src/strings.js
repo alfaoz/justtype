@@ -167,6 +167,24 @@ const strings = {
     },
     filterByApp: 'from app:',
     filterAllApps: 'all',
+    // The theme picker's catalog: publishing a custom theme for others,
+    // and picking one of theirs
+    themeCatalog: {
+      more: 'more',
+      publish: 'publish to catalog',
+      resubmit: 'submit again',
+      publishing: 'publishing...',
+      pending: 'in review',
+      approved: 'in the catalog',
+      rejected: 'not accepted',
+      withdraw: 'remove from catalog',
+      loginToPublish: 'sign in to publish',
+      delete: 'delete theme',
+      browse: 'browse catalog',
+      loading: 'loading...',
+      empty: 'nothing in the catalog yet',
+      by: (name) => `by ${name}`
+    },
     viewToggle: {
       list: 'list view',
       grid: 'grid view',

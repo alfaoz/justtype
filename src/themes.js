@@ -524,7 +524,8 @@ export const getExampleThemeJson = () => {
 // Apply theme CSS variables to document root
 // This works for both built-in and custom themes
 export const applyThemeVariables = async (themeId) => {
-  const theme = getTheme(themeId);
+  // An id from the picker, or a whole theme (a catalog entry on hover)
+  const theme = typeof themeId === 'object' && themeId ? themeId : getTheme(themeId);
   const root = document.documentElement;
 
   // Set color CSS variables

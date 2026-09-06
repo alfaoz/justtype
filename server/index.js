@@ -4515,6 +4515,9 @@ app.get('/api/account/check-username/:username', authenticateToken, (req, res) =
 // ============ FEEDBACK ROUTES ============
 
 // Submit feedback (authenticated users only)
+// Theme catalog: submissions, review, the public list. See server/themeCatalog.js.
+require('./themeCatalog')(app, { db, b2Storage, authenticateToken, authenticateAdmin, createRateLimitMiddleware });
+
 app.post('/api/feedback', authenticateToken, (req, res) => {
   const { message, contact_email } = req.body;
 
