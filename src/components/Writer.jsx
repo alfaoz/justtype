@@ -1805,13 +1805,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   };
 
-  const cycleTheme = () => {
-    const themes = getThemeIds();
-    const currentIndex = themes.indexOf(theme);
-    const nextIndex = (currentIndex + 1) % themes.length;
-    setTheme(themes[nextIndex]);
-  };
-
   const downloadExampleTheme = () => {
     const example = getExampleThemeJson();
     const blob = new Blob([JSON.stringify(example, null, 2)], { type: 'application/json' });
@@ -2053,7 +2046,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
     device: [
-      { id: 'theme', label: 'theme', kind: 'cycle', value: theme, options: getThemeIds(), onCycle: cycleTheme, onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
+      { id: 'theme', label: 'theme', kind: 'menu', value: theme, options: getThemeIds(), onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
       { id: 'size', label: 'size', kind: 'cycle', value: punto, options: ['small', 'base', 'large'], onCycle: cyclePunto, onSet: setPunto },
       { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
       { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
@@ -2521,7 +2514,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               {/* quick toggles: tapping one changes it in place */}
               <ScrollRow className="mb-4">
-                {[...stripControls.device, ...stripControls.slate].map((c) => ({ key: c.id, label: controlLabel(c), onClick: c.onCycle, highlight: c.pulse })).map((c) => (
+                {[...stripControls.device, ...stripControls.slate].map((c) => ({ key: c.id, label: controlLabel(c), onClick: c.kind === 'menu' ? c.onOpen : c.onCycle, highlight: c.pulse })).map((c) => (
                   <button
                     key={c.key}
                     onClick={c.onClick}
@@ -2531,6 +2524,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 ))}
               </ScrollRow>
+              {/* The theme list opens from the chip; the desktop copy sits in
+                  a footer that is display none here */}
+              {themePickerPopover}
 
               {/* status */}
               {status !== 'ready' && (

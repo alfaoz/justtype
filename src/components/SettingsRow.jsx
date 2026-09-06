@@ -2,13 +2,14 @@ import React from 'react';
 
 /**
  * The writer's settings row: the text controls that open from the three-dot
- * pill. Every state control reads `noun: value` and cycles on click; actions
- * stay bare verbs. Groups are scoped (device | this slate | actions) and
- * divided the way the header divides its sections.
+ * pill. Every state control reads `noun: value`; a cycle or toggle advances
+ * on click, a menu control opens its list, actions stay bare verbs. Groups
+ * are scoped (device | this slate | actions) and divided the way the header
+ * divides its sections.
  *
  * Control model, built in Writer.jsx:
  *   { device: [...], slate: [...], actions: [...] }
- *   control = { id, label, value, options?, kind: 'cycle'|'toggle'|'action',
+ *   control = { id, label, value, options?, kind: 'cycle'|'toggle'|'menu'|'action',
  *               onCycle?, onClick?(e), onOpen?(e), active?, pulse? }
  */
 
@@ -23,6 +24,7 @@ function hintFor(c) {
     return `${c.label}: ${c.value} → ${next}`;
   }
   if (c.kind === 'toggle') return `${c.label}: ${c.value} → ${c.value === 'on' ? 'off' : 'on'}`;
+  if (c.kind === 'menu') return `${c.label}: ${c.value} · choose`;
   return c.label;
 }
 
@@ -47,10 +49,8 @@ export function SettingsRow({ controls }) {
         {joined(items.map((c) => (
           <button
             key={c.id}
-            onClick={(e) => (c.kind === 'action' ? c.onClick?.(e) : c.onCycle?.(e))}
-            // Theme cycles on click; the full list stays a right-click away
-            onContextMenu={c.onOpen ? (e) => { e.preventDefault(); c.onOpen(e); } : undefined}
-            title={hintFor(c) + (c.onOpen ? ' · right-click for the list' : '')}
+            onClick={(e) => (c.kind === 'action' ? c.onClick?.(e) : c.kind === 'menu' ? c.onOpen?.(e) : c.onCycle?.(e))}
+            title={hintFor(c)}
             className={`${btnBase} ${c.pulse ? 'feature-pulse' : ''}`}
             style={{ color: c.active ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
             {...(c.id === 'theme' ? { 'data-theme-picker': true } : {})}
