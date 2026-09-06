@@ -19,6 +19,24 @@ const strings = {
 
   // writer component
   writer: {
+    // The theme picker's catalog: publishing a custom theme for others,
+    // and picking one of theirs
+    themeCatalog: {
+      more: 'more',
+      publish: 'publish',
+      resubmit: 'resubmit',
+      publishing: 'publishing...',
+      pending: 'in review',
+      approved: 'in the catalog',
+      rejected: 'not accepted',
+      withdraw: 'remove',
+      loginToPublish: 'sign in to publish',
+      delete: 'delete',
+      browse: 'browse catalog',
+      loading: 'loading...',
+      empty: 'nothing in the catalog yet',
+      by: (name) => `by ${name}`
+    },
     titlePlaceholder: 'slate title...',
     contentPlaceholder: 'just start typing...',
     editorMode: {
