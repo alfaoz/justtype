@@ -1485,10 +1485,8 @@ take care!
       },
       {
         id: 'offline',
-        title: 'offline, on its own',
-        body: "the one you're not supposed to notice. every device you write from now keeps its own encrypted copy of your slates, without being asked. lose the connection mid sentence and nothing happens: the words wait on the device and sync when you're back. nothing to turn on.",
-        notePhrase: 'nothing happens',
-        note: 'almost nothing. a small orange mark sits by the slate in your list until it syncs'
+        title: 'offline slates',
+        body: 'your slates are now kept on your device as well, not just on the server. lose your connection and keep writing; edits are saved locally and synced when you are back. automatic, and still end-to-end encrypted.'
       }
     ],
     backLink: 'back to writing'
