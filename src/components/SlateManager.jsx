@@ -5,6 +5,7 @@ import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, u
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
 import { cacheList, getCachedList, getCachedSlates, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan } from '../offlineStore';
 import { onSync } from '../offlineSync';
+import { HoverNote } from './HoverNote';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 import { useToast } from './Toast';
@@ -73,7 +74,7 @@ function ChoiceRow({ label, options, value, onChange }) {
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false }) {
+function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy }) {
   const tags = Array.isArray(slate.tags) ? slate.tags : [];
   const visibleTags = tags.slice(0, maxTags);
   const remaining = tags.length - visibleTags.length;
@@ -81,6 +82,8 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false }) {
 
   return (
     <>
+      {/* Whether a copy of this slate is on this device */}
+      <DeviceMark slate={slate} offline={offline} onCopy={onCopy} />
       <span className={status.cls}>{status.label}</span>
       {/* A slate saved offline that has no number yet. Whether a numbered
           slate has a copy on this device is the mark after its title. */}
@@ -190,34 +193,36 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
 const DeviceMark = ({ slate, offline, onCopy }) => {
   if (slate.local || slate.shared) return null;
   const o = strings.slates.offline;
-  const cls = 'w-3.5 h-3.5 flex-shrink-0';
   const stroke = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' };
   if (slate.available) {
     return (
-      <svg className={`${cls} ${slate.kept ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)] opacity-60'}`} viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-        <title>{slate.kept ? o.kept : o.auto}</title>
-        <circle cx="12" cy="12" r="10" />
-        <path d="m9 12 2 2 4-4" />
-      </svg>
+      <HoverNote plain note={slate.kept ? o.kept : o.auto} className={slate.kept ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)] opacity-70'}>
+        <svg className="w-[1em] h-[1em]" viewBox="0 0 24 24" {...stroke} aria-label={slate.kept ? o.kept : o.auto} role="img">
+          <circle cx="12" cy="12" r="10" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      </HoverNote>
     );
   }
   const copying = Boolean(slate.copying);
   const canCopy = !offline && !copying;
+  const note = copying ? o.copying : offline ? o.missingOffline : o.missing;
   return (
-    <button
-      type="button"
-      onClick={canCopy ? onCopy : undefined}
-      disabled={!canCopy}
-      title={copying ? o.copying : offline ? o.missingOffline : o.missing}
-      className={`${cls} text-[var(--theme-text-dim)] ${copying ? 'animate-pulse' : canCopy ? 'hover:text-[var(--theme-accent)]' : ''} transition-colors`}
-      aria-label={copying ? o.copying : offline ? o.missingOffline : o.missing}
-    >
-      <svg className="w-full h-full" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-        <path d="M12 13v8l-4-4" />
-        <path d="m12 21 4-4" />
-        <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
-      </svg>
-    </button>
+    <HoverNote plain note={note} className={`text-[var(--theme-text-dim)] ${copying ? 'animate-pulse' : ''}`}>
+      <button
+        type="button"
+        onClick={canCopy ? onCopy : undefined}
+        disabled={!canCopy}
+        aria-label={note}
+        className="flex items-center"
+      >
+        <svg className="w-[1em] h-[1em]" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+          <path d="M12 13v8l-4-4" />
+          <path d="m12 21 4-4" />
+          <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
+        </svg>
+      </button>
+    </HoverNote>
   );
 };
 
@@ -260,14 +265,13 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           <div className="flex items-start gap-2 min-w-0 flex-1">
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
             <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words flex-1">{title}</h3>
-            <span className="flex-shrink-0 mt-1"><DeviceMark slate={slate} offline={offline} onCopy={onCopy} /></span>
           </div>
           <SlateMenu slate={slate} {...menuProps} />
         </div>
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -287,19 +291,18 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="flex items-center gap-2">
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
-          <DeviceMark slate={slate} offline={offline} onCopy={onCopy} />
         </div>
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
           {stats}
           <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
-        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} />
+        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
         {stats}
         <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
