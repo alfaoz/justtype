@@ -982,6 +982,27 @@ try {
   `);
   console.log('✓ Feedback table initialized');
 
+  // Theme catalog submissions: a sanitized copy of a published theme slate,
+  // reviewed in the admin console (see server/themeCatalog.js)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS theme_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slate_id INTEGER NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      username TEXT,
+      share_id TEXT NOT NULL,
+      theme_id TEXT NOT NULL,
+      theme_name TEXT NOT NULL,
+      theme_json TEXT NOT NULL,
+      contrast REAL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT,
+      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      reviewed_at DATETIME
+    );
+  `);
+  console.log('✓ Theme catalog table initialized');
+
   // Collaborative slates: is_collab marks a slate whose content is encrypted
   // under a shared doc key; collab_members holds who has that key and how it
   // is wrapped for them (see server/collab.js). No FK cascades here — SQLite

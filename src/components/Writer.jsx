@@ -5,6 +5,7 @@ import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
@@ -302,6 +303,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
+  // Catalog: which custom theme has its menu open, where each one stands in
+  // review (by slate number), and the browse list once fetched
+  const [themeMenuId, setThemeMenuId] = useState(null);
+  const [themeStates, setThemeStates] = useState({});
+  const [publishingTheme, setPublishingTheme] = useState(null);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [catalog, setCatalog] = useState(null);
   const themeFileInputRef = useRef(null);
   const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'auto'); // 'off' | 'on' | 'auto'
   const [showCounter, setShowCounter] = useState(() => localStorage.getItem('justtype-show-counter') !== 'false');
@@ -1733,9 +1741,63 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     event.target.value = '';
   };
 
+  // Opening the picker asks where this person's submissions stand; closing
+  // it folds the menus back
+  useEffect(() => {
+    if (!showThemePicker) { setThemeMenuId(null); setShowCatalog(false); return; }
+    if (token) myThemeStates().then(setThemeStates).catch(() => {});
+  }, [showThemePicker, token]);
+
+  const handlePublishTheme = async (themeId) => {
+    setPublishingTheme(themeId);
+    setThemeImportError(null);
+    try {
+      const r = await publishTheme(getTheme(themeId), userId);
+      setThemeStates((prev) => ({ ...prev, [r.slateNumber]: { status: r.status } }));
+    } catch (err) {
+      setThemeImportError(err.message);
+    } finally {
+      setPublishingTheme(null);
+    }
+  };
+
+  const handleWithdrawTheme = async (themeId) => {
+    try {
+      const n = await withdrawTheme(themeId);
+      setThemeStates((prev) => { const next = { ...prev }; delete next[n]; return next; });
+    } catch (err) {
+      setThemeImportError(err.message);
+    }
+  };
+
+  const toggleCatalog = async () => {
+    const next = !showCatalog;
+    setShowCatalog(next);
+    if (next && catalog === null) {
+      try { setCatalog(await fetchCatalog()); } catch { setCatalog([]); }
+    }
+  };
+
+  const handleUseCatalogTheme = (entry) => {
+    const { author, shareId, ...catalogTheme } = entry;
+    const result = addCustomTheme(catalogTheme);
+    if (result.success) {
+      setTheme(catalogTheme.id);
+      setPreviewTheme(null);
+      setShowThemePicker(false);
+      if (token) {
+        syncCustomThemesToServer();
+        syncThemeToServer(catalogTheme.id);
+      }
+    } else {
+      setThemeImportError(result.errors.join(', '));
+    }
+  };
+
   const handleDeleteTheme = (themeId) => {
     const result = removeCustomTheme(themeId);
     if (result.success) {
+      forgetThemeSlate(themeId);
       if (theme === themeId) {
         setTheme('dark');
         if (token) syncThemeToServer('dark');
@@ -1942,7 +2004,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                   {showThemePicker && popoverAnchor && (
                     <div
-                      className="fixed rounded shadow-2xl overflow-hidden min-w-[160px] animate-[fadeInUp_0.15s_ease-out]"
+                      className="fixed rounded shadow-2xl overflow-hidden w-[260px] animate-[fadeInUp_0.15s_ease-out]"
                       style={{ backgroundColor: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
                       onMouseLeave={() => setPreviewTheme(null)}
                     >
@@ -1963,67 +2025,134 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                           {themeId}
                         </button>
                       ))}
-                      {/* Custom themes */}
-                      {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
-                        <>
-                          <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
-                          {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => (
-                            <div key={themeId} className="flex items-center">
-                              <button
-                                onClick={() => selectTheme(themeId)}
-                                onMouseEnter={() => setPreviewTheme(themeId)}
-                                className="flex-1 px-4 py-2 text-left transition-colors duration-200 text-sm"
-                                style={{
-                                  color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)',
-                                  backgroundColor: 'transparent'
-                                }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                              >
-                                {themeId}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteTheme(themeId)}
-                                onMouseEnter={() => setPreviewTheme(themeId)}
-                                className="px-3 py-2 transition-colors duration-200 text-sm"
-                                style={{ color: 'var(--theme-text-dim)' }}
-                                onMouseOver={(e) => { e.currentTarget.style.color = 'var(--theme-red)'; e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'; }}
-                                onMouseOut={(e) => { e.currentTarget.style.color = 'var(--theme-text-dim)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                title="delete theme"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                      {/* Import/Download buttons */}
-                      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
+                      {/* Custom themes: each row has a menu for the catalog and deleting */}
+      {getThemeIds().filter(id => isCustomTheme(id)).length > 0 && (
+        <>
+          <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
+          {getThemeIds().filter(id => isCustomTheme(id)).map(themeId => {
+            const t = strings.writer.themeCatalog;
+            const link = themeSlate(themeId);
+            const state = link ? themeStates[link.slateNumber] : null;
+            const open = themeMenuId === themeId;
+            const stateColor = { approved: 'var(--theme-green)', rejected: 'var(--theme-red)', pending: 'var(--theme-orange)' };
+            return (
+              <div key={themeId}>
+                <div className="flex items-center h-9">
+                  <button
+                    onClick={() => selectTheme(themeId)}
+                    onMouseEnter={() => setPreviewTheme(themeId)}
+                    className="flex-1 min-w-0 h-full px-4 text-left transition-colors duration-200 text-sm truncate hover:bg-[var(--theme-bg-tertiary)]"
+                    style={{ color: theme === themeId ? 'var(--theme-accent)' : 'var(--theme-text-muted)' }}
+                  >
+                    {themeId}
+                  </button>
+                  {/* The dots carry the review state by colour; the word is
+                      inside the menu */}
+                  <button
+                    onClick={() => setThemeMenuId(open ? null : themeId)}
+                    onMouseEnter={() => setPreviewTheme(themeId)}
+                    className="h-full px-3 text-sm transition-colors duration-200 hover:text-[var(--theme-text)]"
+                    style={{ color: state?.status ? stateColor[state.status] : open ? 'var(--theme-text)' : 'var(--theme-text-dim)' }}
+                    aria-label={t.more}
+                  >
+                    ···
+                  </button>
+                </div>
+                {open && (
+                  <div className="py-0.5 text-xs" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
+                    {state?.status && (
+                      <div className="px-4 py-1" style={{ color: stateColor[state.status] }}>{t[state.status]}{state.note ? ` · ${state.note}` : ''}</div>
+                    )}
+                    {token ? (
                       <button
-                        onClick={() => themeFileInputRef.current?.click()}
-                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                        style={{ color: 'var(--theme-text-muted)', backgroundColor: 'transparent' }}
-                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        onClick={() => handlePublishTheme(themeId)}
+                        disabled={publishingTheme === themeId}
+                        className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)] disabled:opacity-60"
+                        style={{ color: 'var(--theme-text-muted)' }}
                       >
-                        + import json
+                        {publishingTheme === themeId ? t.publishing : state?.status ? t.resubmit : t.publish}
                       </button>
+                    ) : (
+                      <div className="px-4 py-1" style={{ color: 'var(--theme-text-dim)' }}>{t.loginToPublish}</div>
+                    )}
+                    {token && state?.status && (
                       <button
-                        onClick={downloadExampleTheme}
-                        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
-                        style={{ color: 'var(--theme-text-dim)', backgroundColor: 'transparent' }}
-                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
-                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                        onClick={() => handleWithdrawTheme(themeId)}
+                        className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)]"
+                        style={{ color: 'var(--theme-text-muted)' }}
                       >
-                        ↓ example.json
+                        {t.withdraw}
                       </button>
-                      {/* Import error message */}
-                      {themeImportError && (
-                        <div className="px-4 py-2 text-xs" style={{ color: 'var(--theme-red)', borderTop: '1px solid var(--theme-border)' }}>
-                          {themeImportError}
-                        </div>
-                      )}
-                      {/* Hidden file input */}
+                    )}
+                    <button
+                      onClick={() => handleDeleteTheme(themeId)}
+                      className="w-full px-4 py-1 text-left hover:bg-[var(--theme-bg-secondary)] hover:text-[var(--theme-red)]"
+                      style={{ color: 'var(--theme-text-dim)' }}
+                    >
+                      {t.delete}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+      {/* Import/Download buttons, and the catalog: other people's approved
+          themes, previewed on hover */}
+      <div style={{ borderTop: '1px solid var(--theme-border)', margin: '4px 0' }} />
+      <button
+        onClick={toggleCatalog}
+        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm hover:bg-[var(--theme-bg-tertiary)]"
+        style={{ color: 'var(--theme-text-muted)' }}
+      >
+        {showCatalog ? '– ' : '+ '}{strings.writer.themeCatalog.browse}
+      </button>
+      {showCatalog && (
+        <div className="max-h-40 overflow-y-auto" style={{ backgroundColor: 'var(--theme-bg-tertiary)' }}>
+          {catalog === null ? (
+            <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.loading}</div>
+          ) : catalog.length === 0 ? (
+            <div className="px-4 py-1 text-xs" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.empty}</div>
+          ) : catalog.map((entry) => (
+            <button
+              key={entry.shareId}
+              onClick={() => handleUseCatalogTheme(entry)}
+              onMouseEnter={() => setPreviewTheme(entry)}
+              className="w-full px-4 py-1 text-left text-xs flex items-baseline justify-between gap-3 hover:bg-[var(--theme-bg-secondary)]"
+              style={{ color: 'var(--theme-text-muted)' }}
+            >
+              <span className="truncate">{entry.name}</span>
+              <span className="shrink-0" style={{ color: 'var(--theme-text-dim)' }}>{strings.writer.themeCatalog.by(entry.author)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => themeFileInputRef.current?.click()}
+        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+        style={{ color: 'var(--theme-text-muted)', backgroundColor: 'transparent' }}
+        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+      >
+        + import json
+      </button>
+      <button
+        onClick={downloadExampleTheme}
+        className="w-full px-4 py-2 text-left transition-colors duration-200 text-sm"
+        style={{ color: 'var(--theme-text-dim)', backgroundColor: 'transparent' }}
+        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--theme-bg-tertiary)'}
+        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+      >
+        ↓ example.json
+      </button>
+      {/* Import error message */}
+      {themeImportError && (
+        <div className="px-4 py-2 text-xs" style={{ color: 'var(--theme-red)', borderTop: '1px solid var(--theme-border)' }}>
+          {themeImportError}
+        </div>
+      )}
+      {/* Hidden file input */}
                       <input
                         ref={themeFileInputRef}
                         type="file"
