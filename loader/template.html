@@ -6,8 +6,34 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <title>just type</title>
-    <meta name="description" content="need to jot something down real quick? just start typing." />
+    <title>justtype · just start typing</title>
+    <meta name="description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <!-- jt:home -->
+    <link rel="canonical" href="https://justtype.io/" />
+    <meta property="og:site_name" content="justtype" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="justtype · just start typing" />
+    <meta property="og:description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <meta property="og:url" content="https://justtype.io/" />
+    <meta property="og:image" content="https://justtype.io/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="justtype · just start typing" />
+    <meta name="twitter:description" content="an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share." />
+    <meta name="twitter:image" content="https://justtype.io/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"justtype","alternateName":["just type","justtype.io"],"url":"https://justtype.io/","description":"an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share.","applicationCategory":"Productivity","operatingSystem":"Web","browserRequirements":"requires javascript","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"alfa","url":"https://alfaoz.dev"},"sameAs":["https://github.com/alfaoz/justtype"]}</script>
+    <!-- /jt:home -->
+    <style>
+      /* what is on the page before the app mounts: the pitch on the home
+         page, the text of a published slate. neutral on every theme. */
+      .jt-pre { max-width: 42rem; margin: 0 auto; padding: 4rem 1.5rem; font: 15px/1.7 'IBM Plex Mono', ui-monospace, Menlo, monospace; color: #808080; }
+      .jt-pre h1, .jt-pre h2, .jt-pre h3, .jt-pre h4 { font-size: 1.25rem; font-weight: 600; color: inherit; margin: 1.5rem 0 0.75rem; }
+      .jt-pre h1 { font-size: 1.5rem; margin-top: 0; }
+      .jt-pre a { color: #a78bfa; text-decoration: none; }
+      .jt-pre .jt-pre-by { font-size: 0.85rem; opacity: 0.7; margin-top: -0.5rem; }
+      .jt-pre pre, .jt-pre code { font: inherit; }
+    </style>
     <meta name="theme-color" content="#050505" />
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     <script>
@@ -23,9 +49,10 @@
 // which the github actions integrity monitor and the off-origin verifier at
 // https://alfaoz.github.io/justtype/ both watch for.
 //
-// The server routes that inject og/meta tags into this file string-replace the
-// exact <title> and description tags above -- keep them byte-identical when
-// editing (see systemSlatesMeta and the public-slate route in server/index.js).
+// server/seo.js turns this file into every other page: it swaps the <title>
+// and description, drops the jt:home block and the jt:prerender pitch, and
+// adds that page's own tags. The home page is this file, untouched, so `/`
+// and /index.html stay byte-identical for the integrity monitor.
 //
 // CSP note: server/index.js hashes this inline script and the import map at
 // boot and adds both to script-src, so there is no 'unsafe-inline' anywhere.
@@ -192,6 +219,10 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><!-- jt:prerender --><main class="jt-pre">
+      <h1>just type</h1>
+      <p>an end to end encrypted notepad on the web. open it and start typing; it saves as you go. keep a slate private, publish it when you want a link, or write one together, live.</p>
+      <p><a href="/s/project">about the project</a> · <a href="/whats-new">what's new</a> · <a href="/dev">for developers</a> · <a href="/cli">command line</a></p>
+    </main><!-- /jt:prerender --></div>
   </body>
 </html>

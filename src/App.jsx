@@ -25,6 +25,7 @@ import { saveSlateKey, getSlateKey, deleteSlateKey } from './keyStore';
 import { recoverLostSlates } from './slateRecovery';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
+import pages from './pages.json';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
@@ -37,6 +38,15 @@ const WHATS_NEW_SEEN_KEY = 'justtype-whats-new-seen-v4';
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
+
+  // The tab title follows the view. The server puts the same words in the
+  // html on first load (server/seo.js); the public viewer names its slate.
+  useEffect(() => {
+    if (view === 'public') return;
+    const page = Object.values(pages.pages).find((entry) => entry.view === view);
+    const name = page ? page.title : pages.views[view];
+    document.title = name ? `${name} · ${pages.brand}` : pages.home.title;
+  }, [view]);
   // Token state is now just a marker - actual auth is via HttpOnly cookie
   // We check if user might be logged in based on stored username
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
