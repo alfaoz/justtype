@@ -1,22 +1,59 @@
 {
   "brand": "justtype",
   "home": {
-    "title": "justtype · just start typing",
+    "title": "justtype",
     "description": "an end to end encrypted notepad on the web. open justtype, start typing, and it saves as you go. keep slates private, publish the ones you want to share."
   },
   "pages": {
-    "/verify": { "view": "verify", "title": "verify the build", "description": "check that the justtype code your browser is running matches the published build." },
-    "/whats-new": { "view": "whats-new", "title": "what's new", "description": "what changed in justtype v4: markdown formatting, collab slates, version history, unpublish, a new look." },
-    "/status": { "view": "status", "title": "status", "description": "is justtype up? live service status and recent incidents." },
-    "/cli": { "view": "cli", "title": "command line", "description": "justtype for your terminal: write and read slates without leaving the shell." },
-    "/dev": { "view": "dev", "title": "for developers", "description": "build with the justtype api: oauth, endpoints, and the end to end encryption contract." },
-    "/feedback": { "view": "feedback", "title": "feedback", "description": "tell justtype what to fix or build next.", "index": false }
+    "/verify": {
+      "view": "verify",
+      "title": "verify the build",
+      "description": "check that the justtype code your browser is running matches the published build."
+    },
+    "/whats-new": {
+      "view": "whats-new",
+      "title": "what's new",
+      "description": "what changed in justtype v4: markdown formatting, collab slates, version history, unpublish, a new look."
+    },
+    "/status": {
+      "view": "status",
+      "title": "status",
+      "description": "is justtype up? live service status and recent incidents."
+    },
+    "/cli": {
+      "view": "cli",
+      "title": "command line",
+      "description": "justtype for your terminal: write and read slates without leaving the shell."
+    },
+    "/dev": {
+      "view": "dev",
+      "title": "for developers",
+      "description": "build with the justtype api: oauth, endpoints, and the end to end encryption contract."
+    },
+    "/feedback": {
+      "view": "feedback",
+      "title": "feedback",
+      "description": "tell justtype what to fix or build next.",
+      "index": false
+    }
   },
   "docs": {
-    "terms": { "title": "terms of service", "description": "the terms of service for justtype." },
-    "privacy": { "title": "privacy policy", "description": "the privacy policy for justtype." },
-    "limits": { "title": "storage limits", "description": "storage limits and supporter tiers on justtype." },
-    "project": { "title": "about the project", "description": "what justtype is, why it exists, and how it keeps writing private." }
+    "terms": {
+      "title": "terms of service",
+      "description": "the terms of service for justtype."
+    },
+    "privacy": {
+      "title": "privacy policy",
+      "description": "the privacy policy for justtype."
+    },
+    "limits": {
+      "title": "storage limits",
+      "description": "storage limits and supporter tiers on justtype."
+    },
+    "project": {
+      "title": "about the project",
+      "description": "what justtype is, why it exists, and how it keeps writing private."
+    }
   },
   "views": {
     "slates": "your slates",
@@ -27,5 +64,17 @@
     "collab-join": "join a slate",
     "notfound": "not found"
   },
-  "private": ["/slate/", "/slates", "/account", "/manage-subscription", "/login", "/pair", "/cli-auth", "/authorize/", "/join/", "/oauth/", "/api/"]
+  "private": [
+    "/slate/",
+    "/slates",
+    "/account",
+    "/manage-subscription",
+    "/login",
+    "/pair",
+    "/cli-auth",
+    "/authorize/",
+    "/join/",
+    "/oauth/",
+    "/api/"
+  ]
 }
