@@ -1791,7 +1791,7 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
 // Get user preferences (theme and custom themes)
 app.get('/api/preferences', authenticateToken, (req, res) => {
   try {
-    const user = db.prepare('SELECT theme, custom_themes FROM users WHERE id = ?').get(req.user.id);
+    const user = db.prepare('SELECT theme, custom_themes, whats_new_seen FROM users WHERE id = ?').get(req.user.id);
 
     if (!user) {
       return res.status(404).json({ error: 'user not found' });
@@ -1811,7 +1811,8 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
       // to apply, and inventing one here overrode the client's device default
       // (dark-mode devices flipped to light right after signup).
       theme: user.theme || null,
-      customThemes
+      customThemes,
+      whatsNewSeen: user.whats_new_seen || null
     });
   } catch (error) {
     console.error('Get preferences error:', error);
@@ -1822,7 +1823,7 @@ app.get('/api/preferences', authenticateToken, (req, res) => {
 // Update user preferences
 app.put('/api/preferences', authenticateToken, (req, res) => {
   try {
-    const { theme, customThemes } = req.body;
+    const { theme, customThemes, whatsNewSeen } = req.body;
     const updates = [];
     const params = [];
 
@@ -1857,6 +1858,15 @@ app.put('/api/preferences', authenticateToken, (req, res) => {
 
       updates.push('custom_themes = ?');
       params.push(JSON.stringify(customThemes));
+    }
+
+    // The announcement version the person has dismissed
+    if (whatsNewSeen !== undefined) {
+      if (typeof whatsNewSeen !== 'string' || !/^[a-z0-9.-]{1,20}$/.test(whatsNewSeen)) {
+        return res.status(400).json({ error: 'invalid whatsNewSeen' });
+      }
+      updates.push('whats_new_seen = ?');
+      params.push(whatsNewSeen);
     }
 
     if (updates.length === 0) {

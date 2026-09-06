@@ -303,6 +303,13 @@ try {
     console.log('✓ Database migrated: Added custom_themes column');
   }
 
+  // Which what's new announcement the person has seen, so it shows once per
+  // account rather than once per device
+  if (!userColumns.some(col => col.name === 'whats_new_seen')) {
+    db.exec(`ALTER TABLE users ADD COLUMN whats_new_seen TEXT;`);
+    console.log('✓ Database migrated: Added whats_new_seen column');
+  }
+
   // Add view_count column to slates if it doesn't exist
   const hasViewCount = slateColumnsCheck.some(col => col.name === 'view_count');
 
