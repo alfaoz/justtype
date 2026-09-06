@@ -1068,6 +1068,14 @@ body.custom-theme ::-webkit-scrollbar-track {
 .slate-unavailable { opacity: 0.4; cursor: default !important; }
 .slate-unavailable:hover { background: transparent !important; }
 
+/* The device mark shows itself only while its slate is hovered (or focused),
+   on devices that can hover. Touch screens always see it. A copy in flight
+   stays visible so the pulse reads as feedback. */
+.device-mark { transition: opacity 0.15s ease; }
+@media (hover: hover) {
+  .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-copying) { opacity: 0; }
+}
+
 /* Nearby collab: the code on a white card so cameras read it, the camera view */
 .nearby-qr { width: 240px; height: 240px; max-width: 100%; background: #fff; padding: 8px; border-radius: 6px; image-rendering: pixelated; }
 .nearby-video { width: 100%; max-height: 220px; object-fit: cover; border-radius: 6px; background: #000; }
