@@ -15,7 +15,7 @@ import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity
 import { cacheSlate, getCachedSlate, getPendingFor, queuePending, setKeepOffline, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
-import { StripLab, StripLabSwitcher, useStripVariant } from './StripLab';
+import { SettingsRow, controlLabel } from './SettingsRow';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -345,7 +345,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
   const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
-  const [stripVariant, setStripVariant] = useStripVariant(); // strip lab, see StripLab.jsx
   const textareaRef = useRef(null);
   const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
@@ -680,14 +679,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // Wait for animation to complete before hiding
     setTimeout(() => {
       setShowSettingsMenu(false);
+      setShowMenuButton(false);
       setIsMenuClosing(false);
     }, 500); // Match the animation duration
   };
 
   const handleToggleMenu = () => {
     if (showSettingsMenu) {
+      // The strip plays its exit (the open animation reversed) before it unmounts
       handleCloseMenu();
-      setShowMenuButton(false);
     } else {
       // Calculate distance to align with zen mode button's left edge
       if (threeDotsRef.current) {
@@ -1876,14 +1876,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setPunto(sizes[nextIndex]);
   };
 
-  const getPuntoLabel = () => {
-    switch (punto) {
-      case 'small': return 'Aa−';
-      case 'large': return 'Aa+';
-      default: return 'Aa';
-    }
-  };
-
   const cycleFocus = () => {
     const modes = ['off', 'on', 'auto'];
     const currentIndex = modes.indexOf(focusMode);
@@ -1891,17 +1883,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setFocusMode(modes[nextIndex]);
   };
 
-  const getFocusLabel = () => {
-    switch (focusMode) {
-      case 'on': return 'focus';
-      case 'auto': return 'smart focus';
-      default: return 'focus off';
-    }
-  };
-
-  const getCounterLabel = () => {
-    return showCounter ? 'hide counter' : 'show counter';
-  };
 
   const themePickerPopover = showThemePicker && popoverAnchor && (
     <div data-theme-picker
@@ -2073,7 +2054,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     </div>
   );
 
-  // Strip lab: one control model every variant renders from (see StripLab.jsx)
+  // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
     device: [
       { id: 'theme', label: 'theme', kind: 'cycle', value: theme, options: getThemeIds(), onCycle: cycleTheme, onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
@@ -2091,11 +2072,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: (e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); } },
     ].filter(Boolean),
   };
-  const stripLabActive = !!stripVariant && stripVariant !== 'current';
 
   return (
     <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
-      {stripVariant && <StripLabSwitcher variant={stripVariant} onChange={setStripVariant} />}
       {/* LOADING OVERLAY */}
       {isLoading && (
         <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
@@ -2258,129 +2237,26 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             {/* Menu buttons - appear after animation, slide in from three dots
                 position. Bounded to the space before the right controls: on
                 narrow windows the strip scrolls, fading out at the cutoff. */}
-            {showMenuButton && !stripLabActive && (
-              <div
-                ref={stripRef}
-                className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
-                style={{ zIndex: 150 }}
-                onScroll={() => {
-                  setShowThemePicker(false);
-                  setShowPublishMenu(false);
-                  updateStripScroll();
-                  const track = stripTrackRef.current;
-                  if (track) {
-                    track.classList.add('scrolling');
-                    clearTimeout(stripScrollEndTimerRef.current);
-                    stripScrollEndTimerRef.current = setTimeout(() => track.classList.remove('scrolling'), 600);
-                  }
-                }}
-              >
-                <div className="relative" data-theme-picker>
-                  <button
-                    onClick={(e) => { anchorPopover(e); toggleTheme(); }}
-                    className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                    style={{ color: 'var(--theme-accent)' }}
-                  >
-                    theme: {theme}
-                  </button>
-                  {themePickerPopover}
-                </div>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={cyclePunto}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getPuntoLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={cycleFocus}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getFocusLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={() => setShowCounter(!showCounter)}
-                  className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {getCounterLabel()}
-                </button>
-                <span className="opacity-30">·</span>
-                <button
-                  onClick={toggleEditorMode}
-                  className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
-                  style={{ color: 'var(--theme-accent)' }}
-                >
-                  {strings.writer.editorMode.label(editorMode)}
-                </button>
-                {canKeepOffline && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button
-                      onClick={toggleKeepOffline}
-                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                      style={{ color: 'var(--theme-accent)' }}
-                    >
-                      {keptOffline ? strings.writer.connectivity.keptOffline : strings.writer.connectivity.keepOffline}
-                    </button>
-                  </>
-                )}
-                {token && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button
-                      onClick={() => openCollab('people')}
-                      className={`transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap ${highlightNew ? 'feature-pulse' : ''}`}
-                      style={{ color: collabDocKey ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
-                    >
-                      {strings.collab.menuButton}
-                    </button>
-                  </>
-                )}
-                {token && collabDocKey && collabSlateDbId && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button
-                      onClick={() => setCollabPanel('history')}
-                      className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                      style={{ color: 'var(--theme-accent)' }}
-                    >
-                      {strings.collab.history.button}
-                    </button>
-                  </>
-                )}
-                {token && !isShared && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <div className="relative">
-                      <button
-                        onClick={(e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); }}
-                        className="transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap"
-                        style={{ color: 'var(--theme-accent)' }}
-                      >
-                        share
-                      </button>
-                      {publishPopover}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            {showMenuButton && stripLabActive && (
+            {showMenuButton && (
               <>
-                <StripLab
-                  variant={stripVariant}
-                  controls={stripControls}
-                  rowRef={stripRef}
-                  rowClassName={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 transition-opacity duration-500 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'opacity-0' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
-                  rowStyle={{ zIndex: 150 }}
-                  onRowScroll={() => { setShowThemePicker(false); setShowPublishMenu(false); updateStripScroll(); }}
-                  onClose={handleToggleMenu}
-                />
+                <div
+                  ref={stripRef}
+                  className={`settings-strip absolute left-12 right-0 overflow-x-auto flex items-center gap-2 ${stripFade.l ? 'strip-fade-l' : ''} ${stripFade.r ? 'strip-fade-r' : ''} ${isMenuClosing ? 'animate-[fadeOutToLeft_0.4s_ease-in_forwards]' : 'animate-[fadeInFromLeft_0.4s_ease-out_backwards]'}`}
+                  style={{ zIndex: 150 }}
+                  onScroll={() => {
+                    setShowThemePicker(false);
+                    setShowPublishMenu(false);
+                    updateStripScroll();
+                    const track = stripTrackRef.current;
+                    if (track) {
+                      track.classList.add('scrolling');
+                      clearTimeout(stripScrollEndTimerRef.current);
+                      stripScrollEndTimerRef.current = setTimeout(() => track.classList.remove('scrolling'), 600);
+                    }
+                  }}
+                >
+                  <SettingsRow controls={stripControls} />
+                </div>
                 {themePickerPopover}
                 {publishPopover}
               </>
@@ -2396,7 +2272,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
             {/* Counter - shown when enabled, fades when menu opens */}
             {showCounter && (
-              <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu && !isMenuClosing ? 'opacity-0' : 'opacity-50'}`}>
+              <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu ? 'opacity-0' : 'opacity-50'}`}>
                 <span>{strings.writer.stats.words(wordCount)}</span>
                 <span>{strings.writer.stats.chars(charCount)}</span>
               </div>
@@ -2650,14 +2526,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               {/* quick toggles: tapping one changes it in place */}
               <ScrollRow className="mb-4">
-                {[
-                  { key: 'theme', label: theme, onClick: cycleTheme },
-                  { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
-                  { key: 'focus', label: getFocusLabel(), onClick: cycleFocus },
-                  { key: 'counter', label: showCounter ? strings.writer.mobile.counterOn : strings.writer.mobile.counterOff, onClick: () => setShowCounter(!showCounter) },
-                  { key: 'editor', label: strings.writer.editorMode.label(editorMode), onClick: toggleEditorMode, highlight: highlightNew },
-                  ...(canKeepOffline ? [{ key: 'offline', label: keptOffline ? strings.writer.connectivity.keptOffline : strings.writer.connectivity.keepOffline, onClick: toggleKeepOffline }] : []),
-                ].map((c) => (
+                {[...stripControls.device, ...stripControls.slate].map((c) => ({ key: c.id, label: controlLabel(c), onClick: c.onCycle, highlight: c.pulse })).map((c) => (
                   <button
                     key={c.key}
                     onClick={c.onClick}
