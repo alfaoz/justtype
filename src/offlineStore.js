@@ -14,8 +14,10 @@
 //   history  safety copies taken before a merge overwrites local work.
 const DB_NAME = 'justtype-offline';
 const DB_VERSION = 1;
-const KEEP_MAX_CACHED = 50;        // opened-but-not-kept slates retained
-const KEEP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+// Every slate gets a copy on the device (see copyPlan); copies the app made
+// on its own are evicted, least recently opened first, only past this budget.
+// Kept slates and slates with a queued write are never evicted.
+export const DEVICE_COPY_BUDGET = 64 * 1024 * 1024;
 const HISTORY_PER_SLATE = 20;
 
 let dbPromise = null;
@@ -92,17 +94,47 @@ export async function renameCachedSlate(userId, fromNumber, toNumber, data) {
   await cacheSlate(userId, toNumber, { ...(prev?.data || {}), ...data, slate_number: toNumber, local: false }, { opened: true });
 }
 
-// Drop opened-but-not-kept slates beyond the cap or age. Kept slates and
-// slates with a queued write are never pruned.
+const copySize = (rec) => (rec?.data?.encryptedContent?.length || 0);
+
+// Drop the app's own copies, least recently opened first, until the device
+// is back under budget. Kept slates and slates with a queued write stay.
 export async function pruneCache(userId) {
   const [slates, pending] = await Promise.all([getCachedSlates(userId), getPending(userId)]);
   const pendingKeys = new Set(pending.map(p => p.key));
+  let total = slates.reduce((n, s) => n + copySize(s), 0);
   const candidates = slates
     .filter(s => !s.keep && !pendingKeys.has(s.key) && !isLocalSlateNumber(s.slateNumber))
-    .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
-  const now = Date.now();
-  const drop = candidates.filter((s, i) => i >= KEEP_MAX_CACHED || now - (s.lastOpenedAt || s.cachedAt) > KEEP_MAX_AGE_MS);
+    .sort((a, b) => (a.lastOpenedAt || a.cachedAt) - (b.lastOpenedAt || b.cachedAt));
+  const drop = [];
+  for (const s of candidates) {
+    if (total <= DEVICE_COPY_BUDGET) break;
+    drop.push(s);
+    total -= copySize(s);
+  }
   if (drop.length) await tx('slates', 'readwrite', s => { for (const d of drop) s.delete(d.key); });
+}
+
+// Which slates from the server list this device should fetch: kept slates
+// whose copy is behind, then everything missing or behind, newest first,
+// while the list fits the budget. Rows are the server's list entries.
+export function copyPlan(rows, cached) {
+  const byNumber = new Map(cached.map(c => [c.slateNumber, c]));
+  const needs = (row) => {
+    const c = byNumber.get(row.slate_number);
+    return !c?.data?.encryptedContent || (row.updated_at && c.data.updated_at !== row.updated_at);
+  };
+  const eligible = rows.filter(r => !r.local && !r.shared && !isLocalSlateNumber(r.slate_number));
+  const kept = eligible.filter(r => byNumber.get(r.slate_number)?.keep);
+  const rest = eligible.filter(r => !byNumber.get(r.slate_number)?.keep)
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  let total = kept.reduce((n, r) => n + (r.size_bytes || 0), 0);
+  const within = [];
+  for (const r of rest) {
+    total += r.size_bytes || 0;
+    if (total > DEVICE_COPY_BUDGET) break;
+    within.push(r);
+  }
+  return [...kept, ...within].filter(needs).map(r => r.slate_number);
 }
 
 // ---- list ------------------------------------------------------------------

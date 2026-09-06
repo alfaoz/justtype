@@ -34,13 +34,6 @@ const strings = {
       syncing: 'syncing',
       merged: 'merged with edits made elsewhere',
       conflicts: (n) => `${n} ${n === 1 ? 'conflict' : 'conflicts'} to resolve`,
-      offlineAvailable: 'on device',
-      offlineHint: 'a synced copy of this slate is on this device, so it opens offline. click to remove it',
-      offlineRemoveConfirm: 'remove from device?',
-      offlineMaking: 'copying to this device',
-      offlineMade: 'on this device, opens offline',
-      offlineRemoved: 'removed from this device',
-      offlineFailed: 'could not copy to this device',
       offlineHint: 'no connection. keep writing; saving picks up when you are back online',
       update: 'new version · reload',
       updateHint: 'a newer justtype is live. reload to get it'
@@ -180,8 +173,14 @@ const strings = {
     },
     lockedTitle: 'locked slate',
     offline: {
-      kept: 'on device',
-      unavailable: 'not on this device',
+      // The device mark after each title: a check for a copy on this device
+      // (dim when the app made it, green when you asked for it), a cloud
+      // for a slate that is not here yet
+      auto: 'on this device',
+      kept: 'kept on this device',
+      missing: 'not on this device yet. click to copy it',
+      missingOffline: 'not on this device',
+      copying: 'copying to this device',
       local: 'saved on this device',
       keep: 'keep on this device',
       unkeep: 'remove from this device'

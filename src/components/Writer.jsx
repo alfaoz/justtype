@@ -12,7 +12,7 @@ import { withViewTransition } from '../viewTransition';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
-import { cacheSlate, getCachedSlate, getPendingFor, queuePending, setKeepOffline, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
+import { cacheSlate, getCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
@@ -296,8 +296,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [sharedRemoved, setSharedRemoved] = useState(false);
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
   const [confirmForget, setConfirmForget] = useState(false);
-  const [confirmOfflineRemove, setConfirmOfflineRemove] = useState(false);
-  const offlineConfirmTimerRef = useRef(null);
   const forgetTimerRef = useRef(null);
   // The settings strip scrolls when the window is narrow, so its popovers
   // (theme picker, share menu) anchor to the viewport instead of the strip —
@@ -323,7 +321,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [printJob, setPrintJob] = useState(0); // >0 while a pdf export's print copy is mounted
   const { online, updateAvailable } = useConnectivity();
-  const [keptOffline, setKeptOffline] = useState(false); // this slate is pinned to the device
   // Devices connected directly to this slate (nearby collab)
   const [nearbyCount, setNearbyCount] = useState(0);
   useEffect(() => {
@@ -1036,51 +1033,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
 
-  // A slate made available offline stays synced; it also keeps a copy on this
-  // device so it opens with no network. Making it available is done from the
-  // slate's menu in the list; the writer shows the state and can remove it.
-  const canKeepOffline = Boolean(token && userId && currentSlate && !isShared && !isLocalSlateNumber(currentSlate.slate_number));
-  const setOfflineAvailability = async (next) => {
-    if (!canKeepOffline) return;
-    const n = currentSlate.slate_number;
-    const c = strings.writer.connectivity;
-    setKeptOffline(next);
-    try {
-      if (next) {
-        setStatus(c.offlineMaking);
-        await setKeepOffline(userId, n, true);
-        // The flag alone is not a copy: make sure the content is on the device
-        const cached = await getCachedSlate(userId, n).catch(() => null);
-        if (!cached?.data?.encryptedContent) {
-          if (!isOnline()) throw new Error('offline');
-          const r = await fetch(`${API_URL}/slates/${n}`, { credentials: 'include' });
-          if (!r.ok) throw new Error(`load ${r.status}`);
-          await cacheSlate(userId, n, await r.json());
-        }
-        setStatus(c.offlineMade);
-      } else {
-        await setKeepOffline(userId, n, false);
-        setStatus(c.offlineRemoved);
-      }
-    } catch {
-      setKeptOffline(!next);
-      if (next) await setKeepOffline(userId, n, false).catch(() => {});
-      setStatus(c.offlineFailed);
-    }
-    setTimeout(() => setStatus('ready'), 2000);
-  };
-  // The indicator arms an inline `sure?`, matching the unpublish control
-  const handleOfflineIndicatorClick = () => {
-    clearTimeout(offlineConfirmTimerRef.current);
-    if (confirmOfflineRemove) {
-      setConfirmOfflineRemove(false);
-      setOfflineAvailability(false);
-    } else {
-      setConfirmOfflineRemove(true);
-      offlineConfirmTimerRef.current = setTimeout(() => setConfirmOfflineRemove(false), 3000);
-    }
-  };
-
   const loadSlate = async (id) => {
     try {
       // The device copy: the truth for slates created offline and for slates
@@ -1126,7 +1078,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
       if (!fromCache && userId && data.encrypted) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       else if (cached && userId) cacheSlate(userId, id, {}, { opened: true }).catch(() => {});
-      setKeptOffline(Boolean(cached?.keep));
       loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: data.encryptedContent ?? null };
       let slateContent;
       let slateTitle = data.title;
@@ -2383,18 +2334,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 )}
 
-                {/* Offline availability: green while a synced copy lives on this
-                    device; click arms the removal */}
-                {canKeepOffline && keptOffline && (
-                  <button
-                    onClick={handleOfflineIndicatorClick}
-                    className={`text-sm transition-colors duration-200 ${confirmOfflineRemove ? 'text-red-400 hover:text-red-300' : 'text-green-500 hover:text-white'}`}
-                    title={strings.writer.connectivity.offlineHint}
-                  >
-                    {confirmOfflineRemove ? strings.writer.connectivity.offlineRemoveConfirm : strings.writer.connectivity.offlineAvailable}
-                  </button>
-                )}
-
                 {/* Devices connected directly (nearby): one click to the tab */}
                 {nearbyCount > 0 && (
                   <button
@@ -2594,11 +2533,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               )}
               {!online && (
                 <div className="mb-3 py-2 rounded-lg text-center text-sm text-orange-400">{strings.writer.connectivity.offline}</div>
-              )}
-              {canKeepOffline && keptOffline && (
-                <button onClick={handleOfflineIndicatorClick} className={`w-full mb-3 py-2 rounded-lg text-center text-sm ${confirmOfflineRemove ? 'text-red-400' : 'text-green-500'}`}>
-                  {confirmOfflineRemove ? strings.writer.connectivity.offlineRemoveConfirm : strings.writer.connectivity.offlineAvailable}
-                </button>
               )}
               {online && updateAvailable && (
                 <button onClick={() => window.location.reload()} className="w-full mb-3 py-2 rounded-lg text-center text-sm text-blue-400">
