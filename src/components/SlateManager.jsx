@@ -75,7 +75,7 @@ function ChoiceRow({ label, options, value, onChange }) {
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy }) {
+function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy, onKeep }) {
   const tags = Array.isArray(slate.tags) ? slate.tags : [];
   const visibleTags = tags.slice(0, maxTags);
   const remaining = tags.length - visibleTags.length;
@@ -84,7 +84,7 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy 
   return (
     <>
       {/* Whether a copy of this slate is on this device */}
-      <DeviceMark slate={slate} offline={offline} onCopy={onCopy} />
+      <DeviceMark slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
       <span className={status.cls}>{status.label}</span>
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
@@ -130,7 +130,7 @@ const menuItemCls = (danger) =>
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline, onOffload, onCopyToDevice }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
@@ -171,21 +171,12 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
               <button onClick={onTags} className={menuItemCls(false)}>
                 {strings.slates.menu.tags}
               </button>
-              {/* This device's copy: keep it past the budget, let it go, or
-                  get it. A copy with an edit still on its way stays put. */}
-              {!slate.local && slate.available && (
-                <button onClick={onKeepOffline} className={menuItemCls(false)}>
-                  {slate.kept ? strings.slates.offline.unkeep : strings.slates.offline.keep}
-                </button>
-              )}
-              {!slate.local && slate.available && !slate.pending && (
-                <button onClick={onOffload} className={menuItemCls(false)}>
-                  {strings.slates.offline.offload}
-                </button>
-              )}
-              {!slate.local && !slate.available && (
-                <button onClick={onCopyToDevice} className={menuItemCls(false)}>
-                  {strings.slates.offline.copy}
+              {/* This device's copy: let it go, or get it. Keeping it past
+                  the budget is the check mark's job. A copy with an edit
+                  still on its way stays put. */}
+              {!slate.local && !slate.pending && (
+                <button onClick={slate.available ? onOffload : onCopyToDevice} className={menuItemCls(false)}>
+                  {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
                 </button>
               )}
               <button onClick={onPublish} className={menuItemCls(false)}>
@@ -205,13 +196,15 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
 /**
  * The device mark: where this slate stands between this device and the
  * account. A check means a copy is here (dim when the app made it, green
- * when you asked for it to stay, and a green pop the moment a sync lands).
- * An orange ! means it is saved here but not in the account yet; while that
- * upload runs the ring spins. A cloud means it is not here yet; clicking it
- * copies the slate and keeps it. The icons are the ones people already read
- * this way in Drive, Spotify and iCloud.
+ * when you asked for it to stay, and a green pop the moment a sync lands);
+ * clicking it switches between the two. An orange ! means it is saved here
+ * but not in the account yet; while that upload runs the ring spins. A cloud
+ * means it is not here yet; clicking it copies the slate and keeps it. The
+ * mark is the one place for the device's copy; the menu only offloads or
+ * copies. The icons are the ones people already read this way in Drive,
+ * Spotify and iCloud.
  */
-const DeviceMark = ({ slate, offline, onCopy }) => {
+const DeviceMark = ({ slate, offline, onCopy, onKeep }) => {
   if (slate.shared) return null;
   const o = strings.slates.offline;
   const icon = 'w-[1em] h-[1em]';
@@ -231,11 +224,14 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
   }
   if (slate.available) {
     const green = slate.kept || slate.justSynced;
+    const note = slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto;
     return (
-      <HoverNote plain note={slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
+      <HoverNote plain note={note} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
         {/* The dimming sits on the icon, not the wrapper: the hover card is a
             child of the wrapper and must stay opaque */}
-        <MarkGlyph kind="check" className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} aria-label={slate.kept ? o.kept : o.auto} role="img" />
+        <button type="button" onClick={onKeep} aria-label={slate.kept ? o.kept : o.auto} aria-pressed={Boolean(slate.kept)} className="flex items-center">
+          <MarkGlyph kind="check" className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} aria-hidden="true" />
+        </button>
       </HoverNote>
     );
   }
@@ -269,7 +265,7 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep }) {
   const isPinned = Boolean(slate.pinned_at);
   const unavailable = offline && !slate.available && !slate.local && !slate.shared;
   const open = unavailable ? undefined : onOpen;
@@ -302,7 +298,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -326,14 +322,14 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           {stats}
           <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
-        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
         {stats}
         <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
@@ -669,10 +665,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     if (next && !deviceCopies.available.has(slate.slate_number)) await copyToDevice([slate.slate_number]);
   };
 
+  // The check mark: dim (the app's copy) to green (kept past the budget) and back
   const toggleKeepOffline = (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
-    setOpenMenuId(null);
     setSlateKept(slate, !deviceCopies.kept.has(slate.slate_number));
   };
 
@@ -1267,6 +1263,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               }}
               offline={!online}
               onCopy={(e) => copySlateNow(slate, e)}
+              onKeep={(e) => toggleKeepOffline(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
               onOpen={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
               onTagFilter={setTagFilter}
@@ -1275,7 +1272,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onToggle: (e) => toggleMenu(slate.slate_number, e),
                 onPin: (e) => togglePin(slate, e),
                 onTags: (e) => openTagsEditor(slate, e),
-                onKeepOffline: (e) => toggleKeepOffline(slate, e),
                 onOffload: (e) => offloadFromDevice(slate, e),
                 onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),

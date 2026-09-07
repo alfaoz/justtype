@@ -196,10 +196,10 @@ const strings = {
     lockedTitle: 'locked slate',
     offline: {
       // The device mark after each title: a check for a copy on this device
-      // (dim when the app made it, green when you asked for it), a cloud
-      // for a slate that is not here yet
-      auto: 'on this device',
-      kept: 'kept on this device',
+      // (dim when the app made it, green when you asked for it; click to
+      // switch), a cloud for a slate that is not here yet
+      auto: 'on this device. click to keep it here',
+      kept: 'kept on this device. click to stop keeping',
       missing: 'not on this device yet. click to keep a copy here',
       offloaded: 'offloaded from this device. click to keep a copy here',
       missingOffline: 'not on this device',
@@ -208,8 +208,6 @@ const strings = {
       pendingEdits: 'edits saved on this device, not in your account yet',
       syncing: 'syncing to your account',
       synced: 'synced',
-      keep: 'keep on this device',
-      unkeep: 'stop keeping on this device',
       offload: 'offload from this device',
       copy: 'copy to this device'
     },
