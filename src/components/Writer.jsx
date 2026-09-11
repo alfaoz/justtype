@@ -2541,7 +2541,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </span>
 
             <div className={`grid transition-[grid-template-columns] duration-500 ease-out ${chromeOpen ? 'grid-cols-[1fr]' : 'grid-cols-[0fr]'}`}>
-            <div className={`min-w-0 ${chromeSettled ? '' : 'overflow-hidden'} flex gap-4 items-center pl-4 ${zenFade}`}>
+            <div className={`min-w-0 whitespace-nowrap ${chromeSettled ? '' : 'overflow-hidden'} flex gap-4 items-center pl-4 ${zenFade}`}>
 
             {/* Connectivity, in the same voice as the status word: offline is
                 orange like a private draft, a newer build is blue like a
