@@ -149,15 +149,16 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
         </button>
       )}
 
+      {/* The way out sits left in red; the way on sits right */}
       <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
+        {onCancel && (
+          <button onClick={onCancel} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">{s.cancel}</button>
+        )}
         {mode === 'gate' && stage === 'secret' && onRecover && (
           <button onClick={forgot} className="hover:text-[var(--theme-text)] transition-colors">{s.forgot}</button>
         )}
         {stage === 'phrase' && (
           <button onClick={submitPhrase} className="hover:text-[var(--theme-text)] transition-colors">{s.next}</button>
-        )}
-        {onCancel && (
-          <button onClick={onCancel} className="hover:text-[var(--theme-text)] transition-colors">{s.cancel}</button>
         )}
       </div>
     </div>
