@@ -59,8 +59,8 @@ const strings = {
     conflict: {
       ours: 'this device',
       theirs: 'elsewhere',
-      keepOurs: 'keep mine',
-      keepTheirs: 'keep theirs',
+      keepOurs: 'keep this device',
+      keepTheirs: 'keep elsewhere',
       keepBoth: 'keep both'
     },
     publicState: {

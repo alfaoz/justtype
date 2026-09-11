@@ -144,12 +144,22 @@ class ConflictWidget extends WidgetType {
     };
     const panes = document.createElement('div');
     panes.className = 'cm-lp-conflict-panes';
-    panes.append(pane(t.ours, this.ours), pane(t.theirs, this.theirs));
+    const ourPane = pane(t.ours, this.ours);
+    const theirPane = pane(t.theirs, this.theirs);
+    panes.append(ourPane, theirPane);
     const actions = document.createElement('div');
     actions.className = 'cm-lp-conflict-actions';
-    const choose = (label, text) => {
+    // Hovering a choice lights the pane(s) it keeps and dims the rest
+    const preview = (keeps) => {
+      el.classList.toggle('is-choosing', keeps.length > 0);
+      ourPane.classList.toggle('is-kept', keeps.includes(ourPane));
+      theirPane.classList.toggle('is-kept', keeps.includes(theirPane));
+    };
+    const choose = (label, text, keeps) => {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'cm-lp-conflict-btn'; btn.textContent = label; btn.cmIgnore = true;
+      btn.onmouseenter = () => preview(keeps);
+      btn.onmouseleave = () => preview([]);
       btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
       btn.onclick = (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -159,9 +169,9 @@ class ConflictWidget extends WidgetType {
       return btn;
     };
     actions.append(
-      choose(t.keepOurs, this.ours),
-      choose(t.keepTheirs, this.theirs),
-      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n')),
+      choose(t.keepOurs, this.ours, [ourPane]),
+      choose(t.keepTheirs, this.theirs, [theirPane]),
+      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n'), [ourPane, theirPane]),
     );
     el.append(panes, actions);
     return el;

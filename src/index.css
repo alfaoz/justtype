@@ -1055,7 +1055,10 @@ body.custom-theme ::-webkit-scrollbar-track {
 .wysiwyg-editor .cm-lp-conflict { margin: 0.35em 0; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); overflow: hidden; }
 .wysiwyg-editor .cm-lp-conflict-panes { display: grid; grid-template-columns: 1fr 1fr; }
 @media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-panes { grid-template-columns: 1fr; } }
-.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; }
+.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; transition: background-color 0.2s ease, opacity 0.2s ease; }
+/* While a choice is hovered: the pane(s) it keeps come forward, the other fades */
+.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane { opacity: 0.4; }
+.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane.is-kept { opacity: 1; background: var(--theme-bg-tertiary); }
 .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 1px solid var(--theme-border); }
 @media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 0; border-top: 1px solid var(--theme-border); } }
 .wysiwyg-editor .cm-lp-conflict-label { font-size: 0.75em; color: var(--theme-orange); margin-bottom: 0.4em; }
