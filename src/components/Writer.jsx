@@ -2309,7 +2309,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   // Focus mode: the footer chrome fades out and comes back under the pointer.
   // The about/save group also folds to zero width so the status slot sits at
-  // the right edge, and glides back left as the group unfolds.
+  // the right edge, and glides back left as the group unfolds; the left
+  // group slides the same way. (The slide is a transform only while closed:
+  // a transformed ancestor would pin the strip's fixed popovers.)
   const zenFade = `transition-opacity duration-500 ${zenMode ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`;
   const chromeOpen = !zenMode || footerHover;
 
@@ -2447,7 +2449,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
-          <div className={`flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0 ${zenFade}`} ref={settingsMenuRef}>
+          <div className={`flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0 ${zenFade} transition-[opacity,transform] ease-out ${chromeOpen ? '' : '-translate-x-6'}`} ref={settingsMenuRef}>
             {/* Three dots button - animates to horizontal line when open */}
             <button
               ref={threeDotsRef}
