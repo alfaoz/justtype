@@ -469,8 +469,8 @@ const strings = {
     },
     login: {
       title: 'login',
-      username: 'username',
-      usernamePlaceholder: 'enter username',
+      username: 'username or email',
+      usernamePlaceholder: 'username or email',
       password: 'password',
       passwordPlaceholder: 'enter password',
       submit: 'login',
