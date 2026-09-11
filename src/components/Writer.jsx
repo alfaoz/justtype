@@ -14,7 +14,7 @@ import { TextMorph } from 'torph/react';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
-import { cacheSlate, getCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
+import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
@@ -912,7 +912,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
 
     saveTimeoutRef.current = setTimeout(() => {
-      if (hasUnsavedChanges && content) {
+      if (hasUnsavedChanges && (content || (currentSlate && !shareUrl))) {
         if (!token) {
           // Not logged in - trigger header nudge instead of modal
           const wordCount = content.trim().split(/\s+/).length;
@@ -932,7 +932,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }, 2000);
 
     return () => clearTimeout(saveTimeoutRef.current);
-  }, [content, hasUnsavedChanges, token, currentSlate]);
+  }, [content, hasUnsavedChanges, token, currentSlate, shareUrl]);
 
   // Cleanup nudge timeout on unmount
   useEffect(() => {
@@ -959,7 +959,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (cmdOrCtrl && e.key === 's') {
         e.preventDefault();
         if (token) {
-          saveSlate();
+          saveSlate({ explicit: true });
         } else {
           onLogin();
         }
@@ -1240,7 +1240,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Expose save function to parent via ref
   useImperativeHandle(ref, () => ({
     saveBeforeNavigate: async () => {
-      if (hasUnsavedChanges && content.trim() && token && currentSlate) {
+      if (hasUnsavedChanges && token && currentSlate) {
         await saveSlateSync();
       }
     },
@@ -1260,7 +1260,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setCollabPanel(null);
     },
     // Command palette methods
-    saveSlate: () => saveSlate(),
+    saveSlate: () => saveSlate({ explicit: true }),
     toggleEditorMode: () => toggleEditorMode(),
     openPublishMenu: () => setShowPublishMenu(true),
     openCollab: () => openCollab(),
@@ -1402,10 +1402,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // A slate's first save gives it an address: 'saving...' morphs into the
   // address, which holds before the slot fades
   const setAnnouncingBoth = (on) => { announcingRef.current = on; setAnnouncing(on); };
-  const announceStatus = (text, hold = 3500) => {
+  const holdAnnouncement = (ms, then) => {
     clearTimeout(announceRef.current);
+    announceRef.current = setTimeout(() => { then?.(); setAnnouncingBoth(false); }, ms);
+  };
+  const announceStatus = (text, hold = 3500) => {
     setStatus(text);
-    announceRef.current = setTimeout(() => { setStatus('ready'); setAnnouncingBoth(false); }, hold);
+    holdAnnouncement(hold, () => setStatus('ready'));
   };
   const endAnnouncement = () => { clearTimeout(announceRef.current); setAnnouncingBoth(false); };
   useEffect(() => () => clearTimeout(announceRef.current), []);
@@ -1455,9 +1458,51 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return true;
   };
 
-  const saveSlate = async () => {
+  // The slate is empty and saved: delete it and the writer is a blank page
+  // again. A public slate asks first, and only when the user asked to save.
+  const [showDeleteEmptyModal, setShowDeleteEmptyModal] = useState(false);
+  const deleteEmptySlate = async ({ explicit = false } = {}) => {
+    if (shareUrl) {
+      if (explicit) setShowDeleteEmptyModal(true);
+      return null;
+    }
+    return deleteCurrentSlate();
+  };
+  const deleteCurrentSlate = async () => {
+    const n = currentSlate?.slate_number;
+    if (n == null) return null;
+    setShowDeleteEmptyModal(false);
+    try {
+      const r = await fetch(`${API_URL}/slates/${n}`, { method: 'DELETE', credentials: 'include' });
+      if (!r.ok) { setStatus(saveFailedStatus()); return null; }
+    } catch {
+      reportNetworkFailure();
+      setStatus(saveFailedStatus());
+      return null;
+    }
+    deleteCachedSlate(userId, n).catch(() => {});
+    localStorage.removeItem('justtype-draft');
+    lastSavedContentRef.current = '';
+    loadedSlateRef.current = null;
+    setHasUnsavedChanges(false);
+    setShareUrl(null);
+    setWasPublishedBeforeEdit(false);
+    endAnnouncement();
+    onSlateChange(null);
+    if (window.location.pathname.startsWith('/slate/')) window.history.replaceState({}, '', '/');
+    announceStatus(strings.writer.status.deleted, 2000);
+    return { deleted: true };
+  };
+
+  // `explicit`: the user asked (cmd+s, the save button, the palette). It is
+  // announced like a first save; the two-second autosave is not.
+  const saveSlate = async ({ explicit = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
-    if (!content.trim()) return null;
+    if (!content.trim()) {
+      // An emptied slate deletes itself; a public one asks first
+      if (currentSlate && token && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) return deleteEmptySlate({ explicit });
+      return null;
+    }
     // Collab slates persist through the Yjs document, which lives on this
     // device too; the canonical blob catches up when the network is back
     if (collabDocKey && !isOnline()) {
@@ -1465,11 +1510,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       return null;
     }
 
-    // An autosave that lands while the address is still being shown saves
-    // without a word; the announcement keeps the slot
+    // An autosave that lands while an announcement is showing saves without
+    // a word; the announcement keeps the slot
     const creating = !currentSlate;
-    const quiet = !creating && announcingRef.current;
-    if (creating) setAnnouncingBoth(true);
+    const loud = creating || explicit;
+    const quiet = !loud && announcingRef.current;
+    if (loud) setAnnouncingBoth(true);
     if (!quiet) setStatus('saving...');
 
     try {
@@ -1482,7 +1528,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (currentSlate && loadedSlateRef.current?.updated_at) body.baseUpdatedAt = loadedSlateRef.current.updated_at;
       if (!currentSlate) body.clientRef = (newSlateRefRef.current ||= newLocalSlateNumber());
 
-      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) return { local: true };
+      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
 
       const send = (payload) => fetch(url, {
         method,
@@ -1495,7 +1541,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         response = await send(body);
       } catch (netErr) {
         reportNetworkFailure();
-        if (await saveOffline(body)) return { local: true };
+        if (await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
         throw netErr;
       }
 
@@ -1503,6 +1549,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (response.status === 401) {
         const data = await response.json();
         if (data.code === 'ENCRYPTION_KEY_MISSING') {
+          endAnnouncement();
           setStatus(strings.errors.sessionExpired);
           onLogin();
           return null;
@@ -1538,6 +1585,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setHasUnsavedChanges(false);
         setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
         if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
+        if (loud) holdAnnouncement(4000);
         return data;
       }
 
@@ -1594,13 +1642,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setWasPublishedBeforeEdit(true);
         setStatus(strings.writer.status.savedAsPrivate);
         setTimeout(() => setStatus(strings.writer.status.privateDraft), 3000);
+        if (loud) holdAnnouncement(3000);
       } else if (data.is_published && data.share_id) {
         // System slates that stay published
         setShareUrl(`${window.location.origin}/s/${data.share_id}`);
         setStatus('saved');
         setTimeout(() => setStatus(strings.writer.status.published), 2000);
+        if (loud) holdAnnouncement(2000);
       } else if (creating && data.slate_number != null) {
         announceStatus(strings.writer.status.savedAs(data.slate_number));
+      } else if (explicit) {
+        announceStatus('saved', 2000);
       } else if (!quiet) {
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);
@@ -2601,16 +2653,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   if (!token) return;
                   if (!hasUnsavedChanges && currentSlate) {
                     // Already saved, just show status
-                    setStatus('saved');
-                    setTimeout(() => setStatus('ready'), 2000);
+                    announceStatus('saved', 2000);
                     return;
                   }
-                  saveSlate();
+                  saveSlate({ explicit: true });
                 }}
-                className="save-btn hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
+                className="kbd-host hover:text-white transition-all duration-300 active:scale-95 flex items-center"
               >
                 <span>{isShared ? 'export' : strings.writer.buttons.save}</span>
-                {token && !isShared && <span className="save-key text-xs leading-none inline-flex items-center" aria-hidden="true">⌘S</span>}
+                {token && !isShared && <span className="kbd-hint text-xs leading-none" aria-hidden="true">⌘S</span>}
               </button>
               {showSaveMenu && (
                 <div
@@ -2620,10 +2671,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 >
                   <button
                     onClick={() => setShowExportMenu(true)}
-                    className="px-3 py-1.5 hover:text-white transition-colors duration-200 flex items-center gap-3 whitespace-nowrap"
+                    className="kbd-host px-3 py-1.5 hover:text-white transition-colors duration-200 flex items-center whitespace-nowrap"
                   >
                     <span>export</span>
-                    <span className="text-xs opacity-50">⌘E</span>
+                    <span className="kbd-hint text-xs leading-none" aria-hidden="true">⌘E</span>
                   </button>
                 </div>
               )}
@@ -2762,11 +2813,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     return;
                   }
                   if (!hasUnsavedChanges && currentSlate) {
-                    setStatus('saved');
-                    setTimeout(() => setStatus('ready'), 2000);
+                    announceStatus('saved', 2000);
                     return;
                   }
-                  saveSlate();
+                  saveSlate({ explicit: true });
                 }}
                 className="w-full h-12 bg-white text-black rounded-lg active:bg-[#e5e5e5] transition-colors font-medium mb-4"
               >
@@ -3059,6 +3109,29 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       )}
 
       {/* Already Subscribed Modal */}
+      {showDeleteEmptyModal && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => setShowDeleteEmptyModal(false))}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-white mb-4">{strings.writer.deleteEmpty.title}</h2>
+            <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.writer.deleteEmpty.message}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={deleteCurrentSlate}
+                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+              >
+                {strings.writer.deleteEmpty.confirm}
+              </button>
+              <button
+                onClick={() => withViewTransition(() => setShowDeleteEmptyModal(false))}
+                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+              >
+                {strings.writer.deleteEmpty.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAlreadySubscribedModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => setShowAlreadySubscribedModal(false))}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>

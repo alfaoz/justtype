@@ -117,6 +117,7 @@ const strings = {
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
       savedAs: (n) => `saved as /slate/${n}`,
+      deleted: 'deleted',
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
@@ -276,6 +277,13 @@ const strings = {
       invalidTag: 'tags must be alphanumeric with no spaces.',
       tooLong: (max) => `tag too long (max ${max} chars).`,
       tooMany: (max) => `too many tags (max ${max}).`,
+    },
+    // An emptied slate deletes itself on save; a public one asks first
+    deleteEmpty: {
+      title: 'delete this public slate?',
+      message: 'it is empty now. deleting it takes its public link down. keeping it leaves the link up with what was published.',
+      confirm: 'delete',
+      cancel: 'keep',
     },
     deleteModal: {
       title: 'delete slate?',
