@@ -1349,6 +1349,7 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
+              currentSlateNumber={currentSlate?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);
                 setView('shared');

@@ -351,7 +351,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showCatalog, setShowCatalog] = useState(false);
   const [catalog, setCatalog] = useState(null);
   const themeFileInputRef = useRef(null);
-  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'auto'); // 'off' | 'on' | 'auto'
+  const [focusMode, setFocusMode] = useState(() => localStorage.getItem('justtype-focus-mode') || 'off'); // 'off' | 'on' | 'auto'
   const [showCounter, setShowCounter] = useState(() => localStorage.getItem('justtype-show-counter') !== 'false');
   const autoZenTimeoutRef = useRef(null);
   const autoZenActiveRef = useRef(false);

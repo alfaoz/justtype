@@ -77,17 +77,21 @@ function ChoiceRow({ label, options, value, onChange }) {
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy, onKeep }) {
+function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy, onKeep, markLast = false }) {
   const tags = Array.isArray(slate.tags) ? slate.tags : [];
   const visibleTags = tags.slice(0, maxTags);
   const remaining = tags.length - visibleTags.length;
   const status = statusFor(slate);
+  // Whether a copy of this slate is on this device. The mark hides until
+  // hovered, so on a card it sits after the status where its space is at
+  // the end of the line rather than a hole before the first word.
+  const mark = <DeviceMark slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />;
 
   return (
     <>
-      {/* Whether a copy of this slate is on this device */}
-      <DeviceMark slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
+      {!markLast && mark}
       <span className={status.cls}>{status.label}</span>
+      {markLast && mark}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
           {strings.slates.status.syncing}
@@ -267,8 +271,10 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false }) {
   const isPinned = Boolean(slate.pinned_at);
+  // The slate the writer has open (the one the writer button goes back to)
+  // rests in its hover state: no word, just the row already lit
   // Content search: the line the query was found on, the match lit up
   const snippet = hit && (
     <p className="mt-1 text-xs text-[var(--theme-text-dim)] truncate animate-[fadeIn_0.3s_ease-out]">
@@ -291,7 +297,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     return (
       <div
         onClick={open}
-        className={`slate-item bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
+        className={`slate-item ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
         {/* The title is the card: let it wrap to two lines instead of
             truncating at twenty characters, and gather every piece of meta
@@ -308,7 +314,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} markLast />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -322,7 +328,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   return (
     <div
       onClick={open}
-      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
+      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -350,7 +356,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   );
 }
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, currentSlateNumber = null }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
   const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
@@ -1332,6 +1338,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               }}
               offline={!online}
               hit={contentHits.get(slate.slate_number) || null}
+              editing={currentSlateNumber != null && slate.slate_number === currentSlateNumber}
               onCopy={(e) => copySlateNow(slate, e)}
               onKeep={(e) => toggleKeepOffline(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
