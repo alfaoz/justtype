@@ -1270,11 +1270,12 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
     return res.status(400).json({ error: 'Username and password required' });
   }
 
-  // Normalize username to lowercase
+  // Normalize username to lowercase. The box takes the email too: the
+  // reset flow asks for the email, and people come straight back with it.
   username = username.toLowerCase().trim();
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const user = db.prepare('SELECT * FROM users WHERE username = ? OR (email IS NOT NULL AND lower(email) = ?)').get(username, username);
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
