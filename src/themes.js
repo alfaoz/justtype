@@ -50,6 +50,27 @@ export const builtInThemes = {
     },
     fonts: defaultFonts
   },
+  'soft-dark': {
+    id: 'soft-dark',
+    name: 'soft dark',
+    colors: {
+      bg: '#19191b',
+      bgSecondary: '#202023',
+      bgTertiary: '#27272b',
+      text: '#e4e4e6',
+      textMuted: '#8d8d94',
+      textDim: '#55555c',
+      border: '#2c2c31',
+      borderLight: '#242428',
+      accent: '#e4e4e6',
+      // Semantic colors
+      blue: '#4cc9f0',
+      orange: '#f77f00',
+      red: '#e94560',
+      green: '#06d6a0',
+    },
+    fonts: defaultFonts
+  },
   legacy: {
     id: 'legacy',
     name: 'legacy',

@@ -1,3 +1,4 @@
+import { TextMorph } from 'torph/react';
 import React from 'react';
 
 /**
@@ -43,7 +44,7 @@ export function SettingsRow({ controls }) {
             style={{ color: c.active ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
             {...(c.id === 'theme' ? { 'data-theme-picker': true } : {})}
           >
-            {controlLabel(c)}
+            <TextMorph>{controlLabel(c)}</TextMorph>
           </button>
         )), <Sep />)}
       </React.Fragment>

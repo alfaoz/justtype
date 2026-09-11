@@ -10,6 +10,7 @@ import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, f
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
+import { TextMorph } from 'torph/react';
 import { VerifyBadge } from './VerifyBadge';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
@@ -364,8 +365,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
-  // The status slot typing out a line, one character per tick
-  const typeStatusRef = useRef([]);
+  const announceRef = useRef(null);
   // A slate's first save, from 'saving...' until its address has been shown:
   // the status stays visible through focus mode and autosaves stay quiet
   const [announcing, setAnnouncing] = useState(false);
@@ -1389,21 +1389,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The encrypted payload a save sends (collab slates encrypt under the
   // shared doc key; new slates are never collab). ZK titles: no plaintext
   // title leaves the browser for E2E slates.
-  // A slate's first save gives it an address: the status slot types it out
-  // the way the page was written, then settles back to ready
+  // A slate's first save gives it an address: 'saving...' morphs into the
+  // address, which holds before the slot fades
   const setAnnouncingBoth = (on) => { announcingRef.current = on; setAnnouncing(on); };
-  const typeStatus = (text, hold = 3000) => {
-    typeStatusRef.current.forEach(clearTimeout);
-    const timers = [];
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const perChar = reduced ? 0 : 28;
-    if (reduced) setStatus(text);
-    else for (let i = 1; i <= text.length; i++) timers.push(setTimeout(() => setStatus(text.slice(0, i) + (i < text.length ? '\u258d' : '')), i * perChar));
-    timers.push(setTimeout(() => { setStatus('ready'); setAnnouncingBoth(false); }, text.length * perChar + hold));
-    typeStatusRef.current = timers;
+  const announceStatus = (text, hold = 3500) => {
+    clearTimeout(announceRef.current);
+    setStatus(text);
+    announceRef.current = setTimeout(() => { setStatus('ready'); setAnnouncingBoth(false); }, hold);
   };
-  const endAnnouncement = () => { typeStatusRef.current.forEach(clearTimeout); setAnnouncingBoth(false); };
-  useEffect(() => () => typeStatusRef.current.forEach(clearTimeout), []);
+  const endAnnouncement = () => { clearTimeout(announceRef.current); setAnnouncingBoth(false); };
+  useEffect(() => () => clearTimeout(announceRef.current), []);
 
   const buildSavePayload = async () => {
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
@@ -1595,7 +1590,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setStatus('saved');
         setTimeout(() => setStatus(strings.writer.status.published), 2000);
       } else if (creating && data.slate_number != null) {
-        typeStatus(strings.writer.status.savedAs(data.slate_number));
+        announceStatus(strings.writer.status.savedAs(data.slate_number));
       } else if (!quiet) {
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);
@@ -2453,8 +2448,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             {/* Counter - shown when enabled, fades when menu opens */}
             {showCounter && (
               <div className={`flex gap-4 ml-2 transition-opacity duration-500 ${showSettingsMenu ? 'opacity-0' : 'opacity-50'}`}>
-                <span>{strings.writer.stats.words(wordCount)}</span>
-                <span>{strings.writer.stats.chars(charCount)}</span>
+                <TextMorph>{strings.writer.stats.words(wordCount)}</TextMorph>
+                <TextMorph>{strings.writer.stats.chars(charCount)}</TextMorph>
               </div>
             )}
           </div>
@@ -2477,7 +2472,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 }
               }}
             >
-              {shownStatus}
+              <TextMorph>{shownStatus}</TextMorph>
             </span>
 
             <div className={`flex gap-4 items-center ${zenFade}`}>
@@ -2647,7 +2642,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
       >
         {showCounter && (
-          <span className="text-sm tabular-nums">{strings.writer.mobile.words(wordCount)}</span>
+          <TextMorph className="text-sm tabular-nums">{strings.writer.mobile.words(wordCount)}</TextMorph>
         )}
         {hasUnsavedChanges && token && (
           <span className="w-1.5 h-1.5 rounded-full bg-orange-400" aria-hidden="true" />
@@ -2727,7 +2722,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               {/* status */}
               {status !== 'ready' && (
                 <div className={`mb-3 py-2 rounded-lg text-center text-sm ${statusTone(shownStatus)}`}>
-                  {shownStatus}
+                  <TextMorph>{shownStatus}</TextMorph>
                 </div>
               )}
               {!online && (
