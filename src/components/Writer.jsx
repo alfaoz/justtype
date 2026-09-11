@@ -369,6 +369,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // A slate's first save, from 'saving...' until its address has been shown:
   // the status stays visible through focus mode and autosaves stay quiet
   const [announcing, setAnnouncing] = useState(false);
+  // The slate on screen right now, for a save that finishes after the user
+  // has moved on to another one
+  const currentSlateRef = useRef(currentSlate);
+  currentSlateRef.current = currentSlate;
   const [footerHover, setFooterHover] = useState(false);
   // True once the folded group has finished unfolding: only then may its
   // popovers (the save menu) overflow the box
@@ -1498,10 +1502,24 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return { deleted: true };
   };
 
+  // Saves run one at a time. A leave-save that arrives while the autosave
+  // is in flight waits for it and then finds nothing left to send, instead
+  // of a second PUT on the same base version (which the server refuses as a
+  // conflict and the editor would report as a merge).
+  const saveChainRef = useRef(Promise.resolve());
+  const saveSlate = (opts) => {
+    const run = () => saveSlateNow(opts);
+    const p = saveChainRef.current.then(run, run);
+    saveChainRef.current = p.catch(() => {});
+    return p;
+  };
+
   // `explicit`: the user asked (cmd+s, the save button, the palette). It is
   // announced like a first save; the two-second autosave is not.
-  const saveSlate = async ({ explicit = false } = {}) => {
+  const saveSlateNow = async ({ explicit = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
+    const openNumber = currentSlate?.slate_number ?? null;
+    const stillOpen = () => (currentSlateRef.current?.slate_number ?? null) === openNumber;
     if (!content.trim()) {
       // An emptied slate deletes itself; a public one asks first
       if (currentSlate && token && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) return deleteEmptySlate({ explicit });
@@ -1512,6 +1530,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (collabDocKey && !isOnline()) {
       setStatus(strings.writer.connectivity.savedLocally);
       return null;
+    }
+
+    // Nothing changed since the last save (a queued leave-save behind an
+    // autosave, or cmd+s twice): nothing to send
+    if (currentSlate && JSON.stringify({ content }) === lastSavedContentRef.current) {
+      if (explicit) announceStatus('saved', 2000);
+      return { unchanged: true, slate_number: currentSlate.slate_number };
     }
 
     // An autosave that lands while an announcement is showing saves without
@@ -1583,22 +1608,26 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const data = await response.json();
 
       if (currentSlate && sentBody.encryptedContent) {
-        loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent };
+        if (stillOpen()) loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent };
         cacheSlate(userId, currentSlate.slate_number, { encryptedContent: sentBody.encryptedContent, encrypted_title: sentBody.encryptedTitle, updated_at: data.updated_at ?? null }).catch(() => {});
       }
       if (mergeInfo) {
-        setContent(mergeInfo.text);
-        lastSavedContentRef.current = JSON.stringify({ content: mergeInfo.text });
-        setHasUnsavedChanges(false);
-        setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
-        if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
-        if (loud) holdAnnouncement(4000);
+        // The merged text belongs to the slate that was saved; if another
+        // one is open by now it stays out of the editor
+        if (stillOpen()) {
+          setContent(mergeInfo.text);
+          lastSavedContentRef.current = JSON.stringify({ content: mergeInfo.text });
+          setHasUnsavedChanges(false);
+          setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
+          if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
+          if (loud) holdAnnouncement(4000);
+        } else endAnnouncement();
         return data;
       }
 
       if (!currentSlate) {
         newSlateRefRef.current = null;
-        loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent ?? null };
+        if (stillOpen()) loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent ?? null };
         // The device copy a load would have made
         if (userId && sentBody.encryptedContent) {
           cacheSlate(userId, data.slate_number, {
@@ -1608,8 +1637,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             word_count: sentBody.wordCount, char_count: sentBody.charCount,
           }, { opened: true }).catch(() => {});
         }
-        adoptSlate(data);
+        if (stillOpen()) adoptSlate(data);
       }
+
+      // The user has moved on: the slate is saved, nothing else to show
+      if (!stillOpen()) { endAnnouncement(); return data; }
 
       lastSavedContentRef.current = JSON.stringify({ content });
       setHasUnsavedChanges(false);
