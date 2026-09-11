@@ -15,7 +15,7 @@
 import { API_URL } from './config';
 import { getSlateKey } from './keyStore';
 import { decryptContent, encryptContent, encryptTitle, unwrapKey } from './crypto';
-import { unwrapDocKey } from './slateLock';
+import { openDocKey } from './slateLock';
 import { isOnline, onConnectivity, reportNetworkFailure } from './connectivity';
 import {
   getPending, deletePending, queuePending, cacheSlate, renameCachedSlate, addHistory, getCachedSlate,
@@ -30,12 +30,13 @@ import { CONFLICT_OURS, mergeTexts } from './mergeText';
 
 const json = (res) => res.json().catch(() => ({}));
 
-async function contentKeyFor(userId, cached) {
+async function contentKeyFor(userId, cached, slateNumber) {
   const master = await getSlateKey(userId);
   if (!master) throw new Error('no key');
   if (cached?.data?.is_collab && cached.data.collab_wrapped_key) return unwrapKey(cached.data.collab_wrapped_key, master);
-  if (cached?.data?.is_locked && cached.data.lock_wrapped_key) {
-    const docKey = await unwrapDocKey(cached.data.lock_wrapped_key);
+  if (cached?.data?.is_locked) {
+    // A locked slate merges only while its lock is open on this device
+    const docKey = openDocKey(slateNumber);
     if (!docKey) throw new Error('locked');
     return docKey;
   }
@@ -49,7 +50,7 @@ export async function mergeWithServer(userId, slateNumber, ourBody, baseEncrypte
   if (!res.ok) throw new Error('fetch current failed');
   const theirs = await res.json();
   const cached = await getCachedSlate(userId, slateNumber);
-  const key = await contentKeyFor(userId, cached || { data: theirs });
+  const key = await contentKeyFor(userId, cached || { data: theirs }, slateNumber);
   const [baseText, ourText, theirText] = await Promise.all([
     baseEncryptedContent ? decryptContent(baseEncryptedContent, key) : Promise.resolve(''),
     decryptContent(ourBody.encryptedContent, key),

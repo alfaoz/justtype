@@ -14,7 +14,7 @@ import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from 'torph/react';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
-import { isUnlocked, onLockChange, fetchLockData, setupLock, unlock as openLock, unwrapDocKey, saveLockChange } from '../slateLock';
+import { isOpen, openDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
@@ -413,49 +413,80 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [searchQuery, setSearchQuery] = useState('');
   // Whether the account's lock is open right now: the open locked slate
   // reads "unlocked" only while it is
-  const [lockOpen, setLockOpen] = useState(isUnlocked());
-  useEffect(() => onLockChange(setLockOpen), []);
-  // The secret asked for before a lock change from the list: { mode, data, then }
+  // Lock changes re-render the list: the slates whose lock is open read
+  // "unlocked" while it is
+  const [, setLockTick] = useState(0);
+  useEffect(() => onLockChange(() => setLockTick(t => t + 1)), []);
+  // The panel asked for before a lock change from the list:
+  // { mode: 'setup' | 'gate', slate, info, recoveryKey, needsRecoveryKey }
   const [lockAsk, setLockAsk] = useState(null);
 
-  // Lock or unlock a slate from its menu: fetch it, decrypt, save it re-keyed
-  const applyLockChange = async (slate) => {
-    const master = await getSlateKey(userId);
-    if (!master) throw new Error('no key');
+  const fetchSlateForLock = async (slate) => {
     const res = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
     if (!res.ok) throw new Error('load failed');
-    const d = await res.json();
-    let key = master;
-    if (d.is_locked && d.lock_wrapped_key) {
-      key = await unwrapDocKey(d.lock_wrapped_key);
-      if (!key) throw new Error('locked');
-    }
-    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, key) : (d.content || '');
-    const lockOn = !d.is_locked;
-    const { lockWrappedKey, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn, baseUpdatedAt: d.updated_at });
-    setSlates(prev => prev.map(s => s.slate_number === slate.slate_number
-      ? { ...s, is_locked: lockOn ? 1 : 0, lock_wrapped_key: lockWrappedKey, updated_at: data.updated_at ?? s.updated_at }
-      : s));
+    return res.json();
+  };
+  const noteLockChange = (slateNumber, lockFields, updatedAt) => {
+    setSlates(prev => prev.map(s => s.slate_number === slateNumber ? { ...s, ...lockFields, updated_at: updatedAt ?? s.updated_at } : s));
+  };
+  // Lock a slate from its menu: fetch it, decrypt under the master key, save
+  // it re-keyed to the chosen secret
+  const lockFromList = async (slate, { secret, phrase }, ask) => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('no key');
+    let recoveryKey = ask.recoveryKey;
+    if (!recoveryKey) recoveryKey = await registerRecoveryKey(phrase, ask.info);
+    const d = await fetchSlateForLock(slate);
+    if (d.is_locked) return;
+    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, master) : (d.content || '');
+    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: true, secret, recoveryKey, baseUpdatedAt: d.updated_at });
+    noteLockChange(slate.slate_number, lockFields, data.updated_at);
+  };
+  // Remove a slate's lock: its doc key must be open (the secret, or recovery)
+  const removeLockFromList = async (slate, docKey) => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('no key');
+    const d = await fetchSlateForLock(slate);
+    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, docKey) : '';
+    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: false, baseUpdatedAt: d.updated_at });
+    noteLockChange(slate.slate_number, lockFields, data.updated_at);
   };
   const toggleLock = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
     if (!isOnline()) { showToast(strings.writer.lock.needsNetwork); return; }
-    if (!lockOpen) {
-      let data = null;
-      try { data = await fetchLockData(); } catch { showToast(strings.writer.lock.failed); return; }
-      setLockAsk({ mode: data.hasLock ? 'unlock' : 'setup', data, slate });
-      return;
+    try {
+      if (!slate.is_locked) {
+        const info = await fetchLockRecovery();
+        const recoveryKey = currentRecoveryKey(info);
+        setLockAsk({ mode: 'setup', slate, info, recoveryKey, needsRecoveryKey: !recoveryKey });
+        return;
+      }
+      const open = openDocKey(slate.slate_number);
+      if (open) { await removeLockFromList(slate, open); return; }
+      const d = await fetchSlateForLock(slate);
+      setLockAsk({ mode: 'gate', slate: { ...slate, ...d } });
+    } catch (err) {
+      console.error('lock change failed:', err);
+      showToast(strings.writer.lock.failed);
     }
-    try { await applyLockChange(slate); } catch (err) { console.error('lock change failed:', err); showToast(strings.writer.lock.failed); }
   };
-  const handleLockAskSubmit = async (secret) => {
-    if (lockAsk.mode === 'setup') await setupLock(secret);
-    else await openLock(secret, lockAsk.data);
-    const slate = lockAsk.slate;
+  const handleLockAskSubmit = async (entry) => {
+    const ask = lockAsk;
+    if (ask.mode === 'setup') {
+      await lockFromList(ask.slate, entry, ask);
+    } else {
+      const docKey = await unlockSlate(ask.slate.slate_number, entry.secret, ask.slate);
+      await removeLockFromList(ask.slate, docKey);
+    }
     setLockAsk(null);
-    try { await applyLockChange(slate); } catch (err) { console.error('lock change failed:', err); showToast(strings.writer.lock.failed); }
+  };
+  const handleLockAskRecover = async ({ phrase }) => {
+    const ask = lockAsk;
+    const docKey = await recoverSlate(ask.slate.slate_number, phrase, ask.slate);
+    await removeLockFromList(ask.slate, docKey);
+    setLockAsk(null);
   };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
@@ -1396,7 +1427,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 syncing: syncing.has(slate.slate_number),
                 justSynced: justSynced.has(slate.slate_number),
                 copying: copying.has(slate.slate_number),
-                unlockedHere: lockOpen && currentSlateNumber != null && slate.slate_number === currentSlateNumber,
+                unlockedHere: isOpen(slate.slate_number),
               }}
               offline={!online}
               hit={contentHits.get(slate.slate_number) || null}
@@ -1414,9 +1445,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onOffload: (e) => offloadFromDevice(slate, e),
                 onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
-                // The open slate changes its lock from the writer's settings
-                // row, where the editor's keys follow the change
-                onLock: currentSlateNumber != null && slate.slate_number === currentSlateNumber ? null : (e) => toggleLock(slate, e),
+                onLock: (e) => toggleLock(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);
                   showDeleteConfirmation(slate.slate_number, slate.title, e);
@@ -1550,7 +1579,13 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       {lockAsk && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4" onClick={() => setLockAsk(null)}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-            <LockPanel mode={lockAsk.mode} onSubmit={handleLockAskSubmit} onCancel={() => setLockAsk(null)} />
+            <LockPanel
+              mode={lockAsk.mode}
+              needsRecoveryKey={!!lockAsk.needsRecoveryKey}
+              onSubmit={handleLockAskSubmit}
+              onRecover={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskRecover : undefined}
+              onCancel={() => setLockAsk(null)}
+            />
           </div>
         </div>
       )}

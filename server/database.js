@@ -1046,6 +1046,22 @@ try {
     db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_wrapped_key TEXT;`);
     console.log('✓ Database migrated: Added lock key columns to users');
   }
+  // Each locked slate has its own secret: a salt per slate, the doc key
+  // wrapped to the secret, and the doc key wrapped again to the account's
+  // lock-recovery public key (RSA), whose private key is wrapped to the
+  // recovery phrase. The keypairs live as a JSON list on the user, newest
+  // first, so slates locked under an older phrase stay recoverable with it.
+  const slateColsLock = db.pragma('table_info(slates)');
+  if (!slateColsLock.some(col => col.name === 'lock_salt')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_salt TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_key_id TEXT;`);
+    console.log('✓ Database migrated: Added per-slate lock columns to slates');
+  }
+  if (!userColsLock.some(col => col.name === 'lock_recovery_keys')) {
+    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_keys TEXT;`);
+    console.log('✓ Database migrated: Added lock_recovery_keys column to users');
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS collab_members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -20,7 +20,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { isUnlocked, onLockChange, relock, touchLock, fetchLockData, setupLock, unlock as openLock, unwrapDocKey, saveLockChange } from '../slateLock';
+import { openDocKey, onLockChange, relock, touchLock, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -295,6 +295,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The slate number `isLocked` speaks for, and the last slate loaded:
   // moving to another slate shuts the lock
   const lockedSlateRef = useRef(null);
+  const lockedSlateMetaRef = useRef(null);
   const lastLoadedRef = useRef(null);
   useEffect(() => {
     if (currentSlate) return;
@@ -1196,7 +1197,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           setCollabSlateDbId(null);
           setIsLocked(true);
           lockedSlateRef.current = id;
-          const docKey = await unwrapDocKey(data.lock_wrapped_key);
+          lockedSlateMetaRef.current = { lock_wrapped_key: data.lock_wrapped_key, lock_salt: data.lock_salt, lock_recovery_wrapped_key: data.lock_recovery_wrapped_key, lock_recovery_key_id: data.lock_recovery_key_id };
+          const docKey = openDocKey(id);
           if (docKey) {
             contentKey = docKey;
             setLockDocKey(docKey);
@@ -1243,7 +1245,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       setTitle(slateTitle);
       setContent(slateContent);
-      const gate = gated ? { id } : null;
+      const gate = gated ? { id, slate: data } : null;
       lockGateRef.current = gate;
       setLockGate(gate);
       setLockPrompt(null);
@@ -2402,67 +2404,100 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // the account's lock key and rides on a normal save; unlocking re-keys it
   // back to the master key. Runs on the save chain so it never races a save.
   const canLock = !!(token && currentSlate && !isShared && !collabDocKey && !shareUrl && !isLocalSlateNumber(currentSlate.slate_number));
-  const rekeyForLock = async (lockOn) => {
+  const rekeyForLock = async (lockOn, { secret = null, recoveryKey = null, docKey = null } = {}) => {
     const slateKey = userId ? await getSlateKey(userId) : null;
     if (!slateKey || !currentSlate) return;
-    const { body, data, docKey } = await saveLockChange({ userId, slateNumber: currentSlate.slate_number, content, masterKey: slateKey, lockOn });
+    const { body, data, docKey: key } = await saveLockChange({
+      userId, slateNumber: currentSlate.slate_number, content, masterKey: slateKey, lockOn, secret, recoveryKey, docKey,
+    });
     loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: body.encryptedContent };
     lastSavedContentRef.current = JSON.stringify({ content });
     setHasUnsavedChanges(false);
-    setLockDocKey(docKey);
+    setLockDocKey(key);
     setIsLocked(lockOn);
     lockedSlateRef.current = lockOn ? currentSlate.slate_number : null;
     announceStatus(lockOn ? strings.writer.lock.locked : strings.writer.lock.unlocked, 2500);
   };
+  const onSaveChain = (run) => {
+    const p = saveChainRef.current.then(run, run);
+    saveChainRef.current = p.catch(() => {});
+    return p;
+  };
   const toggleLock = async () => {
     if (!canLock || lockGate) return;
     if (!isOnline()) { announceStatus(strings.writer.lock.needsNetwork, 2500); return; }
-    if (!isLocked && !isUnlocked()) {
-      // The lock is shut: ask for the secret first (or choose one)
-      let data = null;
-      try { data = await fetchLockData(); } catch { announceStatus(strings.writer.lock.failed, 2500); return; }
-      setLockPrompt({ mode: data.hasLock ? 'unlock' : 'setup', data });
+    if (!isLocked) {
+      // Choosing a secret: the panel also collects the recovery phrase once
+      // when the account has no lock-recovery keypair for its current phrase
+      let info = null;
+      try { info = await fetchLockRecovery(); } catch { announceStatus(strings.writer.lock.failed, 2500); return; }
+      const recoveryKey = currentRecoveryKey(info);
+      setLockPrompt({ info, recoveryKey, needsRecoveryKey: !recoveryKey });
       return;
     }
-    const run = () => rekeyForLock(!isLocked);
-    const p = saveChainRef.current.then(run, run);
-    saveChainRef.current = p.catch(() => {});
-    try { await p; } catch (err) { console.error('lock toggle failed:', err); announceStatus(strings.writer.lock.failed, 2500); }
+    try { await onSaveChain(() => rekeyForLock(false)); }
+    catch (err) { console.error('lock toggle failed:', err); announceStatus(strings.writer.lock.failed, 2500); }
   };
-  // The prompt before locking: set the account's lock, or open it, then lock
-  const handleLockPromptSubmit = async (secret) => {
-    if (lockPrompt?.mode === 'setup') await setupLock(secret);
-    else await openLock(secret, lockPrompt?.data || null);
+  const handleLockPromptSubmit = async ({ secret, phrase }) => {
+    let recoveryKey = lockPrompt?.recoveryKey || null;
+    if (!recoveryKey) recoveryKey = await registerRecoveryKey(phrase, lockPrompt?.info || null);
     setLockPrompt(null);
-    const run = () => rekeyForLock(true);
-    const p = saveChainRef.current.then(run, run);
-    saveChainRef.current = p.catch(() => {});
-    await p;
+    await onSaveChain(() => rekeyForLock(true, { secret, recoveryKey }));
   };
-  // The gate on a locked slate: open the lock, then load the slate again
-  const handleLockGateSubmit = async (secret) => {
-    await openLock(secret);
+  // The gate on a locked slate: open it with its secret, then load it again
+  const handleLockGateSubmit = async ({ secret }) => {
     const gate = lockGateRef.current;
+    if (!gate) return;
+    await unlockSlate(gate.id, secret, gate.slate);
     lockGateRef.current = null;
     setLockGate(null);
-    if (gate) await loadSlate(gate.id);
+    await loadSlate(gate.id);
   };
-  // The lock shut on its own (idle, logout) while a locked slate is open:
-  // save what is here, then put the gate back in front of it
-  useEffect(() => onLockChange((open) => {
-    if (open || !isLocked || !currentSlate || lockGateRef.current) return;
-    if (lockedSlateRef.current !== currentSlate.slate_number) return; // a switch, not a shut
-    const shut = () => {
-      const gate = { id: currentSlate.slate_number };
-      lockGateRef.current = gate;
-      lastSavedContentRef.current = JSON.stringify({ content: '' });
-      setContent('');
-      setHasUnsavedChanges(false);
-      setLockDocKey(null);
-      setLockGate(gate);
-    };
-    if (hasUnsavedChanges) saveSlate().catch(() => {}).finally(shut);
-    else shut();
+  // Forgot it: the recovery phrase opens the doc key, a new secret wraps it
+  const handleLockGateRecover = async ({ phrase, secret }) => {
+    const gate = lockGateRef.current;
+    if (!gate) return;
+    const info = await fetchLockRecovery();
+    const docKey = await recoverSlate(gate.id, phrase, gate.slate, info);
+    const slateKey = await getSlateKey(userId);
+    const text = gate.slate.encryptedContent ? await decryptContent(gate.slate.encryptedContent, docKey) : '';
+    let recoveryKey = currentRecoveryKey(info);
+    if (!recoveryKey) {
+      try { recoveryKey = await registerRecoveryKey(phrase, info); }
+      catch { recoveryKey = (info.keys || []).find(k => k && k.id === gate.slate.lock_recovery_key_id) || null; }
+    }
+    await saveLockChange({ userId, slateNumber: gate.id, content: text, masterKey: slateKey, lockOn: true, secret, recoveryKey, docKey, baseUpdatedAt: gate.slate.updated_at ?? null });
+    lockGateRef.current = null;
+    setLockGate(null);
+    await loadSlate(gate.id);
+  };
+  // Lock events for the open slate: the lock shut on its own (idle, logout)
+  // hides the content behind the gate again; a change made from the list
+  // (lock, remove lock) updates the editor's keys so its next save fits
+  useEffect(() => onLockChange((ev) => {
+    const n = currentSlate?.slate_number;
+    if (n == null || String(ev.slateNumber) !== String(n)) return;
+    if (ev.type === 'close') {
+      if (!isLocked || lockGateRef.current) return;
+      const shut = () => {
+        const gate = { id: n, slate: { ...(loadedSlateRef.current || {}), is_locked: 1, lock_wrapped_key: lockedSlateMetaRef.current?.lock_wrapped_key, lock_salt: lockedSlateMetaRef.current?.lock_salt, lock_recovery_wrapped_key: lockedSlateMetaRef.current?.lock_recovery_wrapped_key, lock_recovery_key_id: lockedSlateMetaRef.current?.lock_recovery_key_id } };
+        lockGateRef.current = gate;
+        lastSavedContentRef.current = JSON.stringify({ content: '' });
+        setContent('');
+        setHasUnsavedChanges(false);
+        setLockDocKey(null);
+        setLockGate(gate);
+      };
+      if (hasUnsavedChanges) saveSlate().catch(() => {}).finally(shut);
+      else shut();
+    } else if (ev.type === 'locked' || ev.type === 'unlocked') {
+      const on = ev.type === 'locked';
+      setIsLocked(on);
+      setLockDocKey(on ? openDocKey(n) : null);
+      lockedSlateRef.current = on ? n : null;
+      lockedSlateMetaRef.current = on ? ev.lockFields : null;
+      if (loadedSlateRef.current) loadedSlateRef.current = { updated_at: ev.updatedAt ?? loadedSlateRef.current.updated_at, encryptedContent: ev.encryptedContent ?? loadedSlateRef.current.encryptedContent };
+    }
   }), [isLocked, currentSlate, hasUnsavedChanges, content]);
 
   // The settings row renders from one control model (see SettingsRow.jsx)
@@ -2507,10 +2542,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
         {lockGate || lockPrompt ? (
           <LockPanel
-            key={lockGate ? `gate-${lockGate.id}` : `prompt-${lockPrompt.mode}`}
+            key={lockGate ? `gate-${lockGate.id}` : 'setup'}
             className="w-full max-w-3xl"
-            mode={lockGate ? 'gate' : lockPrompt.mode}
+            mode={lockGate ? 'gate' : 'setup'}
+            needsRecoveryKey={!lockGate && lockPrompt.needsRecoveryKey}
             onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
+            onRecover={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockGateRecover : undefined}
             onCancel={lockGate ? undefined : () => setLockPrompt(null)}
           />
         ) : collabDocKey && collabSlateDbId ? (
