@@ -1,66 +1,26 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { strings } from '../strings';
+import { SecretField } from './SecretField';
 
 export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
-  const [pin, setPin] = useState(['', '', '', '', '', '']);
-  const [confirmPin, setConfirmPin] = useState(['', '', '', '', '', '']);
+  const [pin, setPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
   const [step, setStep] = useState(isSetup ? 'enter' : 'unlock'); // 'enter' | 'unlock' | 'recovery' | 'newPin' | 'noKey'
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [recoveryInput, setRecoveryInput] = useState('');
-  const [newPin, setNewPin] = useState(['', '', '', '', '', '']);
-  const [confirmNewPin, setConfirmNewPin] = useState(['', '', '', '', '', '']);
-  const inputRefs = useRef([]);
-  const confirmRefs = useRef([]);
-  const newPinRefs = useRef([]);
-  const confirmNewPinRefs = useRef([]);
+  const [newPin, setNewPin] = useState('');
+  const [confirmNewPin, setConfirmNewPin] = useState('');
+  // Which secret field holds the focus: the first row of a step, or the
+  // confirm row once the first is full
+  const [focusRow, setFocusRow] = useState('first');
 
-  useEffect(() => {
-    const refs = step === 'newPin' ? newPinRefs : inputRefs;
-    const timer = setTimeout(() => {
-      if (refs.current[0]) refs.current[0].focus();
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [step]);
+  useEffect(() => { setFocusRow('first'); }, [step]);
 
-  const handleChange = (index, value, targetPin, setTargetPin, targetRefs, onRowFull) => {
-    if (!/^\d*$/.test(value)) return;
-    const arr = [...targetPin];
-    arr[index] = value.slice(-1);
-    setTargetPin(arr);
-    setError('');
-
-    if (value && index < 5) {
-      targetRefs.current[index + 1]?.focus();
-    } else if (value && index === 5 && onRowFull) {
-      onRowFull();
-    }
-  };
-
-  const handleKeyDown = (index, e, targetPin, setTargetPin, targetRefs) => {
-    if (e.key === 'Backspace') {
-      const arr = [...targetPin];
-      if (!arr[index] && index > 0) {
-        targetRefs.current[index - 1]?.focus();
-        arr[index - 1] = '';
-        setTargetPin(arr);
-      }
-    }
-  };
-
-  const handlePaste = (e, setTargetPin, targetRefs) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
-    if (pasted.length === 6) {
-      setTargetPin(pasted.split(''));
-      targetRefs.current[5]?.focus();
-    }
-  };
-
-  const pinValue = pin.join('');
-  const confirmValue = confirmPin.join('');
-  const newPinValue = newPin.join('');
-  const confirmNewPinValue = confirmNewPin.join('');
+  const pinValue = pin;
+  const confirmValue = confirmPin;
+  const newPinValue = newPin;
+  const confirmNewPinValue = confirmNewPin;
 
   const handleSubmitPin = async () => {
     if (step === 'enter') {
@@ -70,8 +30,8 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
       }
       if (confirmValue !== pinValue) {
         setError(strings.pin.errors.mismatch);
-        setConfirmPin(['', '', '', '', '', '']);
-        confirmRefs.current[0]?.focus();
+        setConfirmPin('');
+        setFocusRow('confirm');
         return;
       }
     }
@@ -83,8 +43,8 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
       }
       if (confirmNewPinValue !== newPinValue) {
         setError(strings.pin.errors.mismatch);
-        setConfirmNewPin(['', '', '', '', '', '']);
-        confirmNewPinRefs.current[0]?.focus();
+        setConfirmNewPin('');
+        setFocusRow('confirm');
         return;
       }
       setLoading(true);
@@ -111,8 +71,8 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
     } catch (err) {
       setError(err.message || strings.pin.errors.failed);
       if (step === 'unlock') {
-        setPin(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
+        setPin('');
+        setFocusRow('first');
       }
     } finally {
       setLoading(false);
@@ -136,31 +96,24 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
     setError('');
   };
 
-  const renderPinInputs = (values, refs, setValues, onRowFull) => (
-    <div className="flex gap-2 justify-center" onPaste={(e) => handlePaste(e, setValues, refs)}>
-      {values.map((digit, i) => (
-        <input
-          key={i}
-          ref={el => refs.current[i] = el}
-          type="password"
-          inputMode="numeric"
-          autoComplete="off"
-          maxLength={1}
-          value={digit}
-          onChange={(e) => handleChange(i, e.target.value, values, setValues, refs, onRowFull)}
-          onKeyDown={(e) => handleKeyDown(i, e, values, setValues, refs)}
-          className="w-11 h-14 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded text-center text-2xl text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-        />
-      ))}
-    </div>
+  // One row of six stars; the account pin is digits only
+  const renderPinInputs = (value, setValue, row = 'first', onRowFull) => (
+    <SecretField
+      value={value}
+      onChange={(v) => { setValue(v); setError(''); }}
+      numeric
+      autoFocus={focusRow === row}
+      onComplete={onRowFull}
+      onSubmit={handleSubmitPin}
+    />
   );
 
   // Both rows of a set-a-pin screen: enter once, enter again, one button.
-  const renderPinPair = (values, refs, setValues, confirmValues, cRefs, setConfirmValues) => (
+  const renderPinPair = (values, setValues, confirmValues, setConfirmValues) => (
     <>
-      {renderPinInputs(values, refs, setValues, () => cRefs.current[0]?.focus())}
+      {renderPinInputs(values, setValues, 'first', () => setFocusRow('confirm'))}
       <p className="text-[var(--theme-text-muted)] text-sm mt-5 mb-2">{strings.pin.setup.confirmLabel}</p>
-      {renderPinInputs(confirmValues, cRefs, setConfirmValues)}
+      {renderPinInputs(confirmValues, setConfirmValues, 'confirm')}
     </>
   );
 
@@ -172,7 +125,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.setup.title}</h2>
             <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.setup.description}</p>
-            {renderPinPair(pin, inputRefs, setPin, confirmPin, confirmRefs, setConfirmPin)}
+            {renderPinPair(pin, setPin, confirmPin, setConfirmPin)}
           </>
         )}
 
@@ -180,7 +133,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.unlock.title}</h2>
             <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.unlock.description}</p>
-            {renderPinInputs(pin, inputRefs, setPin)}
+            {renderPinInputs(pin, setPin)}
           </>
         )}
 
@@ -202,7 +155,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           <>
             <h2 className="text-lg text-white mb-2">{strings.pin.recovery.newPinTitle}</h2>
             <p className="text-[var(--theme-text-muted)] text-sm mb-6">{strings.pin.recovery.newPinDescription}</p>
-            {renderPinPair(newPin, newPinRefs, setNewPin, confirmNewPin, confirmNewPinRefs, setConfirmNewPin)}
+            {renderPinPair(newPin, setNewPin, confirmNewPin, setConfirmNewPin)}
           </>
         )}
 
@@ -256,7 +209,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
             <button
               onClick={() => {
                 setStep('recovery'); setError('');
-                setNewPin(['', '', '', '', '', '']); setConfirmNewPin(['', '', '', '', '', '']);
+                setNewPin(''); setConfirmNewPin('');
               }}
               className="w-full mt-2 py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
             >
@@ -277,7 +230,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
 
             {step === 'unlock' && onRecover && (
               <button
-                onClick={() => { setStep('recovery'); setError(''); setPin(['', '', '', '', '', '']); }}
+                onClick={() => { setStep('recovery'); setError(''); setPin(''); }}
                 className="w-full mt-2 py-2 opacity-50 hover:opacity-80 transition-opacity text-sm"
               >
                 {strings.pin.unlock.forgotPin}
