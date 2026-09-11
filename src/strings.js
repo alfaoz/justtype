@@ -83,7 +83,7 @@ const strings = {
       phraseHintRecover: 'the 12 words of your account open it and let you choose a new secret.',
       phrasePlaceholder: 'twelve words with spaces between',
       sureTitle: 'lock this slate?',
-      sureBody: 'if you forget its pin or passphrase, the only way back in is the recovery key of your account. justtype cannot open it for you.',
+      sureBody: 'if you forget it, only your recovery key opens it.',
       lockIt: 'lock it',
       newSecretTitle: 'choose a new pin or passphrase',
       forgot: 'forgot it?',
@@ -214,6 +214,7 @@ const strings = {
     filterVisibilityAll: 'all',
     filterVisibilityPublic: 'public',
     filterVisibilityPrivate: 'private',
+    filterVisibilityArchived: 'archived',
     sortOptions: {
       recent: 'recent',
       oldest: 'oldest',
@@ -292,6 +293,8 @@ const strings = {
       makePrivate: 'make private',
       lock: 'lock',
       unlock: 'remove lock',
+      archive: 'archive',
+      unarchive: 'unarchive',
       tags: 'tags',
       more: 'more',
       delete: 'delete'
@@ -1145,6 +1148,7 @@ take care!
     deleteSlate: 'Failed to delete slate',
     publishFailed: 'Failed to update publish status',
     pinFailed: 'Failed to update pin status',
+    archiveFailed: 'could not archive that slate',
     tagsSaveFailed: 'Failed to save tags',
     loginFailed: 'login failed',
     signupFailed: 'signup failed',

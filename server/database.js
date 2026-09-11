@@ -1058,6 +1058,11 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_key_id TEXT;`);
     console.log('✓ Database migrated: Added per-slate lock columns to slates');
   }
+  // Archived slates leave the main list for a section of their own
+  if (!slateColsLock.some(col => col.name === 'archived_at')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN archived_at INTEGER;`);
+    console.log('✓ Database migrated: Added archived_at column to slates');
+  }
   if (!userColsLock.some(col => col.name === 'lock_recovery_keys')) {
     db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_keys TEXT;`);
     console.log('✓ Database migrated: Added lock_recovery_keys column to users');

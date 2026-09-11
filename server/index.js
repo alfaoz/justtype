@@ -2628,7 +2628,7 @@ app.get('/api/slates', authenticateToken, (req, res) => {
              s.created_at, s.updated_at, s.published_at,
              s.source_app, s.adoption_pending, c.name AS source_app_name,
              s.is_collab, cm.wrapped_key AS collab_wrapped_key,
-             s.is_locked, s.lock_wrapped_key, s.lock_salt, s.lock_recovery_wrapped_key, s.lock_recovery_key_id
+             s.is_locked, s.lock_wrapped_key, s.lock_salt, s.lock_recovery_wrapped_key, s.lock_recovery_key_id, s.archived_at
       FROM slates s
       LEFT JOIN oauth_clients c ON c.client_id = s.source_app
       LEFT JOIN collab_members cm ON cm.slate_id = s.id AND cm.user_id = s.user_id
@@ -2715,7 +2715,7 @@ app.post('/api/account/incident-recovery-success', authenticateToken, createRate
 
 // Update slate metadata (pinning, tags, etc.)
 app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
-  const { pinned, encryptedTags, editorMode } = req.body || {};
+  const { pinned, encryptedTags, editorMode, archived } = req.body || {};
 
   try {
     const slate = db.prepare('SELECT id, slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
@@ -2735,6 +2735,15 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
       params.push(pinnedAt);
     } else if (pinned !== undefined) {
       return res.status(400).json({ error: 'Invalid pinned value' });
+    }
+
+    let archivedAt = undefined;
+    if (typeof archived === 'boolean') {
+      archivedAt = archived ? Date.now() : null;
+      updates.push('archived_at = ?');
+      params.push(archivedAt);
+    } else if (archived !== undefined) {
+      return res.status(400).json({ error: 'Invalid archived value' });
     }
 
     if (encryptedTags !== undefined) {
@@ -2771,7 +2780,7 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
     db.prepare(`UPDATE slates SET ${updates.join(', ')} WHERE slate_number = ? AND user_id = ?`)
       .run(...params, req.params.id, req.user.id);
 
-    res.json({ success: true, pinned_at: pinnedAt });
+    res.json({ success: true, pinned_at: pinnedAt, archived_at: archivedAt });
   } catch (error) {
     console.error('Update slate metadata error:', error);
     res.status(500).json({ error: 'Failed to update slate metadata' });

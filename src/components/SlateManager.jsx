@@ -142,7 +142,7 @@ const menuItemCls = (danger) =>
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onArchive, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
@@ -200,6 +200,11 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
               {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
                 <button onClick={onLock} className={menuItemCls(false)}>
                   {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
+                </button>
+              )}
+              {!slate.local && (
+                <button onClick={onArchive} className={menuItemCls(false)}>
+                  {slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive}
                 </button>
               )}
               <button onClick={onDelete} className={menuItemCls(true)}>
@@ -504,7 +509,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
-  const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private'
+  const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
@@ -850,6 +855,29 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
   };
 
+  // Archive: the slate leaves the list for the archived section, and comes
+  // back the same way. Nothing else about it changes.
+  const toggleArchive = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    const archived = !slate.archived_at;
+    try {
+      const response = await fetch(`${API_URL}/slates/${slate.slate_number}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ archived }),
+      });
+      const data = await response.json();
+      if (!response.ok) { showToast(data.error || strings.errors.archiveFailed); return; }
+      setSlates(prev => prev.map(s => s.slate_number === slate.slate_number ? { ...s, archived_at: data.archived_at } : s));
+    } catch (err) {
+      console.error('Failed to toggle archive:', err);
+      showToast(strings.errors.archiveFailed);
+    }
+  };
+
   const togglePin = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -1184,6 +1212,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         return false;
       }
 
+      // Archived slates live in their own section and nowhere else
+      if (visibilityFilter === 'archived') return Boolean(slate.archived_at);
+      if (slate.archived_at) return false;
       if (visibilityFilter === 'public' && !slate.is_published) return false;
       if (visibilityFilter === 'private' && slate.is_published) return false;
 
@@ -1354,6 +1385,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   { id: 'all', label: strings.slates.filterVisibilityAll },
                   { id: 'public', label: strings.slates.filterVisibilityPublic },
                   { id: 'private', label: strings.slates.filterVisibilityPrivate },
+                  { id: 'archived', label: strings.slates.filterVisibilityArchived },
                 ]}
                 value={visibilityFilter}
                 onChange={setVisibilityFilter}
@@ -1446,6 +1478,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
                 onLock: (e) => toggleLock(slate, e),
+                onArchive: (e) => toggleArchive(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);
                   showDeleteConfirmation(slate.slate_number, slate.title, e);
