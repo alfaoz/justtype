@@ -5,6 +5,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { ShareSlates } from './ShareSlates';
+import { SupportButtons } from './SupportButtons';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -1227,22 +1228,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {strings.writer.about.support.limits}
               </a>.
             </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => window.location.href = '/?donate=one_time'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.donate}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
-              </button>
-              <button
-                onClick={() => window.location.href = '/?donate=quarterly'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
-              </button>
-            </div>
+            <SupportButtons
+              disabled
+              onDonate={() => window.location.href = '/?donate=one_time'}
+              onSubscribe={() => window.location.href = '/?donate=quarterly'}
+            />
           </div>
         )}
 

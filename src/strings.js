@@ -153,7 +153,8 @@ const strings = {
         donate: 'donate once',
         donateHint: 'any amount',
         subscribe: 'subscribe',
-        subscribeHint: '7 eur / 3 months'
+        subscribeHint: '7 eur / 3 months',
+        disabled: 'disabled for now'
       },
       version: (v) => `version ${v}`,
       close: 'close'

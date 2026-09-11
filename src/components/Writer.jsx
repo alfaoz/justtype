@@ -12,6 +12,7 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { TextMorph } from 'torph/react';
 import { VerifyBadge } from './VerifyBadge';
+import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
 import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
@@ -2713,11 +2714,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 <div
                   onMouseEnter={handleSaveMenuEnter}
                   onMouseLeave={handleSaveMenuLeave}
-                  className="absolute bottom-full right-0 mb-2 animate-[fadeInUp_0.15s_ease-out]"
+                  className="absolute bottom-full left-0 mb-2 animate-[fadeInUp_0.15s_ease-out]"
                 >
+                  {/* Flush left with the save word below it: no side padding,
+                      anchored to the save button's left edge */}
                   <button
                     onClick={() => setShowExportMenu(true)}
-                    className="kbd-host px-3 py-1.5 hover:text-white transition-colors duration-200 flex items-center whitespace-nowrap"
+                    className="kbd-host py-1.5 hover:text-white transition-colors duration-200 flex items-center whitespace-nowrap"
                   >
                     <span>export</span>
                     <span className="kbd-hint text-xs leading-none" aria-hidden="true">⌘E</span>
@@ -3022,22 +3025,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   {strings.writer.about.support.limits}
                 </a>.
               </p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { setShowAboutModal(false); setShowDonateModal(true); }}
-                  className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors"
-                >
-                  <span className="block text-xs">{strings.writer.about.support.donate}</span>
-                  <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
-                </button>
-                <button
-                  onClick={handleSubscribeClick}
-                  className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-colors"
-                >
-                  <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
-                  <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
-                </button>
-              </div>
+              <SupportButtons
+                disabled
+                onDonate={() => { setShowAboutModal(false); setShowDonateModal(true); }}
+                onSubscribe={handleSubscribeClick}
+              />
             </div>
 
             {/* colophon */}
