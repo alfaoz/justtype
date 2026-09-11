@@ -15,6 +15,7 @@
 import { API_URL } from './config';
 import { getSlateKey } from './keyStore';
 import { decryptContent, encryptContent, encryptTitle, unwrapKey } from './crypto';
+import { unwrapDocKey } from './slateLock';
 import { isOnline, onConnectivity, reportNetworkFailure } from './connectivity';
 import {
   getPending, deletePending, queuePending, cacheSlate, renameCachedSlate, addHistory, getCachedSlate,
@@ -33,6 +34,11 @@ async function contentKeyFor(userId, cached) {
   const master = await getSlateKey(userId);
   if (!master) throw new Error('no key');
   if (cached?.data?.is_collab && cached.data.collab_wrapped_key) return unwrapKey(cached.data.collab_wrapped_key, master);
+  if (cached?.data?.is_locked && cached.data.lock_wrapped_key) {
+    const docKey = await unwrapDocKey(cached.data.lock_wrapped_key);
+    if (!docKey) throw new Error('locked');
+    return docKey;
+  }
   return master;
 }
 

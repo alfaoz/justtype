@@ -30,6 +30,8 @@ const formatDateShort = (dateString) =>
 const statusFor = (slate) =>
   slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
+    : slate.is_locked
+      ? { label: strings.slates.status.locked, cls: 'text-[var(--theme-text-muted)]' }
     : slate.is_published
       ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
       : slate.published_at
@@ -185,9 +187,11 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
                   {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
                 </button>
               )}
-              <button onClick={onPublish} className={menuItemCls(false)}>
-                {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
-              </button>
+              {!slate.is_locked && (
+                <button onClick={onPublish} className={menuItemCls(false)}>
+                  {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+                </button>
+              )}
               <button onClick={onDelete} className={menuItemCls(true)}>
                 {strings.slates.menu.delete}
               </button>

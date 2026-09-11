@@ -1030,6 +1030,22 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN is_collab INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added is_collab column to slates');
   }
+
+  // Locked slates: the content sits under its own doc key, wrapped to a lock
+  // key the account derives from a pin or passphrase that never reaches the
+  // server. The title stays under the master key so the list keeps reading.
+  if (!slateColsCollab.some(col => col.name === 'is_locked')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN is_locked INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added is_locked and lock_wrapped_key columns to slates');
+  }
+  const userColsLock = db.pragma('table_info(users)');
+  if (!userColsLock.some(col => col.name === 'lock_salt')) {
+    db.exec(`ALTER TABLE users ADD COLUMN lock_salt TEXT;`);
+    db.exec(`ALTER TABLE users ADD COLUMN lock_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added lock key columns to users');
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS collab_members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

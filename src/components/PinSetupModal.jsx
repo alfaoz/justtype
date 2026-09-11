@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { strings } from '../strings';
 import { SecretField } from './SecretField';
+import { TextMorph } from 'torph/react';
 
 export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
   const [pin, setPin] = useState('');
@@ -16,6 +17,18 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
   const [focusRow, setFocusRow] = useState('first');
 
   useEffect(() => { setFocusRow('first'); }, [step]);
+
+  // Steps crossfade instead of snapping: the old one fades, then the new
+  // one fades in, the same breath the password reset takes
+  const [stepPhase, setStepPhase] = useState('in');
+  const stepTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(stepTimerRef.current), []);
+  const goToStep = (next) => {
+    if (next === step) return;
+    setStepPhase('out');
+    clearTimeout(stepTimerRef.current);
+    stepTimerRef.current = setTimeout(() => { setStep(next); setStepPhase('in'); }, 260);
+  };
 
   const pinValue = pin;
   const confirmValue = confirmPin;
@@ -92,7 +105,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
       return;
     }
     // Move to the new-PIN screen; actual recovery happens once the PIN is set
-    setStep('newPin');
+    goToStep('newPin');
     setError('');
   };
 
@@ -120,6 +133,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4">
       <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        <div key={step} className={`transition-opacity duration-300 ${stepPhase === 'out' ? 'opacity-0' : 'opacity-100 animate-[fadeIn_0.4s_ease-out]'}`}>
 
         {step === 'enter' && (
           <>
@@ -166,7 +180,11 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           </>
         )}
 
-        {error && <p className="text-red-400 text-sm text-center mt-3">{error}</p>}
+        </div>
+
+        <p className={`text-sm text-center mt-3 transition-opacity duration-200 ${error ? 'opacity-100' : 'opacity-0'}`} style={{ color: 'var(--theme-red)' }}>
+          <TextMorph>{error || ' '}</TextMorph>
+        </p>
 
         {step === 'recovery' ? (
           <>
@@ -178,13 +196,13 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
               {strings.pin.recovery.submit}
             </button>
             <button
-              onClick={() => { setStep('noKey'); setError(''); }}
+              onClick={() => { goToStep('noKey'); setError(''); }}
               className="w-full mt-2 py-2 opacity-50 hover:opacity-80 transition-opacity text-sm"
             >
               {strings.pin.recovery.noKey}
             </button>
             <button
-              onClick={() => { setStep('unlock'); setError(''); setRecoveryInput(''); }}
+              onClick={() => { goToStep('unlock'); setError(''); setRecoveryInput(''); }}
               className="w-full mt-1 py-2 opacity-50 hover:opacity-80 transition-opacity text-sm"
             >
               {strings.pin.setup.back}
@@ -192,7 +210,7 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
           </>
         ) : step === 'noKey' ? (
           <button
-            onClick={() => { setStep('recovery'); setError(''); }}
+            onClick={() => { goToStep('recovery'); setError(''); }}
             className="w-full mt-4 border border-[var(--theme-border)] text-white px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
           >
             {strings.pin.setup.back}
@@ -204,11 +222,11 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
               disabled={loading || newPinValue.length !== 6 || confirmNewPinValue.length !== 6}
               className="w-full mt-6 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-sm"
             >
-              {loading ? strings.pin.recovery.recovering : strings.pin.setup.submit}
+              <TextMorph>{loading ? strings.pin.recovery.recovering : strings.pin.setup.submit}</TextMorph>
             </button>
             <button
               onClick={() => {
-                setStep('recovery'); setError('');
+                goToStep('recovery'); setError('');
                 setNewPin(''); setConfirmNewPin('');
               }}
               className="w-full mt-2 py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
@@ -223,14 +241,16 @@ export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
               disabled={loading || pinValue.length !== 6 || (step === 'enter' && confirmValue.length !== 6)}
               className="w-full mt-6 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-sm"
             >
-              {loading ? (isSetup ? strings.pin.setup.saving : strings.pin.unlock.unlocking) : (
-                step === 'enter' ? strings.pin.setup.submit : strings.pin.unlock.submit
-              )}
+              <TextMorph>
+                {loading ? (isSetup ? strings.pin.setup.saving : strings.pin.unlock.unlocking) : (
+                  step === 'enter' ? strings.pin.setup.submit : strings.pin.unlock.submit
+                )}
+              </TextMorph>
             </button>
 
             {step === 'unlock' && onRecover && (
               <button
-                onClick={() => { setStep('recovery'); setError(''); setPin(''); }}
+                onClick={() => { goToStep('recovery'); setError(''); setPin(''); }}
                 className="w-full mt-2 py-2 opacity-50 hover:opacity-80 transition-opacity text-sm"
               >
                 {strings.pin.unlock.forgotPin}

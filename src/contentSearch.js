@@ -13,6 +13,9 @@ const keyOf = (userId, n) => `${userId}:${n}`;
 
 async function decryptCopy(data, masterKey) {
   if (!data?.encryptedContent) return null;
+  // Locked slates stay out of content search, open lock or not: the title
+  // is the only thing a search may find
+  if (data.is_locked) return null;
   const contentKey = data.is_collab && data.collab_wrapped_key
     ? await unwrapKey(data.collab_wrapped_key, masterKey)
     : masterKey;

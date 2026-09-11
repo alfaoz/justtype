@@ -31,6 +31,7 @@ import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
+import { relock } from './slateLock';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -759,6 +760,8 @@ export default function App() {
         // Continue with local logout even if API call fails
       }
     }
+
+    relock();
 
     // Clear local state and storage
     setToken(null);

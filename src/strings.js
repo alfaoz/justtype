@@ -68,6 +68,26 @@ const strings = {
       outdated: 'private draft · sync',
       outdatedHint: 'your public copy is stale. click to update it'
     },
+    lock: {
+      label: 'lock',
+      locked: 'locked',
+      unlocked: 'unlocked',
+      gateTitle: 'this slate is locked',
+      unlockTitle: 'open the lock first',
+      setupTitle: 'choose a lock',
+      gateHint: 'your pin or passphrase, then enter',
+      setupHint: 'a pin or a passphrase. it opens every locked slate on this account.',
+      confirmHint: 'once more',
+      working: 'one moment',
+      wrong: 'that did not open it',
+      tooShort: 'four characters at least',
+      mismatch: 'those did not match',
+      failed: 'something went wrong, try again',
+      needsNetwork: 'locking needs a connection',
+      cancel: 'never mind',
+      publishBlocked: 'locked',
+      publishBlockedHint: 'locked slates stay private.'
+    },
     collabState: {
       label: 'collab',
       hint: 'this slate is collaborative. click to manage people.',
@@ -228,6 +248,7 @@ const strings = {
       hits: (n) => n === 1 ? '1 hit' : `${n} hits`,
     },
     status: {
+      locked: 'locked',
       public: 'public',
       private: 'private',
       wasPublic: 'draft (was public)',

@@ -4,7 +4,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey, generateSlateKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
@@ -19,6 +19,8 @@ import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePend
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
+import { LockPanel } from './LockPanel';
+import { isUnlocked, onLockChange, touchLock, fetchLockData, setupLock, unlock as openLock, wrapDocKey, unwrapDocKey } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -282,6 +284,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // solo slates). Set on load from the owner's wrapped copy, or by the share
   // modal when sharing is turned on/off.
   const [collabDocKey, setCollabDocKey] = useState(null);
+  // Locked slate: its doc key while the lock is open; `isLocked` is the
+  // slate's flag; `lockGate` holds the slate the lock is keeping shut;
+  // `lockPrompt` asks for the secret before a slate gets locked
+  const [lockDocKey, setLockDocKey] = useState(null);
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockGate, setLockGate] = useState(null);
+  const lockGateRef = useRef(null);
+  const [lockPrompt, setLockPrompt] = useState(null);
   // Bumped whenever the doc key changes (enable, rotation, rekey) to remount
   // the collab editor, and to re-run the shared load after a rotation.
   const [collabKeyGen, setCollabKeyGen] = useState(0);
@@ -1139,6 +1149,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       let slateContent;
       let slateTitle = data.title;
       let slateKey = null;
+      let gated = false;
       if (data.encrypted && data.encryptedContent) {
         // E2E: decrypt client-side
         slateKey = await getSlateKey(userId);
@@ -1150,21 +1161,45 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         // Collaborative slate: content is under the shared doc key, which the
         // server returns wrapped to our master key.
         let contentKey = slateKey;
+        let titleKey = slateKey;
         if (data.is_collab && data.collab_wrapped_key) {
           contentKey = await unwrapKey(data.collab_wrapped_key, slateKey);
+          titleKey = contentKey;
           slateContent = await decryptContent(data.encryptedContent, contentKey);
           loadedContentRef.current = slateContent;
           setCollabDocKey(contentKey);
           setCollabSlateDbId(data.id);
+          setLockDocKey(null);
+          setIsLocked(false);
+        } else if (data.is_locked && data.lock_wrapped_key) {
+          // Locked slate: the content sits under its own doc key. With the
+          // lock open it reads like any other; shut, the slate opens as far
+          // as its title and the editor shows the lock instead.
+          setCollabDocKey(null);
+          setCollabSlateDbId(null);
+          setIsLocked(true);
+          const docKey = await unwrapDocKey(data.lock_wrapped_key);
+          if (docKey) {
+            contentKey = docKey;
+            setLockDocKey(docKey);
+            slateContent = await decryptContent(data.encryptedContent, contentKey);
+            touchLock();
+          } else {
+            gated = true;
+            setLockDocKey(null);
+            slateContent = '';
+          }
         } else {
           setCollabDocKey(null);
           setCollabSlateDbId(null);
+          setLockDocKey(null);
+          setIsLocked(false);
           slateContent = await decryptContent(data.encryptedContent, contentKey);
         }
         // Decrypt title if encrypted
         if (data.encrypted_title && !data.is_published) {
           try {
-            slateTitle = await decryptTitle(data.encrypted_title, contentKey);
+            slateTitle = await decryptTitle(data.encrypted_title, titleKey);
           } catch (err) {
             console.error('Failed to decrypt title:', err);
             slateTitle = 'untitled slate';
@@ -1173,11 +1208,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       } else {
         slateContent = data.content;
         setCollabDocKey(null);
+        setLockDocKey(null);
+        setIsLocked(false);
       }
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
-      // (Collab slates are never app-shared — enforced server-side.)
-      if (!fromCache && data.encrypted && slateKey && !data.is_published && !data.is_collab) {
+      // (Collab and locked slates are never app-shared — enforced server-side.)
+      if (!fromCache && data.encrypted && slateKey && !data.is_published && !data.is_collab && !data.is_locked) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -1187,6 +1224,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       setTitle(slateTitle);
       setContent(slateContent);
+      const gate = gated ? { id } : null;
+      lockGateRef.current = gate;
+      setLockGate(gate);
+      setLockPrompt(null);
       setEditorModeState(data.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain');
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
@@ -1427,11 +1468,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
     const slateKey = userId ? await getSlateKey(userId) : null;
-    const contentKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
+    // Collab: one shared key for both. Locked: the content under its doc
+    // key, the title under the master key so the list keeps reading it.
+    const contentKey = currentSlate ? (collabDocKey || lockDocKey || slateKey) : slateKey;
+    const titleKey = currentSlate ? (collabDocKey || slateKey) : slateKey;
     let body;
     if (contentKey) {
       const encrypted = await encryptContent(content, contentKey);
-      const encryptedTitleBlob = await encryptTitle(titleToSave, contentKey);
+      const encryptedTitleBlob = await encryptTitle(titleToSave, titleKey);
       const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
       body = { encryptedTitle: encryptedTitleBlob, encryptedContent: encrypted, wordCount, charCount: content.length, sizeBytes: new TextEncoder().encode(content).length };
     } else {
@@ -1524,6 +1568,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // announced like a first save; the two-second autosave is not.
   const saveSlateNow = async ({ explicit = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
+    if (lockGateRef.current) return null; // a shut lock shows no content to save
     const openNumber = currentSlate?.slate_number ?? null;
     const stillOpen = () => (currentSlateRef.current?.slate_number ?? null) === openNumber;
     if (!content.trim()) {
@@ -1722,7 +1767,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // this is the backstop for the command palette and any future caller.
     // Scoped to the FIRST publish so a slate that was public before it became
     // collaborative can still sync or unpublish its existing copy.
-    if (collabDocKey && !shareUrl && !wasPublishedBeforeEdit) return;
+    if ((collabDocKey || isLocked) && !shareUrl && !wasPublishedBeforeEdit) return;
 
     // If no current slate, save first
     // If there are unsaved changes, save first (but keep using currentSlate for the ID)
@@ -2264,16 +2309,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       style={{ left: popoverAnchor.left, bottom: popoverAnchor.bottom, zIndex: 200 }}
     >
       {!shareUrl && !wasPublishedBeforeEdit && (
-        collabDocKey ? (
-          // Collab slates cannot be published yet. Greyed and
-          // inert; the label swaps on hover instead of a
-          // native tooltip, matching the inline `sure?` style.
+        (collabDocKey || isLocked) ? (
+          // Collab slates cannot be published yet, locked ones stay
+          // private. Greyed and inert; the label swaps on hover instead
+          // of a native tooltip, matching the inline `sure?` style.
           <div
             className="group w-full px-4 py-2 text-left opacity-40 cursor-not-allowed select-none"
-            title={strings.writer.collabState.publishBlockedHint}
+            title={isLocked ? strings.writer.lock.publishBlockedHint : strings.writer.collabState.publishBlockedHint}
           >
             <span className="group-hover:hidden">make public</span>
-            <span className="hidden group-hover:inline">{strings.writer.collabState.publishBlocked}</span>
+            <span className="hidden group-hover:inline">{isLocked ? strings.writer.lock.publishBlocked : strings.writer.collabState.publishBlocked}</span>
           </div>
         ) : (
           <button
@@ -2334,6 +2379,92 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     </div>
   );
 
+  // Slate lock. Locking re-keys the content under a fresh doc key wrapped to
+  // the account's lock key and rides on a normal save; unlocking re-keys it
+  // back to the master key. Runs on the save chain so it never races a save.
+  const canLock = !!(token && currentSlate && !isShared && !collabDocKey && !shareUrl && !isLocalSlateNumber(currentSlate.slate_number));
+  const rekeyForLock = async (lockOn) => {
+    const slateKey = userId ? await getSlateKey(userId) : null;
+    if (!slateKey || !currentSlate) return;
+    const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
+    const docKey = lockOn ? await generateSlateKey() : null;
+    const body = {
+      encryptedContent: await encryptContent(content, docKey || slateKey),
+      encryptedTitle: await encryptTitle(firstLine || 'untitled slate', slateKey),
+      wordCount: content.trim() === '' ? 0 : content.trim().split(/\s+/).length,
+      charCount: content.length,
+      sizeBytes: new TextEncoder().encode(content).length,
+      lock: lockOn ? { locked: true, wrappedKey: await wrapDocKey(docKey) } : { locked: false },
+    };
+    const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'lock failed');
+    loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: body.encryptedContent };
+    lastSavedContentRef.current = JSON.stringify({ content });
+    setHasUnsavedChanges(false);
+    setLockDocKey(docKey);
+    setIsLocked(lockOn);
+    cacheSlate(userId, currentSlate.slate_number, {
+      encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
+      is_locked: lockOn ? 1 : 0, lock_wrapped_key: body.lock.wrappedKey || null, updated_at: data.updated_at ?? null,
+    }).catch(() => {});
+    announceStatus(lockOn ? strings.writer.lock.locked : strings.writer.lock.unlocked, 2500);
+  };
+  const toggleLock = async () => {
+    if (!canLock || lockGate) return;
+    if (!isOnline()) { announceStatus(strings.writer.lock.needsNetwork, 2500); return; }
+    if (!isLocked && !isUnlocked()) {
+      // The lock is shut: ask for the secret first (or choose one)
+      let data = null;
+      try { data = await fetchLockData(); } catch { announceStatus(strings.writer.lock.failed, 2500); return; }
+      setLockPrompt({ mode: data.hasLock ? 'unlock' : 'setup', data });
+      return;
+    }
+    const run = () => rekeyForLock(!isLocked);
+    const p = saveChainRef.current.then(run, run);
+    saveChainRef.current = p.catch(() => {});
+    try { await p; } catch (err) { console.error('lock toggle failed:', err); announceStatus(strings.writer.lock.failed, 2500); }
+  };
+  // The prompt before locking: set the account's lock, or open it, then lock
+  const handleLockPromptSubmit = async (secret) => {
+    if (lockPrompt?.mode === 'setup') await setupLock(secret);
+    else await openLock(secret, lockPrompt?.data || null);
+    setLockPrompt(null);
+    const run = () => rekeyForLock(true);
+    const p = saveChainRef.current.then(run, run);
+    saveChainRef.current = p.catch(() => {});
+    await p;
+  };
+  // The gate on a locked slate: open the lock, then load the slate again
+  const handleLockGateSubmit = async (secret) => {
+    await openLock(secret);
+    const gate = lockGateRef.current;
+    lockGateRef.current = null;
+    setLockGate(null);
+    if (gate) await loadSlate(gate.id);
+  };
+  // The lock shut on its own (idle, logout) while a locked slate is open:
+  // save what is here, then put the gate back in front of it
+  useEffect(() => onLockChange((open) => {
+    if (open || !isLocked || !currentSlate || lockGateRef.current) return;
+    const shut = () => {
+      const gate = { id: currentSlate.slate_number };
+      lockGateRef.current = gate;
+      lastSavedContentRef.current = JSON.stringify({ content: '' });
+      setContent('');
+      setHasUnsavedChanges(false);
+      setLockDocKey(null);
+      setLockGate(gate);
+    };
+    if (hasUnsavedChanges) saveSlate().catch(() => {}).finally(shut);
+    else shut();
+  }), [isLocked, currentSlate, hasUnsavedChanges, content]);
+
   // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
     device: [
@@ -2344,6 +2475,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     ],
     slate: [
       { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
+      canLock && { id: 'lock', label: strings.writer.lock.label, kind: 'toggle', value: isLocked ? 'on' : 'off', onCycle: toggleLock, onSet: (v) => { if ((v === 'on') !== isLocked) toggleLock(); } },
     ].filter(Boolean),
     actions: [
       token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => openCollab('people'), active: !!collabDocKey, pulse: highlightNew },
@@ -2373,7 +2505,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           instead of covering the text you are comparing against) */}
       <div className="flex-grow flex min-h-0 w-full">
       <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
-        {collabDocKey && collabSlateDbId ? (
+        {lockGate || lockPrompt ? (
+          <LockPanel
+            key={lockGate ? `gate-${lockGate.id}` : `prompt-${lockPrompt.mode}`}
+            className="w-full max-w-3xl"
+            mode={lockGate ? 'gate' : lockPrompt.mode}
+            onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
+            onCancel={lockGate ? undefined : () => setLockPrompt(null)}
+          />
+        ) : collabDocKey && collabSlateDbId ? (
           // Collaborative slate: one live CM6 surface for BOTH modes (remote
           // carets need it); `editorMode` only toggles the live preview.
           <React.Suspense fallback={<EditorSkeleton text={loadedContentRef.current} punto={punto} />}>
@@ -2898,9 +3038,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     )}
 
                     {!shareUrl && !wasPublishedBeforeEdit && (
-                      collabDocKey ? (
+                      (collabDocKey || isLocked) ? (
                         <div className="flex-1 h-11 flex items-center justify-center bg-[var(--theme-bg)] rounded-lg text-sm opacity-40 select-none">
-                          {strings.writer.collabState.publishBlocked}
+                          {isLocked ? strings.writer.lock.publishBlocked : strings.writer.collabState.publishBlocked}
                         </div>
                       ) : (
                         <button
