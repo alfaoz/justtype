@@ -2028,9 +2028,16 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         <RecoveryKeyModal
           recoveryPhrase={setPasswordRecoveryPhrase}
           subtitle={strings.account.googleAuth.setPassword.success.subtitle}
-          onAcknowledge={() => {
+          onAcknowledge={async () => {
             setShowSetPasswordSuccess(false);
             setSetPasswordRecoveryPhrase(null);
+            if (onRecoveryKeyAcknowledged) onRecoveryKeyAcknowledged();
+            // The key was shown and promised safe: tell the server before the
+            // reload asks it, or the page comes back warning it was never shown
+            await fetch(`${API_URL}/account/acknowledge-recovery-key`, {
+              method: 'POST',
+              credentials: 'include'
+            }).catch(() => {});
             window.location.reload();
           }}
         />
