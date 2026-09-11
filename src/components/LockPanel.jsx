@@ -23,7 +23,7 @@ export function LockPanel({ mode, onSubmit, onCancel, className = '' }) {
   const [row, setRow] = useState('first');
 
   const title = mode === 'setup' ? s.setupTitle : mode === 'gate' ? s.gateTitle : s.unlockTitle;
-  const hint = error || (mode === 'setup' ? (row === 'confirm' ? s.confirmHint : s.setupHint) : s.gateHint);
+  const hint = error || (mode === 'setup' ? (row === 'confirm' ? s.confirmHint : s.setupHint) : mode === 'unlock' ? s.unlockHint : s.gateHint);
 
   const submit = async () => {
     if (busy) return;

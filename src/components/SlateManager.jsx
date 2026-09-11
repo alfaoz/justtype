@@ -1549,7 +1549,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       {toastNode}
       {lockAsk && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4" onClick={() => setLockAsk(null)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-10 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <LockPanel mode={lockAsk.mode} onSubmit={handleLockAskSubmit} onCancel={() => setLockAsk(null)} />
           </div>
         </div>
