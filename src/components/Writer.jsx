@@ -4,7 +4,7 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey, generateSlateKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
@@ -20,7 +20,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { isUnlocked, onLockChange, relock, touchLock, fetchLockData, setupLock, unlock as openLock, wrapDocKey, unwrapDocKey } from '../slateLock';
+import { isUnlocked, onLockChange, relock, touchLock, fetchLockData, setupLock, unlock as openLock, unwrapDocKey, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -2405,34 +2405,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const rekeyForLock = async (lockOn) => {
     const slateKey = userId ? await getSlateKey(userId) : null;
     if (!slateKey || !currentSlate) return;
-    const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
-    const docKey = lockOn ? await generateSlateKey() : null;
-    const body = {
-      encryptedContent: await encryptContent(content, docKey || slateKey),
-      encryptedTitle: await encryptTitle(firstLine || 'untitled slate', slateKey),
-      wordCount: content.trim() === '' ? 0 : content.trim().split(/\s+/).length,
-      charCount: content.length,
-      sizeBytes: new TextEncoder().encode(content).length,
-      lock: lockOn ? { locked: true, wrappedKey: await wrapDocKey(docKey) } : { locked: false },
-    };
-    const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(body),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'lock failed');
+    const { body, data, docKey } = await saveLockChange({ userId, slateNumber: currentSlate.slate_number, content, masterKey: slateKey, lockOn });
     loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: body.encryptedContent };
     lastSavedContentRef.current = JSON.stringify({ content });
     setHasUnsavedChanges(false);
     setLockDocKey(docKey);
     setIsLocked(lockOn);
     lockedSlateRef.current = lockOn ? currentSlate.slate_number : null;
-    cacheSlate(userId, currentSlate.slate_number, {
-      encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
-      is_locked: lockOn ? 1 : 0, lock_wrapped_key: body.lock.wrappedKey || null, updated_at: data.updated_at ?? null,
-    }).catch(() => {});
     announceStatus(lockOn ? strings.writer.lock.locked : strings.writer.lock.unlocked, 2500);
   };
   const toggleLock = async () => {

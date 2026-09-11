@@ -279,6 +279,8 @@ const strings = {
       unpublish: 'unpublish',
       makePublic: 'make public',
       makePrivate: 'make private',
+      lock: 'lock',
+      unlock: 'unlock',
       tags: 'tags',
       more: 'more',
       delete: 'delete'

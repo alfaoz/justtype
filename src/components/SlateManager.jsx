@@ -14,7 +14,8 @@ import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from 'torph/react';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
-import { isUnlocked, onLockChange } from '../slateLock';
+import { isUnlocked, onLockChange, fetchLockData, setupLock, unlock as openLock, unwrapDocKey, saveLockChange } from '../slateLock';
+import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -33,7 +34,7 @@ const statusFor = (slate) =>
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
     : slate.is_locked
       ? slate.unlockedHere
-        ? { label: strings.slates.status.unlocked, cls: 'text-[var(--theme-green)]' }
+        ? { label: strings.slates.status.unlocked, cls: 'text-[var(--theme-text-muted)]' }
         : { label: strings.slates.status.locked, cls: 'text-[var(--theme-text-muted)]' }
     : slate.is_published
       ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
@@ -141,7 +142,7 @@ const menuItemCls = (danger) =>
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
@@ -193,6 +194,12 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
               {!slate.is_locked && (
                 <button onClick={onPublish} className={menuItemCls(false)}>
                   {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+                </button>
+              )}
+              {/* A private, non-collab slate can lock; a locked one unlocks */}
+              {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
+                <button onClick={onLock} className={menuItemCls(false)}>
+                  {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
                 </button>
               )}
               <button onClick={onDelete} className={menuItemCls(true)}>
@@ -408,6 +415,48 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   // reads "unlocked" only while it is
   const [lockOpen, setLockOpen] = useState(isUnlocked());
   useEffect(() => onLockChange(setLockOpen), []);
+  // The secret asked for before a lock change from the list: { mode, data, then }
+  const [lockAsk, setLockAsk] = useState(null);
+
+  // Lock or unlock a slate from its menu: fetch it, decrypt, save it re-keyed
+  const applyLockChange = async (slate) => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('no key');
+    const res = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('load failed');
+    const d = await res.json();
+    let key = master;
+    if (d.is_locked && d.lock_wrapped_key) {
+      key = await unwrapDocKey(d.lock_wrapped_key);
+      if (!key) throw new Error('locked');
+    }
+    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, key) : (d.content || '');
+    const lockOn = !d.is_locked;
+    const { lockWrappedKey, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn, baseUpdatedAt: d.updated_at });
+    setSlates(prev => prev.map(s => s.slate_number === slate.slate_number
+      ? { ...s, is_locked: lockOn ? 1 : 0, lock_wrapped_key: lockWrappedKey, updated_at: data.updated_at ?? s.updated_at }
+      : s));
+  };
+  const toggleLock = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    if (!isOnline()) { showToast(strings.writer.lock.needsNetwork); return; }
+    if (!lockOpen) {
+      let data = null;
+      try { data = await fetchLockData(); } catch { showToast(strings.writer.lock.failed); return; }
+      setLockAsk({ mode: data.hasLock ? 'unlock' : 'setup', data, slate });
+      return;
+    }
+    try { await applyLockChange(slate); } catch (err) { console.error('lock change failed:', err); showToast(strings.writer.lock.failed); }
+  };
+  const handleLockAskSubmit = async (secret) => {
+    if (lockAsk.mode === 'setup') await setupLock(secret);
+    else await openLock(secret, lockAsk.data);
+    const slate = lockAsk.slate;
+    setLockAsk(null);
+    try { await applyLockChange(slate); } catch (err) { console.error('lock change failed:', err); showToast(strings.writer.lock.failed); }
+  };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
@@ -1365,6 +1414,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onOffload: (e) => offloadFromDevice(slate, e),
                 onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
+                // The open slate changes its lock from the writer's settings
+                // row, where the editor's keys follow the change
+                onLock: currentSlateNumber != null && slate.slate_number === currentSlateNumber ? null : (e) => toggleLock(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);
                   showDeleteConfirmation(slate.slate_number, slate.title, e);
@@ -1495,6 +1547,13 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
       </div>
       {toastNode}
+      {lockAsk && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4" onClick={() => setLockAsk(null)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-10 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <LockPanel mode={lockAsk.mode} onSubmit={handleLockAskSubmit} onCancel={() => setLockAsk(null)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,7 +8,8 @@
 // IndexedDB: a device that holds the account still needs the secret. It is
 // forgotten after a stretch of no activity, and on logout.
 import { API_URL } from './config';
-import { deriveKey, generateSalt, generateSlateKey, wrapKey, unwrapKey } from './crypto';
+import { deriveKey, generateSalt, generateSlateKey, wrapKey, unwrapKey, encryptContent, encryptTitle } from './crypto';
+import { cacheSlate } from './offlineStore';
 
 export const MIN_SECRET_LENGTH = 4;
 const IDLE_MS = 5 * 60 * 1000;
@@ -96,6 +97,38 @@ export async function unlock(secret, data = null) {
   lockKey = key;
   touchLock();
   emit();
+}
+
+// Lock or unlock one slate: the content goes up re-keyed (a fresh doc key
+// wrapped to the lock key, or back under the master key), the title stays
+// under the master key, and the flag rides on the same save. Returns what
+// the caller needs to update its own view of the slate.
+export async function saveLockChange({ userId, slateNumber, content, masterKey, lockOn, baseUpdatedAt = null }) {
+  const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
+  const docKey = lockOn ? await generateSlateKey() : null;
+  const body = {
+    encryptedContent: await encryptContent(content, docKey || masterKey),
+    encryptedTitle: await encryptTitle(firstLine || 'untitled slate', masterKey),
+    wordCount: content.trim() === '' ? 0 : content.trim().split(/\s+/).length,
+    charCount: content.length,
+    sizeBytes: new TextEncoder().encode(content).length,
+    lock: lockOn ? { locked: true, wrappedKey: await wrapDocKey(docKey) } : { locked: false },
+  };
+  if (baseUpdatedAt != null) body.baseUpdatedAt = baseUpdatedAt;
+  const response = await fetch(`${API_URL}/slates/${slateNumber}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'lock failed');
+  const lockWrappedKey = body.lock.wrappedKey || null;
+  cacheSlate(userId, slateNumber, {
+    encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
+    is_locked: lockOn ? 1 : 0, lock_wrapped_key: lockWrappedKey, updated_at: data.updated_at ?? null,
+  }).catch(() => {});
+  return { body, data, docKey, lockWrappedKey };
 }
 
 export async function wrapDocKey(docKey) {
