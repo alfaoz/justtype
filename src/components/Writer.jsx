@@ -369,6 +369,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // A slate's first save, from 'saving...' until its address has been shown:
   // the status stays visible through focus mode and autosaves stay quiet
   const [announcing, setAnnouncing] = useState(false);
+  const [footerHover, setFooterHover] = useState(false);
+  // True once the folded group has finished unfolding: only then may its
+  // popovers (the save menu) overflow the box
+  const [chromeSettled, setChromeSettled] = useState(true);
+  useEffect(() => {
+    const open = !zenMode || footerHover;
+    if (!open) { setChromeSettled(false); return; }
+    const t = setTimeout(() => setChromeSettled(true), 500);
+    return () => clearTimeout(t);
+  }, [zenMode, footerHover]);
   const announcingRef = useRef(false);
   // The words the status slot fades out with (it never reads 'ready')
   const [shownStatus, setShownStatus] = useState('');
@@ -2245,8 +2255,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     ].filter(Boolean),
   };
 
-  // Focus mode: the footer chrome fades out and comes back under the pointer
+  // Focus mode: the footer chrome fades out and comes back under the pointer.
+  // The about/save group also folds to zero width so the status slot sits at
+  // the right edge, and glides back left as the group unfolds.
   const zenFade = `transition-opacity duration-500 ${zenMode ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`;
+  const chromeOpen = !zenMode || footerHover;
 
   return (
     <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
@@ -2378,7 +2391,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       </div>
 
       {/* DESKTOP FOOTER */}
-      <footer className="hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] relative group">
+      <footer className="hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] relative group" onMouseEnter={() => setFooterHover(true)} onMouseLeave={() => setFooterHover(false)}>
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
@@ -2457,7 +2470,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           {/* Right Controls: the status slot keeps its place through focus
               mode (visible there only while a first save is announced) so
               the chrome fades in around it */}
-          <div className="flex gap-4 items-center">
+          <div className="flex items-center">
             <span
               className={`transition-opacity duration-300 ${
                 status !== 'ready' && (!zenMode || announcing) ? 'opacity-100' : 'opacity-0'
@@ -2475,7 +2488,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               <TextMorph>{shownStatus}</TextMorph>
             </span>
 
-            <div className={`flex gap-4 items-center ${zenFade}`}>
+            <div className={`grid transition-[grid-template-columns] duration-500 ease-out ${chromeOpen ? 'grid-cols-[1fr]' : 'grid-cols-[0fr]'}`}>
+            <div className={`min-w-0 ${chromeSettled ? '' : 'overflow-hidden'} flex gap-4 items-center pl-4 ${zenFade}`}>
 
             {/* Connectivity, in the same voice as the status word: offline is
                 orange like a private draft, a newer build is blue like a
@@ -2613,6 +2627,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   </button>
                 </div>
               )}
+            </div>
             </div>
             </div>
           </div>
