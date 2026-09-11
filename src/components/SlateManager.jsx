@@ -669,6 +669,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const toggleKeepOffline = (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
+    // A mouse click leaves focus on the button, and the row shows its mark
+    // while anything inside has focus; drop it so the mark hides on mouse-out
+    // (a keyboard toggle, detail 0, keeps its focus)
+    if (e.detail > 0) e.currentTarget.blur();
     setSlateKept(slate, !deviceCopies.kept.has(slate.slate_number));
   };
 
