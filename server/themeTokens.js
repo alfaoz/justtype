@@ -16,6 +16,7 @@ const SEPIA_FONTS = { ui: { family: 'Lora', weights: [400, 500, 600] },
 
 const BUILTIN = {
   dark:   { colors: { bg:'#050505', bgSecondary:'#0a0a0a', bgTertiary:'#111111', text:'#e5e5e5', textMuted:'#888888', textDim:'#4a4a4a', border:'#1a1a1a', borderLight:'#141414', accent:'#e5e5e5', blue:'#4cc9f0', orange:'#f77f00', red:'#e94560', green:'#06d6a0' }, fonts: DEFAULT_FONTS },
+  ash:    { colors: { bg:'#19191b', bgSecondary:'#202023', bgTertiary:'#27272b', text:'#e4e4e6', textMuted:'#8d8d94', textDim:'#55555c', border:'#2c2c31', borderLight:'#242428', accent:'#e4e4e6', blue:'#4cc9f0', orange:'#f77f00', red:'#e94560', green:'#06d6a0' }, fonts: DEFAULT_FONTS },
   legacy: { colors: { bg:'#111111', bgSecondary:'#1a1a1a', bgTertiary:'#222222', text:'#d4d4d4', textMuted:'#a0a0a0', textDim:'#666666', border:'#333333', borderLight:'#222222', accent:'#ffffff', blue:'#60a5fa', orange:'#fb923c', red:'#f87171', green:'#4ade80' }, fonts: DEFAULT_FONTS },
   light:  { colors: { bg:'#faf9f7', bgSecondary:'#ffffff', bgTertiary:'#f0efed', text:'#1a1a1a', textMuted:'#4a4a4a', textDim:'#888888', border:'#d4d2cf', borderLight:'#e8e7e5', accent:'#1a1a1a', blue:'#0066cc', orange:'#b85c00', red:'#b33000', green:'#008800' }, fonts: DEFAULT_FONTS },
   sepia:  { colors: { bg:'#f4ecd8', bgSecondary:'#faf6eb', bgTertiary:'#ebe4d0', text:'#5c4b37', textMuted:'#7a6b5a', textDim:'#9a8b7a', border:'#d4c4a8', borderLight:'#e0d4be', accent:'#3d2e1f', blue:'#2563eb', orange:'#c2410c', red:'#b91c1c', green:'#15803d' }, fonts: SEPIA_FONTS },

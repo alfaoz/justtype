@@ -50,9 +50,9 @@ export const builtInThemes = {
     },
     fonts: defaultFonts
   },
-  'soft-dark': {
-    id: 'soft-dark',
-    name: 'soft dark',
+  ash: {
+    id: 'ash',
+    name: 'ash',
     colors: {
       bg: '#19191b',
       bgSecondary: '#202023',
