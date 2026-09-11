@@ -136,8 +136,8 @@ const strings = {
     about: {
       title: 'about justtype',
       description: 'minimalist writing app with cloud storage and sharing.',
-      encryption: 'your slates are locally encrypted with aes-256-gcm, before it gets to our servers.',
-      encryptionLabel: 'end to end encrypted',
+      encryption: 'your slates are encrypted on your device with aes-256-gcm before they leave it. the key never reaches our servers, so they only ever hold ciphertext. not us, not a breach, nobody but you can read what you write.',
+      encryptionLabel: 'zero-knowledge. private by design.',
       byline: 'made by',
       links: {
         terms: 'terms of service',
