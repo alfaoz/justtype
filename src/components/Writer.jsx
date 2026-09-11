@@ -1468,9 +1468,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
     return deleteCurrentSlate();
   };
+  const deletingRef = useRef(null);
   const deleteCurrentSlate = async () => {
     const n = currentSlate?.slate_number;
-    if (n == null) return null;
+    if (n == null || deletingRef.current === n) return null; // one delete in flight per slate
+    deletingRef.current = n;
     setShowDeleteEmptyModal(false);
     try {
       const r = await fetch(`${API_URL}/slates/${n}`, { method: 'DELETE', credentials: 'include' });
@@ -1479,6 +1481,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       reportNetworkFailure();
       setStatus(saveFailedStatus());
       return null;
+    } finally {
+      deletingRef.current = null;
     }
     deleteCachedSlate(userId, n).catch(() => {});
     localStorage.removeItem('justtype-draft');
