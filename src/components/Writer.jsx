@@ -20,7 +20,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { isUnlocked, onLockChange, touchLock, fetchLockData, setupLock, unlock as openLock, wrapDocKey, unwrapDocKey } from '../slateLock';
+import { isUnlocked, onLockChange, relock, touchLock, fetchLockData, setupLock, unlock as openLock, wrapDocKey, unwrapDocKey } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -292,6 +292,21 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [lockGate, setLockGate] = useState(null);
   const lockGateRef = useRef(null);
   const [lockPrompt, setLockPrompt] = useState(null);
+  // The slate number `isLocked` speaks for, and the last slate loaded:
+  // moving to another slate shuts the lock
+  const lockedSlateRef = useRef(null);
+  const lastLoadedRef = useRef(null);
+  useEffect(() => {
+    if (currentSlate) return;
+    lastLoadedRef.current = null;
+    lockedSlateRef.current = null;
+    lockGateRef.current = null;
+    setLockGate(null);
+    setLockPrompt(null);
+    setLockDocKey(null);
+    setIsLocked(false);
+    relock();
+  }, [currentSlate?.slate_number]);
   // Bumped whenever the doc key changes (enable, rotation, rekey) to remount
   // the collab editor, and to re-run the shared load after a rotation.
   const [collabKeyGen, setCollabKeyGen] = useState(0);
@@ -1101,6 +1116,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
 
   const loadSlate = async (id) => {
+    if (lastLoadedRef.current != null && lastLoadedRef.current !== id) relock();
+    lastLoadedRef.current = id;
     try {
       // The device copy: the truth for slates created offline and for slates
       // with an edit still waiting to sync; the fallback when the network
@@ -1178,6 +1195,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           setCollabDocKey(null);
           setCollabSlateDbId(null);
           setIsLocked(true);
+          lockedSlateRef.current = id;
           const docKey = await unwrapDocKey(data.lock_wrapped_key);
           if (docKey) {
             contentKey = docKey;
@@ -1194,6 +1212,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           setCollabSlateDbId(null);
           setLockDocKey(null);
           setIsLocked(false);
+          lockedSlateRef.current = null;
           slateContent = await decryptContent(data.encryptedContent, contentKey);
         }
         // Decrypt title if encrypted
@@ -2409,6 +2428,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setHasUnsavedChanges(false);
     setLockDocKey(docKey);
     setIsLocked(lockOn);
+    lockedSlateRef.current = lockOn ? currentSlate.slate_number : null;
     cacheSlate(userId, currentSlate.slate_number, {
       encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
       is_locked: lockOn ? 1 : 0, lock_wrapped_key: body.lock.wrappedKey || null, updated_at: data.updated_at ?? null,
@@ -2452,6 +2472,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // save what is here, then put the gate back in front of it
   useEffect(() => onLockChange((open) => {
     if (open || !isLocked || !currentSlate || lockGateRef.current) return;
+    if (lockedSlateRef.current !== currentSlate.slate_number) return; // a switch, not a shut
     const shut = () => {
       const gate = { id: currentSlate.slate_number };
       lockGateRef.current = gate;

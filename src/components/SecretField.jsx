@@ -54,19 +54,29 @@ export function SecretField({
       className={`relative flex justify-center select-none cursor-text ${className}`}
       onMouseDown={(e) => { e.preventDefault(); inputRef.current?.focus(); }}
     >
+      {/* A plain text field, not a password one: the stars already hide the
+          value, and a password field would have the browser offer to save
+          it. The data attributes keep password managers out of it too. */}
       <input
         ref={inputRef}
-        type="password"
+        type="text"
+        name="secret-field"
         inputMode={numeric ? 'numeric' : 'text'}
         autoComplete="off"
         autoCapitalize="off"
+        autoCorrect="off"
         spellCheck={false}
+        data-1p-ignore=""
+        data-lpignore="true"
+        data-bwignore=""
+        data-form-type="other"
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className="absolute inset-0 w-full h-full opacity-0 cursor-text"
+        style={{ color: 'transparent', caretColor: 'transparent', textShadow: 'none' }}
         aria-label="secret"
       />
       <div className="flex flex-wrap justify-center gap-x-2.5 text-2xl leading-none font-mono py-3">

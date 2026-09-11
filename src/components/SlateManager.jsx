@@ -14,6 +14,7 @@ import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from 'torph/react';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
+import { isUnlocked, onLockChange } from '../slateLock';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -31,7 +32,9 @@ const statusFor = (slate) =>
   slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
     : slate.is_locked
-      ? { label: strings.slates.status.locked, cls: 'text-[var(--theme-text-muted)]' }
+      ? slate.unlockedHere
+        ? { label: strings.slates.status.unlocked, cls: 'text-[var(--theme-green)]' }
+        : { label: strings.slates.status.locked, cls: 'text-[var(--theme-text-muted)]' }
     : slate.is_published
       ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
       : slate.published_at
@@ -401,6 +404,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Whether the account's lock is open right now: the open locked slate
+  // reads "unlocked" only while it is
+  const [lockOpen, setLockOpen] = useState(isUnlocked());
+  useEffect(() => onLockChange(setLockOpen), []);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
@@ -1340,6 +1347,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 syncing: syncing.has(slate.slate_number),
                 justSynced: justSynced.has(slate.slate_number),
                 copying: copying.has(slate.slate_number),
+                unlockedHere: lockOpen && currentSlateNumber != null && slate.slate_number === currentSlateNumber,
               }}
               offline={!online}
               hit={contentHits.get(slate.slate_number) || null}

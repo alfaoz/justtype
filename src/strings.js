@@ -249,6 +249,7 @@ const strings = {
     },
     status: {
       locked: 'locked',
+      unlocked: 'unlocked',
       public: 'public',
       private: 'private',
       wasPublic: 'draft (was public)',

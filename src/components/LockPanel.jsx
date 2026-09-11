@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { TextMorph } from 'torph/react';
 import { strings } from '../strings';
 import { SecretField } from './SecretField';
 import { MIN_SECRET_LENGTH, normalizeSecret } from '../slateLock';
@@ -11,8 +10,9 @@ import { MIN_SECRET_LENGTH, normalizeSecret } from '../slateLock';
  * `unlock` the lock is closed and you asked to lock a slate: same, cancellable
  * `setup`  no lock on the account yet: choose a secret, enter it again
  *
- * Every word that changes morphs; a wrong secret clears the stars and says
- * so under them. Enter submits, escape cancels where there is a way back.
+ * The words stay still; the stars are the motion. A wrong secret clears the
+ * stars and says so under them. Enter submits, escape cancels where there is
+ * a way back.
  */
 export function LockPanel({ mode, onSubmit, onCancel, className = '' }) {
   const s = strings.writer.lock;
@@ -57,14 +57,14 @@ export function LockPanel({ mode, onSubmit, onCancel, className = '' }) {
 
   return (
     <div className={`flex flex-col items-center justify-center text-center px-8 animate-[fadeIn_0.3s_ease-out] ${className}`} onKeyDown={onKeyDown}>
-      <div className="text-sm text-[var(--theme-text)] mb-4"><TextMorph>{busy ? s.working : title}</TextMorph></div>
+      <div className="text-sm text-[var(--theme-text)] mb-4">{busy ? s.working : title}</div>
       {mode === 'setup' && row === 'confirm' ? (
         <SecretField key="again" value={again} onChange={(v) => { setAgain(v); setError(''); }} grow autoFocus onSubmit={submit} />
       ) : (
         <SecretField key="first" value={secret} onChange={(v) => { setSecret(v); setError(''); }} grow autoFocus onSubmit={submit} />
       )}
       <div className={`text-xs mt-4 ${error ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)]'}`}>
-        <TextMorph>{hint}</TextMorph>
+        {hint}
       </div>
       {onCancel && (
         <button onClick={onCancel} className="mt-6 text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
