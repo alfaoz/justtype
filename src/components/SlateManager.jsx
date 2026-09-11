@@ -13,7 +13,7 @@ import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from 'torph/react';
-import { indexDevice, indexDeeper, findIn } from '../contentSearch';
+import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -1009,41 +1009,40 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   // Content search. Two characters or more searches the text of every copy
   // on this device as you type; the rest can be fetched with 'search deeper'.
   const contentQuery = debouncedSearchQuery.trim().toLowerCase().length >= 2 ? debouncedSearchQuery.trim().toLowerCase() : '';
-  const [searchable, setSearchable] = useState(() => new Set()); // numbers with text in memory
-  const [contentHits, setContentHits] = useState(() => new Map()); // number -> snippet
+  // The text index lives in the search module for the session; this counter
+  // ticks whenever it grows so the hits below are recomputed
+  const [indexVersion, setIndexVersion] = useState(0);
   const [deepSearch, setDeepSearch] = useState(null); // { done, total } while fetching
   const [deepNote, setDeepNote] = useState('');
   const deepNoteTimerRef = useRef(null);
   useEffect(() => {
     if (!contentQuery || !userId) return;
     let cancelled = false;
-    indexDevice(userId).then((ok) => { if (!cancelled && ok.size) setSearchable(prev => new Set([...prev, ...ok])); });
+    indexDevice(userId).then(() => { if (!cancelled) setIndexVersion(v => v + 1); });
     return () => { cancelled = true; };
   }, [contentQuery ? userId : null]);
-  useEffect(() => {
-    if (!contentQuery || !userId) { setContentHits(prev => prev.size ? new Map() : prev); return; }
-    const hits = new Map();
+  useEffect(() => () => clearTimeout(deepNoteTimerRef.current), []);
+  const { contentHits, unsearched } = useMemo(() => {
+    const hits = new Map(); // number -> snippet
+    const missing = []; // numbers with no text on this device
+    if (!contentQuery || !userId) return { contentHits: hits, unsearched: missing };
     for (const s of slates) {
-      if (s.shared) continue;
+      if (s.shared || s.local) continue;
+      if (!isIndexed(userId, s.slate_number)) { missing.push(s.slate_number); continue; }
       const found = findIn(userId, s.slate_number, contentQuery);
       if (found) hits.set(s.slate_number, found);
     }
-    setContentHits(hits);
-  }, [contentQuery, searchable, slates, userId]);
-  useEffect(() => () => clearTimeout(deepNoteTimerRef.current), []);
-  const unsearched = useMemo(
-    () => contentQuery ? slates.filter(s => !s.shared && !s.local && !searchable.has(s.slate_number)).map(s => s.slate_number) : [],
-    [contentQuery, slates, searchable]
-  );
+    return { contentHits: hits, unsearched: missing };
+  }, [contentQuery, indexVersion, slates, userId]);
   const searchDeeper = async () => {
     if (!userId || deepSearch || !unsearched.length || !isOnline()) return;
     const total = unsearched.length;
     let done = 0;
     setDeepSearch({ done, total });
-    await indexDeeper(userId, unsearched, (n, ok) => {
+    await indexDeeper(userId, unsearched, () => {
       done++;
       setDeepSearch({ done, total });
-      if (ok) setSearchable(prev => new Set([...prev, n]));
+      setIndexVersion(v => v + 1);
     });
     refreshDeviceCopies();
     setDeepSearch(null);

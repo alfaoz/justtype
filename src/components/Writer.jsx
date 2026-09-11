@@ -1567,7 +1567,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         response = await send(sentBody);
       }
 
+      // The server would not take it: the text is kept on this device and
+      // the queued write retries when things are better
       if (!response.ok) {
+        if (await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
         endAnnouncement();
         setStatus(saveFailedStatus());
         return null;
