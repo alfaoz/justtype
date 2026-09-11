@@ -366,6 +366,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const saveMenuTimeoutRef = useRef(null);
   // The status slot typing out a line, one character per tick
   const typeStatusRef = useRef([]);
+  // A slate's first save, from 'saving...' until its address has been shown:
+  // the status stays visible through focus mode and autosaves stay quiet
+  const [announcing, setAnnouncing] = useState(false);
+  const announcingRef = useRef(false);
+  // The words the status slot fades out with (it never reads 'ready')
+  const [shownStatus, setShownStatus] = useState('');
+  useEffect(() => { if (status !== 'ready') setShownStatus(status); }, [status]);
   const lastSavedContentRef = useRef('');
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
@@ -1384,6 +1391,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // title leaves the browser for E2E slates.
   // A slate's first save gives it an address: the status slot types it out
   // the way the page was written, then settles back to ready
+  const setAnnouncingBoth = (on) => { announcingRef.current = on; setAnnouncing(on); };
   const typeStatus = (text, hold = 3000) => {
     typeStatusRef.current.forEach(clearTimeout);
     const timers = [];
@@ -1391,9 +1399,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const perChar = reduced ? 0 : 28;
     if (reduced) setStatus(text);
     else for (let i = 1; i <= text.length; i++) timers.push(setTimeout(() => setStatus(text.slice(0, i) + (i < text.length ? '\u258d' : '')), i * perChar));
-    timers.push(setTimeout(() => setStatus('ready'), text.length * perChar + hold));
+    timers.push(setTimeout(() => { setStatus('ready'); setAnnouncingBoth(false); }, text.length * perChar + hold));
     typeStatusRef.current = timers;
   };
+  const endAnnouncement = () => { typeStatusRef.current.forEach(clearTimeout); setAnnouncingBoth(false); };
   useEffect(() => () => typeStatusRef.current.forEach(clearTimeout), []);
 
   const buildSavePayload = async () => {
@@ -1451,7 +1460,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       return null;
     }
 
-    setStatus('saving...');
+    // An autosave that lands while the address is still being shown saves
+    // without a word; the announcement keeps the slot
+    const creating = !currentSlate;
+    const quiet = !creating && announcingRef.current;
+    if (creating) setAnnouncingBoth(true);
+    if (!quiet) setStatus('saving...');
 
     try {
       const { body, titleToSave, slateKey } = await buildSavePayload();
@@ -1502,6 +1516,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       if (!response.ok) {
+        endAnnouncement();
         setStatus(saveFailedStatus());
         return null;
       }
@@ -1579,15 +1594,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setShareUrl(`${window.location.origin}/s/${data.share_id}`);
         setStatus('saved');
         setTimeout(() => setStatus(strings.writer.status.published), 2000);
-      } else if (!currentSlate && data.slate_number != null) {
+      } else if (creating && data.slate_number != null) {
         typeStatus(strings.writer.status.savedAs(data.slate_number));
-      } else {
+      } else if (!quiet) {
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);
       }
 
       return data; // Return the saved slate data
     } catch (err) {
+      endAnnouncement();
       setStatus(saveFailedStatus());
       console.error('Save failed:', err);
       return null;
@@ -2234,11 +2250,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     ].filter(Boolean),
   };
 
+  // Focus mode: the footer chrome fades out and comes back under the pointer
+  const zenFade = `transition-opacity duration-500 ${zenMode ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`;
+
   return (
     <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
       {isLoading && (
-        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeInUp_0.2s_ease-out]'}`}>
+        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeIn_0.2s_ease-out]'}`}>
           <div className="text-[var(--theme-text-dim)] text-sm animate-pulse">loading slate...</div>
         </div>
       )}
@@ -2246,7 +2265,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
           instead of covering the text you are comparing against) */}
       <div className="flex-grow flex min-h-0 w-full">
-      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeInUp_0.3s_ease-out]' : ''}`}>
+      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
         {collabDocKey && collabSlateDbId ? (
           // Collaborative slate: one live CM6 surface for BOTH modes (remote
           // carets need it); `editorMode` only toggles the live preview.
@@ -2364,11 +2383,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       </div>
 
       {/* DESKTOP FOOTER */}
-      <footer className={`hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'} relative`}>
+      <footer className="hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] relative group">
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
-          <div className="flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0" ref={settingsMenuRef}>
+          <div className={`flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0 ${zenFade}`} ref={settingsMenuRef}>
             {/* Three dots button - animates to horizontal line when open */}
             <button
               ref={threeDotsRef}
@@ -2440,12 +2459,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             )}
           </div>
 
-          {/* Right Controls */}
+          {/* Right Controls: the status slot keeps its place through focus
+              mode (visible there only while a first save is announced) so
+              the chrome fades in around it */}
           <div className="flex gap-4 items-center">
             <span
               className={`transition-opacity duration-300 ${
-                status === 'ready' ? 'opacity-0' : 'opacity-100'
-              } ${statusTone(status)} ${
+                status !== 'ready' && (!zenMode || announcing) ? 'opacity-100' : 'opacity-0'
+              } ${statusTone(shownStatus)} ${
                 (status.includes('create account') || status.includes('support us')) ? 'cursor-pointer hover:text-white' : ''
               }`}
               onClick={() => {
@@ -2456,10 +2477,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 }
               }}
             >
-              {status}
+              {shownStatus}
             </span>
 
-            {status !== 'ready' && <span className="opacity-30">·</span>}
+            <div className={`flex gap-4 items-center ${zenFade}`}>
+            <span className={`opacity-30 transition-opacity duration-300 ${status !== 'ready' ? '' : 'opacity-0'}`}>·</span>
 
             {/* Connectivity, in the same voice as the status word: offline is
                 orange like a private draft, a newer build is blue like a
@@ -2598,6 +2620,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 </div>
               )}
             </div>
+            </div>
           </div>
         </div>
       </footer>
@@ -2703,8 +2726,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
               {/* status */}
               {status !== 'ready' && (
-                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${statusTone(status)}`}>
-                  {status}
+                <div className={`mb-3 py-2 rounded-lg text-center text-sm ${statusTone(shownStatus)}`}>
+                  {shownStatus}
                 </div>
               )}
               {!online && (
