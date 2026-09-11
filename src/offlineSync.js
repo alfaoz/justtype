@@ -25,7 +25,7 @@ export function onSync(fn) { listeners.add(fn); return () => listeners.delete(fn
 const emit = (e) => { for (const l of listeners) l(e); };
 
 export { mergeTexts } from './mergeText';
-import { mergeTexts } from './mergeText';
+import { CONFLICT_OURS, mergeTexts } from './mergeText';
 
 const json = (res) => res.json().catch(() => ({}));
 
@@ -49,7 +49,12 @@ export async function mergeWithServer(userId, slateNumber, ourBody, baseEncrypte
     decryptContent(ourBody.encryptedContent, key),
     decryptContent(theirs.encryptedContent, key),
   ]);
-  const { text, conflicts } = mergeTexts(baseText, ourText, theirText);
+  // Our text still holds unresolved conflict markers from an earlier merge:
+  // merging it again would nest markers inside markers. It already carries
+  // both sides, so it goes up as is and the markers stay for the person.
+  const { text, conflicts } = ourText.includes(CONFLICT_OURS)
+    ? { text: ourText, conflicts: ourText.split(CONFLICT_OURS).length - 1 }
+    : mergeTexts(baseText, ourText, theirText);
   await addHistory(userId, slateNumber, ourBody.encryptedContent, 'before merge');
   const firstLine = text.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate';
   const body = {
@@ -123,8 +128,11 @@ async function flushPut(userId, p) {
     encryptedContent: sent.encryptedContent, encrypted_title: sent.encryptedTitle, updated_at: data.updated_at,
   });
   await deletePending(userId, p.slateNumber);
-  emit({ type: 'flushed', slateNumber: p.slateNumber });
-  if (merged) emit({ type: 'merged', slateNumber: p.slateNumber, conflicts: merged.conflicts, text: merged.text });
+  // The version now on the server, so an open editor can base its next
+  // save on it instead of the one it loaded before going offline
+  const version = { updated_at: data.updated_at ?? null, encryptedContent: sent.encryptedContent };
+  emit({ type: 'flushed', slateNumber: p.slateNumber, ...version });
+  if (merged) emit({ type: 'merged', slateNumber: p.slateNumber, conflicts: merged.conflicts, text: merged.text, ...version });
 }
 
 // Queue an offline save for `slateNumber` (existing slate). `cached` is the

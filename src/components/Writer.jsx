@@ -24,7 +24,7 @@ import { SettingsRow, controlLabel } from './SettingsRow';
 const statusTone = (status) => {
   const { privateDraft, savedAsPrivate } = strings.writer.status;
   if (status === strings.errors.saveFailed || status === strings.writer.connectivity.notSaved) return 'text-red-400';
-  if (status === privateDraft || status === savedAsPrivate) return 'text-orange-400';
+  if (status === privateDraft || status === savedAsPrivate || /\bto resolve$/.test(status)) return 'text-orange-400';
   return 'text-green-500';
 };
 // Offline, a failed save is expected and reads as a state, not a failure
@@ -897,11 +897,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       loadedSlateRef.current = { updated_at: e.slate.updated_at ?? null, encryptedContent: loadedSlateRef.current?.encryptedContent ?? null };
       adoptSlate({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
     } else if (e.type === 'merged' && open != null && open === e.slateNumber) {
+      loadedSlateRef.current = { updated_at: e.updated_at ?? null, encryptedContent: e.encryptedContent ?? null };
       setContent(e.text);
       lastSavedContentRef.current = JSON.stringify({ content: e.text });
       setHasUnsavedChanges(false);
       setStatus(e.conflicts ? strings.writer.connectivity.conflicts(e.conflicts) : strings.writer.connectivity.merged);
       if (!e.conflicts) setTimeout(() => setStatus('ready'), 4000);
+    } else if (e.type === 'flushed' && open != null && open === e.slateNumber && e.updated_at) {
+      // A queued edit of the open slate reached the account: the next save
+      // starts from that version
+      loadedSlateRef.current = { updated_at: e.updated_at, encryptedContent: e.encryptedContent ?? loadedSlateRef.current?.encryptedContent ?? null };
     } else if (e.type === 'started') {
       setStatus(strings.writer.connectivity.syncing);
     } else if (e.type === 'finished' && !e.failed) {
