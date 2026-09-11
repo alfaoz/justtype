@@ -1186,12 +1186,18 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 name="username"
                 required
                 minLength={3}
-                maxLength={20}
+                maxLength={isLogin ? 254 : 20}
                 autoComplete="username"
-                pattern="[a-z0-9][a-z0-9._\-]*[a-z0-9]|[a-z0-9]"
-                title="username can only contain lowercase letters, numbers, dots, hyphens, and underscores"
+                {...(isLogin ? {} : {
+                  pattern: '[a-z0-9][a-z0-9._\\-]*[a-z0-9]|[a-z0-9]',
+                  title: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores',
+                })}
                 onChange={(e) => {
-                  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+                  // Sign-up shapes a username; login also takes an email, so
+                  // it only lowercases
+                  e.target.value = isLogin
+                    ? e.target.value.toLowerCase().trim()
+                    : e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
                 }}
               className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
