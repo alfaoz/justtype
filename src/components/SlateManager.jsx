@@ -1052,8 +1052,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   };
   // The line under the results: it morphs between its states and fades out
   // with its last words
+  // Nothing to say until the device has been indexed once: the count would
+  // be every slate for a moment and then fade
   const deepLine = deepSearch ? strings.slates.search.progress(deepSearch.done, deepSearch.total)
-    : deepNote || (unsearched.length ? strings.slates.search.notOnDevice(unsearched.length) : '');
+    : deepNote || (indexVersion > 0 && unsearched.length ? strings.slates.search.notOnDevice(unsearched.length) : '');
   const lastDeepLineRef = useRef('');
   if (deepLine) lastDeepLineRef.current = deepLine;
 
