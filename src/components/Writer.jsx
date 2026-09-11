@@ -336,6 +336,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The version of the open slate as loaded (server timestamp + encrypted
   // blob): the base its edits started from, for conflict detection and merge
   const loadedSlateRef = useRef(null);
+  // The number of a slate this editor just created (or that got its server
+  // number after an offline save): its text is already on screen, so the
+  // load effect adopts the number instead of refetching behind the overlay
+  const adoptedSlateRef = useRef(null);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [themeImportError, setThemeImportError] = useState(null);
   // Catalog: which custom theme has its menu open, where each one stands in
@@ -550,6 +554,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     if (isShared) return;
     if (currentSlate && token) {
+      if (adoptedSlateRef.current != null && adoptedSlateRef.current === currentSlate.slate_number) {
+        adoptedSlateRef.current = null;
+        return;
+      }
       setIsLoading(true);
       loadSlate(currentSlate.slate_number);
     } else if (!currentSlate && !contentRef.current.trim()) {
@@ -849,14 +857,22 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     pruneCache(userId).catch(() => {});
   }, [userId]);
 
+  // The open text became (or was renumbered to) this slate: hand the number
+  // up without a reload and give the page the slate's own address
+  const adoptSlate = (slate) => {
+    adoptedSlateRef.current = slate.slate_number;
+    onSlateChange(slate);
+    const path = window.location.pathname;
+    if (path === '/' || path.startsWith('/slate/')) window.history.replaceState({}, '', `/slate/${slate.slate_number}`);
+  };
+
   // A local slate that got its number, or a merge that changed the open
   // slate: follow it without a reload
   useEffect(() => onSync((e) => {
     const open = currentSlate?.slate_number;
     if (e.type === 'synced' && open != null && open === e.from) {
       loadedSlateRef.current = { updated_at: e.slate.updated_at ?? null, encryptedContent: loadedSlateRef.current?.encryptedContent ?? null };
-      onSlateChange({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
-      window.history.replaceState({}, '', `/slate/${e.to}`);
+      adoptSlate({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
     } else if (e.type === 'merged' && open != null && open === e.slateNumber) {
       setContent(e.text);
       lastSavedContentRef.current = JSON.stringify({ content: e.text });
@@ -1400,7 +1416,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         word_count: body.wordCount, char_count: body.charCount,
       }, { opened: true });
       await queuePending(userId, local, { op: 'post', body, editorMode });
-      onSlateChange({ slate_number: local, local: true });
+      adoptSlate({ slate_number: local, local: true });
     }
     lastSavedContentRef.current = JSON.stringify({ content });
     setHasUnsavedChanges(false);
@@ -1491,7 +1507,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       if (!currentSlate) {
         newSlateRefRef.current = null;
-        onSlateChange(data);
+        loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent ?? null };
+        // The device copy a load would have made
+        if (userId && sentBody.encryptedContent) {
+          cacheSlate(userId, data.slate_number, {
+            slate_number: data.slate_number, encrypted: true,
+            encryptedContent: sentBody.encryptedContent, encrypted_title: sentBody.encryptedTitle,
+            editor_mode: editorMode, is_published: 0, share_id: null, updated_at: data.updated_at ?? null,
+            word_count: sentBody.wordCount, char_count: sentBody.charCount,
+          }, { opened: true }).catch(() => {});
+        }
+        adoptSlate(data);
       }
 
       lastSavedContentRef.current = JSON.stringify({ content });
