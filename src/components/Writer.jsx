@@ -2476,7 +2476,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </span>
 
             <div className={`flex gap-4 items-center ${zenFade}`}>
-            <span className={`opacity-30 transition-opacity duration-300 ${status !== 'ready' ? '' : 'opacity-0'}`}>·</span>
 
             {/* Connectivity, in the same voice as the status word: offline is
                 orange like a private draft, a newer build is blue like a
@@ -2596,7 +2595,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 }}
                 className="hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
               >
-                <span>[{isShared ? 'export' : strings.writer.buttons.save}]</span>
+                <span>{isShared ? 'export' : strings.writer.buttons.save}</span>
                 {token && !isShared && <span className="text-xs opacity-50">⌘S</span>}
               </button>
               {showSaveMenu && (
