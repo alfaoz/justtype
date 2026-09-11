@@ -12,6 +12,8 @@ import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveShar
 import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
+import { TextMorph } from 'torph/react';
+import { indexDevice, indexDeeper, findIn } from '../contentSearch';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -265,8 +267,15 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null }) {
   const isPinned = Boolean(slate.pinned_at);
+  // Content search: the line the query was found on, the match lit up
+  const snippet = hit && (
+    <p className="mt-1 text-xs text-[var(--theme-text-dim)] truncate animate-[fadeIn_0.3s_ease-out]">
+      {hit.before}<span className="text-[var(--theme-text)]">{hit.hit}</span>{hit.after}
+      {hit.count > 1 && <span className="ml-2 opacity-60">{strings.slates.search.hits(hit.count)}</span>}
+    </p>
+  );
   const unavailable = offline && !slate.available && !slate.local && !slate.shared;
   const open = unavailable ? undefined : onOpen;
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
@@ -295,6 +304,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           </div>
           <SlateMenu slate={slate} {...menuProps} />
         </div>
+        {snippet}
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -319,6 +329,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
         </div>
+        {snippet}
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
@@ -989,6 +1000,58 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return Array.from(map, ([id, name]) => ({ id, name }));
   }, [slates]);
 
+  // Content search. Two characters or more searches the text of every copy
+  // on this device as you type; the rest can be fetched with 'search deeper'.
+  const contentQuery = debouncedSearchQuery.trim().toLowerCase().length >= 2 ? debouncedSearchQuery.trim().toLowerCase() : '';
+  const [searchable, setSearchable] = useState(() => new Set()); // numbers with text in memory
+  const [contentHits, setContentHits] = useState(() => new Map()); // number -> snippet
+  const [deepSearch, setDeepSearch] = useState(null); // { done, total } while fetching
+  const [deepNote, setDeepNote] = useState('');
+  const deepNoteTimerRef = useRef(null);
+  useEffect(() => {
+    if (!contentQuery || !userId) return;
+    let cancelled = false;
+    indexDevice(userId).then((ok) => { if (!cancelled && ok.size) setSearchable(prev => new Set([...prev, ...ok])); });
+    return () => { cancelled = true; };
+  }, [contentQuery ? userId : null]);
+  useEffect(() => {
+    if (!contentQuery || !userId) { setContentHits(prev => prev.size ? new Map() : prev); return; }
+    const hits = new Map();
+    for (const s of slates) {
+      if (s.shared) continue;
+      const found = findIn(userId, s.slate_number, contentQuery);
+      if (found) hits.set(s.slate_number, found);
+    }
+    setContentHits(hits);
+  }, [contentQuery, searchable, slates, userId]);
+  useEffect(() => () => clearTimeout(deepNoteTimerRef.current), []);
+  const unsearched = useMemo(
+    () => contentQuery ? slates.filter(s => !s.shared && !s.local && !searchable.has(s.slate_number)).map(s => s.slate_number) : [],
+    [contentQuery, slates, searchable]
+  );
+  const searchDeeper = async () => {
+    if (!userId || deepSearch || !unsearched.length || !isOnline()) return;
+    const total = unsearched.length;
+    let done = 0;
+    setDeepSearch({ done, total });
+    await indexDeeper(userId, unsearched, (n, ok) => {
+      done++;
+      setDeepSearch({ done, total });
+      if (ok) setSearchable(prev => new Set([...prev, n]));
+    });
+    refreshDeviceCopies();
+    setDeepSearch(null);
+    setDeepNote(strings.slates.search.everything);
+    clearTimeout(deepNoteTimerRef.current);
+    deepNoteTimerRef.current = setTimeout(() => setDeepNote(''), 2500);
+  };
+  // The line under the results: it morphs between its states and fades out
+  // with its last words
+  const deepLine = deepSearch ? strings.slates.search.progress(deepSearch.done, deepSearch.total)
+    : deepNote || (unsearched.length ? strings.slates.search.notOnDevice(unsearched.length) : '');
+  const lastDeepLineRef = useRef('');
+  if (deepLine) lastDeepLineRef.current = deepLine;
+
   const filteredAndSortedSlates = useMemo(() => {
     const q = debouncedSearchQuery.trim().toLowerCase();
     const activeTag = tagFilter;
@@ -1039,7 +1102,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       const title = (slate.title || '').toString().toLowerCase();
       if (title.includes(q)) return true;
 
-      return tags.some(t => (t || '').toString().toLowerCase().includes(q));
+      if (tags.some(t => (t || '').toString().toLowerCase().includes(q))) return true;
+
+      return contentHits.has(slate.slate_number);
     });
 
     const compareBySort = (a, b) => {
@@ -1073,7 +1138,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, sharedSlates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, visibilityFilter, sortBy]);
+  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, appFilter, collabFilter, visibilityFilter, sortBy]);
 
   // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
   useEffect(() => {
@@ -1266,6 +1331,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 copying: copying.has(slate.slate_number),
               }}
               offline={!online}
+              hit={contentHits.get(slate.slate_number) || null}
               onCopy={(e) => copySlateNow(slate, e)}
               onKeep={(e) => toggleKeepOffline(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
@@ -1288,6 +1354,26 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               }}
             />
           ))}
+        </div>
+      )}
+
+      {/* Content search: what is not on this device, and the way to search it */}
+      {contentQuery && (
+        <div className={`py-5 text-center text-xs text-[var(--theme-text-dim)] transition-opacity duration-500 ${deepLine ? 'opacity-100' : 'opacity-0'}`}>
+          <TextMorph>{lastDeepLineRef.current}</TextMorph>
+          {!deepSearch && !deepNote && unsearched.length > 0 && (
+            <>
+              <span className="opacity-30 mx-2">·</span>
+              <button
+                type="button"
+                onClick={searchDeeper}
+                disabled={!online}
+                className="hover:text-[var(--theme-text)] transition-colors disabled:cursor-default disabled:hover:text-[var(--theme-text-dim)]"
+              >
+                {online ? strings.slates.search.deeper : strings.slates.search.offline}
+              </button>
+            </>
+          )}
         </div>
       )}
 

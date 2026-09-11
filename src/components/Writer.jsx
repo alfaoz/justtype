@@ -2593,10 +2593,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   }
                   saveSlate();
                 }}
-                className="hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
+                className="save-btn hover:text-white transition-all duration-300 active:scale-95 flex items-center gap-2"
               >
                 <span>{isShared ? 'export' : strings.writer.buttons.save}</span>
-                {token && !isShared && <span className="text-xs opacity-50">⌘S</span>}
+                {token && !isShared && <span className="save-key text-xs leading-none inline-flex items-center" aria-hidden="true">⌘S</span>}
               </button>
               {showSaveMenu && (
                 <div

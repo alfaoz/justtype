@@ -1076,6 +1076,10 @@ body.custom-theme ::-webkit-scrollbar-track {
 @media (hover: hover) {
   .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-live) { opacity: 0; }
 }
+/* The save shortcut hint: in flow so nothing shifts, shown under the pointer */
+.save-key { opacity: 0; transition: opacity 0.3s ease; }
+.save-btn:hover .save-key, .save-btn:focus-visible .save-key { opacity: 0.5; }
+
 @keyframes markSpin { to { transform: rotate(360deg); } }
 @keyframes markPop {
   0% { transform: scale(0.4); opacity: 0; }

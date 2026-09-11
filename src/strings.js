@@ -215,6 +215,16 @@ const strings = {
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
+    // Content search: what is on this device is searched as you type; the
+    // line under the results offers the rest
+    search: {
+      notOnDevice: (n) => n === 1 ? '1 slate is not on this device' : `${n} slates are not on this device`,
+      deeper: 'search deeper',
+      offline: 'no connection',
+      progress: (done, total) => `searching ${done} of ${total}`,
+      everything: 'everything searched',
+      hits: (n) => n === 1 ? '1 hit' : `${n} hits`,
+    },
     status: {
       public: 'public',
       private: 'private',
