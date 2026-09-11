@@ -48,6 +48,8 @@ export async function indexDevice(userId) {
   return ok;
 }
 
+export const isIndexed = (userId, n) => texts.has(keyOf(userId, n));
+
 // The slates that are not here: two lanes, a breath between requests, a 429
 // ends it. `onEach(n, ok)` fires as each one lands so results stream in.
 export async function indexDeeper(userId, numbers, onEach) {
