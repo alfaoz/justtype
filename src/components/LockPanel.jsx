@@ -35,7 +35,7 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
     newSecret: s.newSecretTitle,
     newConfirm: s.confirmTitle,
   }[step];
-  const hint = error || {
+  const hint = {
     secret: mode === 'setup' ? s.setupHint : s.gateHint,
     confirm: s.confirmHint,
     phrase: mode === 'setup' ? s.phraseHintSetup : s.phraseHintRecover,
@@ -149,9 +149,9 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
         </button>
       )}
 
-      <div className={`text-xs mt-4 max-w-sm leading-relaxed ${error ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text-dim)]'}`}>
-        {hint}
-      </div>
+      {/* The explanation stays; a mistake gets its own line under it */}
+      <div className="text-xs mt-4 max-w-sm leading-relaxed text-[var(--theme-text-dim)]">{hint}</div>
+      {error && <div className="text-xs mt-2 max-w-sm leading-relaxed text-[var(--theme-red)] animate-[fadeIn_0.2s_ease-out]">{error}</div>}
 
       <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
         {mode === 'gate' && step === 'secret' && onRecover && (
