@@ -364,6 +364,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
   const saveTimeoutRef = useRef(null);
   const saveMenuTimeoutRef = useRef(null);
+  // The status slot typing out a line, one character per tick
+  const typeStatusRef = useRef([]);
   const lastSavedContentRef = useRef('');
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
@@ -1380,6 +1382,20 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The encrypted payload a save sends (collab slates encrypt under the
   // shared doc key; new slates are never collab). ZK titles: no plaintext
   // title leaves the browser for E2E slates.
+  // A slate's first save gives it an address: the status slot types it out
+  // the way the page was written, then settles back to ready
+  const typeStatus = (text, hold = 3000) => {
+    typeStatusRef.current.forEach(clearTimeout);
+    const timers = [];
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const perChar = reduced ? 0 : 28;
+    if (reduced) setStatus(text);
+    else for (let i = 1; i <= text.length; i++) timers.push(setTimeout(() => setStatus(text.slice(0, i) + (i < text.length ? '\u258d' : '')), i * perChar));
+    timers.push(setTimeout(() => setStatus('ready'), text.length * perChar + hold));
+    typeStatusRef.current = timers;
+  };
+  useEffect(() => () => typeStatusRef.current.forEach(clearTimeout), []);
+
   const buildSavePayload = async () => {
     const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
     const titleToSave = firstLine || 'untitled slate';
@@ -1563,6 +1579,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setShareUrl(`${window.location.origin}/s/${data.share_id}`);
         setStatus('saved');
         setTimeout(() => setStatus(strings.writer.status.published), 2000);
+      } else if (!currentSlate && data.slate_number != null) {
+        typeStatus(strings.writer.status.savedAs(data.slate_number));
       } else {
         setStatus('saved');
         setTimeout(() => setStatus('ready'), 2000);

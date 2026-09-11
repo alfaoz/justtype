@@ -116,6 +116,7 @@ const strings = {
       linkCopied: 'link copied!',
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
+      savedAs: (n) => `saved as /slate/${n}`,
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
