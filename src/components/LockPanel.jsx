@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { strings } from '../strings';
 import { SecretField } from './SecretField';
 import { MIN_SECRET_LENGTH, normalizeSecret, normalizePhrase } from '../slateLock';
@@ -6,22 +6,76 @@ import { MIN_SECRET_LENGTH, normalizeSecret, normalizePhrase } from '../slateLoc
 /**
  * The lock's face: a word, rows of stars, a quiet line under them.
  *
- * The panel grows downward instead of swapping screens. Enter on a row of
- * stars settles it and fades the next thing in right below: the second row
- * to type the secret again, the recovery phrase when the account has no
- * lock-recovery key yet, then the one line that says a forgotten secret
- * only opens with the recovery key, and the button that locks.
+ * The panel grows and shrinks in place instead of swapping screens. Enter on
+ * a row of stars settles it and fades the next thing in right below: the
+ * second row to type the secret again, the recovery phrase when the account
+ * has no lock-recovery key yet (it leaves once entered), then the one line
+ * that says a forgotten secret only opens with the recovery key. Enter, or
+ * "lock it" in the bottom row, locks.
  *
  * `setup`  choose a secret for this slate. Calls onSubmit({ secret, phrase }).
  * `gate`   the slate is locked: its secret opens it (onSubmit({ secret })),
- *          or "forgot it?" grows the recovery phrase and a new secret below
- *          (onRecover({ phrase, secret })).
+ *          or "forgot it?" trades the row for the recovery phrase and a new
+ *          secret (onRecover({ phrase, secret })).
  *
  * The words stay still; the stars are the motion. A mistake gets its own
  * line under the explanation and clears the row it happened on.
  */
 const SETUP_ORDER = ['secret', 'confirm', 'phrase', 'sure'];
 const GATE_ORDER = ['secret', 'phrase', 'newSecret', 'newConfirm'];
+const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+// Mounts its children with a fade and a small rise, and lets them fade out
+// before they leave, so nothing pops in or blinks away
+function Fade({ show, children, className = '' }) {
+  const [present, setPresent] = useState(show);
+  const [visible, setVisible] = useState(show);
+  const kept = useRef(children); // what fades out is what was last shown
+  if (show) kept.current = children;
+  useEffect(() => {
+    if (show) {
+      setPresent(true);
+      const id = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(id);
+    }
+    setVisible(false);
+    const t = setTimeout(() => setPresent(false), 280);
+    return () => clearTimeout(t);
+  }, [show]);
+  if (!present) return null;
+  return (
+    <div
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'none' : 'translateY(-4px)',
+        transition: `opacity 280ms ${EASE}, transform 280ms ${EASE}`,
+      }}
+    >
+      {kept.current}
+    </div>
+  );
+}
+
+// Follows its content's height with a transition, so the panel and whatever
+// holds it glide to their new size instead of jumping
+function AutoHeight({ children, className = '' }) {
+  const inner = useRef(null);
+  const [height, setHeight] = useState(null);
+  useEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    setHeight(el.offsetHeight);
+    const ro = new ResizeObserver(() => setHeight(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div className={className} style={{ height: height ?? 'auto', overflow: 'hidden', transition: `height 320ms ${EASE}` }}>
+      <div ref={inner} className="flex flex-col items-center">{children}</div>
+    </div>
+  );
+}
 
 export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover, onCancel, className = '' }) {
   const s = strings.writer.lock;
@@ -31,6 +85,7 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
   const [phrase, setPhrase] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const panelRef = useRef(null);
 
   const order = (mode === 'setup' ? SETUP_ORDER : GATE_ORDER).filter(st => st !== 'phrase' || mode === 'gate' || needsRecoveryKey);
   const at = order.indexOf(stage);
@@ -93,74 +148,82 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
       }
     });
   };
-  // Forgot it: the secret row rests, the recovery phrase grows below it
+  // Forgot it: the secret row leaves, the recovery phrase takes its place
   const forgot = () => { setError(''); setSecret(''); setStage('phrase'); };
+
+  // With nothing left to type, the panel itself takes the enter key
+  useEffect(() => {
+    if (stage === 'sure') panelRef.current?.focus();
+  }, [stage]);
 
   const onKeyDown = (e) => {
     if (e.key === 'Escape' && onCancel) { e.preventDefault(); onCancel(); }
+    if (e.key === 'Enter' && stage === 'sure') { e.preventDefault(); submitSure(); }
   };
 
-  // A row of stars that settles once it has been entered: still shown, no
-  // longer taking keys, a shade quieter
-  const row = (st, value, setValue, submit) => reached(st) && (
-    <div key={st} className={`transition-opacity duration-300 animate-[fadeIn_0.3s_ease-out] ${stage === st ? '' : 'opacity-50 pointer-events-none'}`}>
-      <SecretField value={value} onChange={(v) => { setValue(v); setError(''); }} grow autoFocus={stage === st} onSubmit={submit} />
-    </div>
+  // A row of stars. `show` keeps it on screen; once entered it stays a
+  // shade quieter and no longer takes keys
+  const row = (st, value, setValue, submit, show = reached(st)) => (
+    <Fade key={st} show={show} className="mb-4">
+      <div className={`transition-opacity duration-300 ${stage === st ? '' : 'opacity-50 pointer-events-none'}`}>
+        <SecretField value={value} onChange={(v) => { setValue(v); setError(''); }} grow autoFocus={stage === st} onSubmit={submit} />
+      </div>
+    </Fade>
   );
 
   return (
-    <div className={`flex flex-col items-center justify-center text-center px-8 animate-[fadeIn_0.3s_ease-out] ${className}`} onKeyDown={onKeyDown}>
-      <div className="text-sm text-[var(--theme-text)] mb-4">{title}</div>
+    <div
+      ref={panelRef}
+      tabIndex={-1}
+      className={`flex flex-col items-center justify-center text-center px-8 outline-none animate-[fadeIn_0.3s_ease-out] ${className}`}
+      onKeyDown={onKeyDown}
+    >
+      <AutoHeight className="w-full">
+        <div className="text-sm text-[var(--theme-text)] mb-5">{title}</div>
 
-      {row('secret', secret, setSecret, submitSecret)}
-      {row('confirm', again, setAgain, submitConfirm)}
+        {row('secret', secret, setSecret, submitSecret, mode === 'setup' || stage === 'secret')}
+        {row('confirm', again, setAgain, submitConfirm)}
 
-      {reached('phrase') && (
-        <textarea
-          key="phrase"
-          value={phrase}
-          onChange={(e) => { setPhrase(e.target.value); setError(''); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPhrase(); } }}
-          placeholder={s.phrasePlaceholder}
-          autoFocus={stage === 'phrase'}
-          readOnly={stage !== 'phrase'}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          className={`w-full max-w-sm mt-3 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 text-[var(--theme-text)] text-sm font-mono resize-none h-24 focus:border-[var(--theme-text-dim)] focus:outline-none transition-all duration-300 animate-[fadeIn_0.3s_ease-out] ${stage === 'phrase' ? '' : 'opacity-50 pointer-events-none'}`}
-        />
-      )}
+        {/* The recovery phrase: here while it is being typed, gone once it is in */}
+        <Fade show={stage === 'phrase'} className="w-full max-w-sm mb-4">
+          <textarea
+            value={phrase}
+            onChange={(e) => { setPhrase(e.target.value); setError(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPhrase(); } }}
+            placeholder={s.phrasePlaceholder}
+            autoFocus
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 text-[var(--theme-text)] text-sm font-mono resize-none h-24 focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+          />
+        </Fade>
 
-      {row('newSecret', secret, setSecret, submitNewSecret)}
-      {row('newConfirm', again, setAgain, submitNewConfirm)}
+        {row('newSecret', secret, setSecret, submitNewSecret)}
+        {row('newConfirm', again, setAgain, submitNewConfirm)}
 
-      {/* The explanation for the step at hand; a mistake gets its own line */}
-      <div className="text-xs mt-4 max-w-sm leading-relaxed text-[var(--theme-text-dim)]">{hint}</div>
-      {error && <div className="text-xs mt-2 max-w-sm leading-relaxed text-[var(--theme-red)] animate-[fadeIn_0.2s_ease-out]">{error}</div>}
+        {/* The explanation for the step at hand; a mistake gets its own line */}
+        <div className="text-xs max-w-sm leading-relaxed text-[var(--theme-text-dim)]">{hint}</div>
+        <Fade show={!!error}>
+          <div className="text-xs mt-2 max-w-sm leading-relaxed text-[var(--theme-red)]">{error}</div>
+        </Fade>
 
-      {stage === 'sure' && (
-        <button
-          onClick={submitSure}
-          disabled={busy}
-          autoFocus
-          className="mt-5 border border-[var(--theme-border)] rounded px-5 py-2 text-sm text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] transition-colors disabled:opacity-40 animate-[fadeIn_0.3s_ease-out]"
-        >
-          {s.lockIt}
-        </button>
-      )}
-
-      {/* The way out sits left in red; the way on sits right */}
-      <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
-        {onCancel && (
-          <button onClick={onCancel} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">{s.cancel}</button>
-        )}
-        {mode === 'gate' && stage === 'secret' && onRecover && (
-          <button onClick={forgot} className="hover:text-[var(--theme-text)] transition-colors">{s.forgot}</button>
-        )}
-        {stage === 'phrase' && (
-          <button onClick={submitPhrase} className="hover:text-[var(--theme-text)] transition-colors">{s.next}</button>
-        )}
-      </div>
+        {/* The way out sits left in red; the way on sits right */}
+        <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
+          {onCancel && (
+            <button onClick={onCancel} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">{s.cancel}</button>
+          )}
+          {mode === 'gate' && stage === 'secret' && onRecover && (
+            <button onClick={forgot} className="hover:text-[var(--theme-text)] transition-colors">{s.forgot}</button>
+          )}
+          {stage === 'phrase' && (
+            <button onClick={submitPhrase} className="hover:text-[var(--theme-text)] transition-colors">{s.next}</button>
+          )}
+          {stage === 'sure' && (
+            <button onClick={submitSure} disabled={busy} className="text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40">{s.lockIt}</button>
+          )}
+        </div>
+      </AutoHeight>
     </div>
   );
 }
