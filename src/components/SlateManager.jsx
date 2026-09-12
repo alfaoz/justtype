@@ -14,7 +14,7 @@ import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from 'torph/react';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
-import { isOpen, openDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
@@ -55,24 +55,45 @@ const SORT_OPTIONS = [
  * underlined in the accent colour instead of sitting in a bordered chip, so
  * five sort orders and two filters stop reading as a wall of buttons.
  */
+// One underline for the row, gliding to whichever word is chosen instead of
+// blinking from one to the next
 function ChoiceRow({ label, options, value, onChange }) {
+  const wrapRef = useRef(null);
+  const [bar, setBar] = useState(null);
+  useLayoutEffect(() => {
+    const place = () => {
+      const el = wrapRef.current?.querySelector(`[data-choice="${value}"]`);
+      if (!el) { setBar(null); return; }
+      setBar({ left: el.offsetLeft, width: el.offsetWidth, top: el.offsetTop + el.offsetHeight - 1 });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    if (wrapRef.current) ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, [value, options.length]);
   return (
-    <div className="flex items-center flex-wrap gap-x-3 gap-y-1">
+    <div ref={wrapRef} className="relative flex items-center flex-wrap gap-x-3 gap-y-1">
       <span className="text-[var(--theme-text-dim)] select-none">{label}</span>
       {options.map(option => (
         <button
           key={option.id}
+          data-choice={option.id}
           onClick={() => onChange(option.id)}
           title={option.title}
-          className={`transition-colors max-w-[12rem] truncate ${
-            value === option.id
-              ? 'text-[var(--theme-text)] underline underline-offset-4 decoration-[var(--theme-accent)]'
-              : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
+          className={`transition-colors duration-300 max-w-[12rem] truncate ${
+            value === option.id ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
           }`}
         >
           {option.label}
         </button>
       ))}
+      {bar && (
+        <span
+          aria-hidden="true"
+          className="absolute h-px bg-[var(--theme-accent)] pointer-events-none"
+          style={{ left: bar.left, width: bar.width, top: bar.top, transition: 'left 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1), top 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+        />
+      )}
     </div>
   );
 }
@@ -96,7 +117,17 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
   return (
     <>
       {!markLast && mark}
-      <span className={status.cls}>{status.label}</span>
+      {slate.is_locked && slate.unlockedHere ? (
+        // The open lock shuts on a click
+        <button
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); forgetDocKey(slate.slate_number); }}
+          className={`${status.cls} hover:text-[var(--theme-text)] transition-colors`}
+        >
+          {status.label}
+        </button>
+      ) : (
+        <span className={status.cls}>{status.label}</span>
+      )}
       {markLast && mark}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
@@ -1441,11 +1472,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         </div>
       ) : (
         <div
-          className={
+          key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}:${collabFilter}`}
+          className={`animate-[fadeIn_0.3s_ease-out] ${
             effectiveViewMode === 'list'
               ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
               : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
-          }
+          }`}
         >
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem

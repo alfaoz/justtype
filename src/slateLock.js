@@ -51,6 +51,12 @@ export function forgetDocKey(slateNumber) {
   emit({ type: 'close', slateNumber });
 }
 
+// Moving into a slate shuts every other lock, whichever way it was reached
+export function relockOthers(slateNumber) {
+  const keep = String(slateNumber);
+  for (const n of [...openKeys.keys()]) if (n !== keep) forgetDocKey(n);
+}
+
 // Forget every open doc key (idle, logout, moving to another slate)
 export function relock() {
   clearTimeout(idleTimer);

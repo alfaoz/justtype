@@ -20,7 +20,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { openDocKey, onLockChange, relock, touchLock, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -1117,7 +1117,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
 
   const loadSlate = async (id) => {
-    if (lastLoadedRef.current != null && lastLoadedRef.current !== id) relock();
+    relockOthers(id);
     lastLoadedRef.current = id;
     try {
       // The device copy: the truth for slates created offline and for slates
@@ -2524,7 +2524,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // the right edge, and glides back left as the group unfolds; the left
   // group slides the same way. (The slide is a transform only while closed:
   // a transformed ancestor would pin the strip's fixed popovers.)
-  const zenFade = `transition-opacity duration-500 ${zenMode ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`;
+  const zenOpacity = zenMode ? 'opacity-0 group-hover:opacity-100' : 'opacity-100';
+  const zenFade = `transition-opacity duration-500 ${zenOpacity}`;
   const chromeOpen = !zenMode || footerHover;
 
   return (
@@ -2671,7 +2672,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
-          <div className={`flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0 ${zenFade} transition-[opacity,transform] ease-out ${chromeOpen ? '' : '-translate-x-6'}`} ref={settingsMenuRef}>
+          <div className={`flex items-center gap-6 min-h-[32px] relative flex-1 min-w-0 ${zenOpacity} transition-[opacity,transform] duration-500 ease-out ${chromeOpen ? '' : '-translate-x-12'}`} ref={settingsMenuRef}>
             {/* Three dots button - animates to horizontal line when open */}
             <button
               ref={threeDotsRef}

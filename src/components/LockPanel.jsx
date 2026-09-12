@@ -184,19 +184,30 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
         {row('secret', secret, setSecret, submitSecret, mode === 'setup' || stage === 'secret')}
         {row('confirm', again, setAgain, submitConfirm)}
 
-        {/* The recovery phrase: here while it is being typed, gone once it is in */}
-        <Fade show={stage === 'phrase'} className="w-full max-w-sm mb-4">
-          <textarea
-            value={phrase}
-            onChange={(e) => { setPhrase(e.target.value); setError(''); }}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPhrase(); } }}
-            placeholder={s.phrasePlaceholder}
-            autoFocus
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 text-[var(--theme-text)] text-sm font-mono resize-none h-24 focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
-          />
+        {/* The recovery phrase: a box while it is typed; once it is in, the
+            box folds down to one quiet line saying so */}
+        <Fade show={reached('phrase')} className="w-full max-w-sm mb-4">
+          <div
+            className="relative w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded overflow-hidden focus-within:border-[var(--theme-text-dim)] transition-colors"
+            style={{ height: stage === 'phrase' ? 96 : 34, transition: `height 320ms ${EASE}, border-color 300ms ${EASE}` }}
+          >
+            <Fade show={stage === 'phrase'} className="absolute inset-0">
+              <textarea
+                value={phrase}
+                onChange={(e) => { setPhrase(e.target.value); setError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPhrase(); } }}
+                placeholder={s.phrasePlaceholder}
+                autoFocus
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="w-full h-full bg-transparent p-3 text-[var(--theme-text)] text-sm font-mono resize-none focus:outline-none"
+              />
+            </Fade>
+            <Fade show={stage !== 'phrase'} className="absolute inset-0 flex items-center justify-center text-xs text-[var(--theme-text-dim)]">
+              {s.phraseEntered}
+            </Fade>
+          </div>
         </Fade>
 
         {row('newSecret', secret, setSecret, submitNewSecret)}

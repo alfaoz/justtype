@@ -82,6 +82,7 @@ const strings = {
       phraseHintSetup: 'the 12 words of your account, once: they are the way back into a locked slate if its secret is forgotten.',
       phraseHintRecover: 'the 12 words of your account open it and let you choose a new secret.',
       phrasePlaceholder: 'twelve words with spaces between',
+      phraseEntered: 'recovery key: entered',
       sureTitle: 'lock this slate?',
       sureBody: 'if you forget it, only your recovery key opens it.',
       lockIt: 'lock it',
