@@ -2,7 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
-import './motion'; // marks the document with the motion preference before first paint
+import './motion'; // mark the document with the device preferences before first paint
+import './scale';
 
 // Offline shell (public/sw.js). Production only: during development the
 // dev server must always win, and a worker is exactly how UI goes stale.

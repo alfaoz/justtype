@@ -681,7 +681,7 @@ const strings = {
     },
     accessibility: {
       motion: 'motion',
-      size: 'text size',
+      size: 'size',
       note: 'for this device.',
     },
     info: {

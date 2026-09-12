@@ -1,27 +1,14 @@
-// The writing size steps (`size: small base large larger`), shared by the
-// writer, the public reader and the account page. The classes live in
-// index.css as .punto-*; the choice is per device (localStorage) and every
-// view hears about a change through usePunto.
-import { useEffect, useState } from 'react';
+// The writing size steps (`size: small base large`), shared by the writer
+// and the public reader. The classes live in index.css as .punto-*; the
+// choice is per device and every view hears about a change through usePunto.
+// The account page's `size` scales these along with everything else.
+import { makePref } from './pref';
 
-export const PUNTO_SIZES = ['small', 'base', 'large', 'larger'];
-const KEY = 'justtype-punto';
-const listeners = new Set();
+export const PUNTO_SIZES = ['small', 'base', 'large'];
 
-export const readPunto = () => {
-  try { const v = localStorage.getItem(KEY); return PUNTO_SIZES.includes(v) ? v : 'base'; } catch { return 'base'; }
-};
+const pref = makePref({ key: 'justtype-punto', values: PUNTO_SIZES, fallback: 'base' });
 
-export function setPunto(v) {
-  if (!PUNTO_SIZES.includes(v)) return;
-  try { localStorage.setItem(KEY, v); } catch {}
-  for (const l of listeners) l(v);
-}
-
-export const nextPunto = (p) => PUNTO_SIZES[(PUNTO_SIZES.indexOf(p) + 1) % PUNTO_SIZES.length];
-
-export function usePunto() {
-  const [p, setP] = useState(readPunto);
-  useEffect(() => { listeners.add(setP); return () => listeners.delete(setP); }, []);
-  return p;
-}
+export const readPunto = pref.get;
+export const setPunto = pref.set;
+export const usePunto = pref.use;
+export const nextPunto = pref.next;

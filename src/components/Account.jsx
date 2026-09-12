@@ -9,7 +9,7 @@ import { SupportButtons } from './SupportButtons';
 import { Collapse } from './Reveal';
 import { ChoiceRow, wordOptions } from './ChoiceRow';
 import { useMotion, setMotion } from '../motion';
-import { PUNTO_SIZES, usePunto, setPunto } from '../punto';
+import { SCALES, useScale, setScale } from '../scale';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -170,7 +170,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   // Device preferences shown under accessibility, shared with the writer's settings row
   const motion = useMotion();
-  const punto = usePunto();
+  const scale = useScale();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -1453,7 +1453,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
           </InfoRow>
           <InfoRow label={strings.account.accessibility.size}>
-            <ChoiceRow options={wordOptions(PUNTO_SIZES)} value={punto} onChange={setPunto} />
+            <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
           </InfoRow>
           <div className="px-4 py-3 text-xs text-[var(--theme-text-dim)]">{strings.account.accessibility.note}</div>
         </Section>
