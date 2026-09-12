@@ -13,6 +13,7 @@ import { withViewTransition } from '../viewTransition';
 import { TextMorph } from './TextMorph';
 import { PUNTO_SIZES, nextPunto, usePunto, setPunto } from '../punto';
 import { cue } from '../cues';
+import { HoverNote } from './HoverNote';
 import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
@@ -3205,7 +3206,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
             {/* colophon */}
             <div className="px-6 py-3.5 border-t border-[var(--theme-border)] flex items-center gap-2 flex-wrap text-[11px] text-[var(--theme-text-dim)]">
-              <span className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</span>
+              {/* 4.2.0 gets one word on hover, and only 4.2.0 */}
+              {VERSION.startsWith('4.2.0') ? (
+                <HoverNote plain note={strings.writer.about.versionNote} className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</HoverNote>
+              ) : (
+                <span className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</span>
+              )}
               <span className="opacity-40">·</span>
               <VerifyBadge className="text-[var(--theme-text-dim)] hover:text-white transition-colors">verify</VerifyBadge>
               <span className="opacity-40">·</span>

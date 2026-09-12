@@ -189,6 +189,7 @@ const strings = {
         disabled: 'disabled for now'
       },
       version: (v) => `version ${v}`,
+      versionNote: 'nice.', // 4.2.0 only
       close: 'close'
     },
     // mobile sheet
