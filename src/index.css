@@ -61,8 +61,8 @@ body {
 .punto-base { font-size: 0.9375rem !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
 .punto-large { font-size: 1.125rem !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
 
-/* Scale: the root size everything in rem hangs from (scale.js, `size:
-   normal big bigger` on the account page) */
+/* Scale: the root size everything in rem hangs from (scale.js, `big text:
+   off big bigger` on the account page) */
 html[data-scale="big"] { font-size: 112.5%; }
 html[data-scale="bigger"] { font-size: 125%; }
 
