@@ -176,7 +176,8 @@ const strings = {
         privacy: 'privacy policy',
         project: 'the justtype project',
         github: 'github',
-        feedback: 'send us feedback'
+        feedback: 'send us feedback',
+        whatsNew: "what's new on justtype"
       },
       support: {
         title: 'support justtype',
@@ -1522,13 +1523,13 @@ take care!
   },
   // One-time announcement card for users arriving on v4 for the first time.
   whatsNewModal: {
-    version: 'v4',
-    title: 'markdown and collab are here',
-    body: 'justtype just picked up the two things people asked for most.',
+    version: 'v4.2', // the seen-once key: change it and every account sees the card again
+    title: 'locks, math and a quieter app',
+    body: '4.2 is about writing the way you need to.',
     points: [
-      'write markdown and watch it format itself as you type',
-      'turn any slate collaborative and write together, live',
-      'still end to end encrypted, still just typing'
+      'lock any slate behind a pin or passphrase',
+      'write math between dollar signs and watch it set itself',
+      'accessibility options on your account page'
     ],
     tour: 'take the tour',
     dismiss: 'hell yeah!'
@@ -1539,7 +1540,7 @@ take care!
     versionTag: 'v4',
     heroEyebrow: 'v4 is here.',
     heroTitle: 'write together. write it better.',
-    heroSub: 'markdown formatting whenever you want it, and real time collaboration on any slate. still end to end encrypted, still just typing.',
+    heroSub: 'markdown formatting and real time collaboration, and now slates that lock, math that sets itself, and a page of options for how the app moves, sounds and reads. still end to end encrypted, still just typing.',
     demo: {
       lineA: 'ideas flow better',
       lineB: "when they're together",
@@ -1555,9 +1556,35 @@ take care!
       markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' },
       // The slate list: copies land on their own; `written` is the row that
       // gets edited while offline and syncs back
-      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 }
+      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 },
+      // 4.2: the lock's stars fill and the word turns; a formula sets itself;
+      // three option rows with the underline gliding; one slate goes to the shelf
+      lock: { stars: 6, before: 'locked', after: 'unlocked' },
+      math: { src: '$e^{i\\pi} + 1 = 0$' },
+      a11y: { rows: [['motion', ['on', 'off']], ['big text', ['off', 'big', 'bigger']], ['readable font', ['off', 'on']]] },
+      archive: { slates: ['morning pages', 'letter to june', 'reading notes'], shelved: 1, filters: ['all', 'public', 'private', 'archived'] }
     },
     features: [
+      {
+        id: 'lock',
+        title: 'locked slates',
+        body: 'give a slate its own pin or passphrase. the title stays in your list, the words stay yours until you type it. forget it and your recovery key opens it.'
+      },
+      {
+        id: 'math',
+        title: 'math, typeset',
+        body: 'write it between dollar signs and it sets itself as you go, inline or on a line of its own.'
+      },
+      {
+        id: 'a11y',
+        title: 'accessibility options',
+        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
+      },
+      {
+        id: 'archive',
+        title: 'archive',
+        body: 'put a slate away without deleting it. it waits under the archived filter.'
+      },
       {
         id: 'markdown',
         title: 'rich formatting with markdown',

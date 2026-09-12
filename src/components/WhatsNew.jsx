@@ -104,6 +104,70 @@ export function WhatsNew() {
     </div>
     ),
 
+    // Lock: the stars fill one by one, then the word turns
+    lock: (
+    <div className="wn-frame wn-frame-center" key="lock">
+      <div className="wn-lock">
+        <div className="wn-lock-stars">
+          {Array.from({ length: d.lock.stars }, (_, i) => (
+            <span key={i} className="wn-star" style={{ animationDelay: `${i * 0.35}s` }}>*</span>
+          ))}
+        </div>
+        <div className="wn-lock-status">
+          <span className="wn-lock-a">{d.lock.before}</span>
+          <span className="wn-lock-b">{d.lock.after}</span>
+        </div>
+      </div>
+    </div>
+    ),
+
+    // Math: the source crossfades into the set formula
+    math: (
+    <div className="wn-frame wn-frame-center" key="math">
+      <div className="wn-math">
+        <span className="wn-math-src">{d.math.src}</span>
+        <span className="wn-math-out"><i>e</i><sup><i>i</i>π</sup> + 1 = 0</span>
+      </div>
+    </div>
+    ),
+
+    // Accessibility: three option rows, one underline each, gliding
+    a11y: (
+    <div className="wn-frame" key="a11y">
+      <div className="wn-opts">
+        {d.a11y.rows.map(([label, words], r) => (
+          <div key={label} className="wn-opt">
+            <span className="wn-opt-label">{label}</span>
+            <span className="wn-opt-words">
+              {words.map((w, i) => <span key={w} className={`wn-opt-w wn-opt-w-${r}-${i}`}>{w}</span>)}
+              <i className={`wn-opt-bar wn-opt-bar-${r}`} />
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+    ),
+
+    // Archive: the shelved slate leaves the list; the filter word lights up
+    archive: (
+    <div className="wn-frame wn-frame-list" key="archive">
+      <div className="wn-arch-filters">
+        <span className="wn-slate-meta">show:</span>
+        {d.archive.filters.map((f) => (
+          <span key={f} className={`wn-arch-f ${f === 'all' ? 'wn-arch-f-all' : ''} ${f === 'archived' ? 'wn-arch-f-arch' : ''}`}>{f}</span>
+        ))}
+      </div>
+      <div className="wn-slates wn-arch-list">
+        {d.archive.slates.map((title, i) => (
+          <div key={title} className={`wn-slate ${i === d.archive.shelved ? 'wn-arch-row' : 'wn-arch-rest'}`}>
+            <span className="wn-slate-title">{title}</span>
+            <span className="wn-slate-meta">{strings.slates.status.private}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+    ),
+
     // Offline: the real list, marks only. Copies land on their own, cloud by
     // cloud; then one slate is written while offline, waits orange, spins,
     // lands green and settles.
@@ -149,6 +213,31 @@ export function WhatsNew() {
         .wn-mark-${n} .wn-mk-check { animation: wnCheck${n} 12s infinite; }
         @keyframes wnCloud${n} { 0%, ${t}% { opacity: 1; } ${t + 2}%, 96% { opacity: 0; } 98%, 100% { opacity: 1; } }
         @keyframes wnCheck${n} { ${check} }`;
+  }).join('');
+
+  // Each option row's underline walks its words on a 9s loop: word widths are
+  // 1ch a letter (monospace), gaps 0.75rem
+  const a11yCss = d.a11y.rows.map(([, words], r) => {
+    const stops = words.map((_, i) => {
+      const before = words.slice(0, i).reduce((n, w) => n + w.length, 0);
+      return { left: `calc(${before}ch + ${i * 0.75}rem)`, width: `${words[i].length}ch` };
+    });
+    const n = stops.length;
+    const frames = stops.map((st, i) => {
+      const a = Math.round((i / n) * 100);
+      const b = Math.round(((i + 1) / n) * 100) - 6;
+      return `${a}%, ${b}% { left: ${st.left}; width: ${st.width}; }`;
+    }).join(' ') + ` 100% { left: ${stops[0].left}; width: ${stops[0].width}; }`;
+    const lit = stops.map((_, i) => {
+      const a = Math.round((i / n) * 100);
+      const b = Math.round(((i + 1) / n) * 100) - 6;
+      return `.wn-opt-w-${r}-${i} { animation: wnOptW${r}${i} 9s infinite; animation-delay: ${r * 0.6}s; }
+        @keyframes wnOptW${r}${i} { 0%, 100% { color: var(--theme-text-dim); } ${a}%, ${b}% { color: var(--theme-text); } }`;
+    }).join('');
+    return `
+        .wn-opt-bar-${r} { animation: wnOptBar${r} 9s cubic-bezier(0.4, 0, 0.2, 1) infinite; animation-delay: ${r * 0.6}s; }
+        @keyframes wnOptBar${r} { ${frames} }
+        ${lit}`;
   }).join('');
 
   return (
@@ -255,6 +344,52 @@ export function WhatsNew() {
           84%, 100% { opacity: 0; transform: scale(1); }
         }
         ${offlineCss}
+
+        /* Lock: stars brighten in turn (delays inline), the word turns after */
+        .wn-lock { display: flex; flex-direction: column; align-items: center; gap: 0.9rem; }
+        .wn-lock-stars { display: flex; gap: 0.6rem; font-size: 1.4rem; line-height: 1; }
+        .wn-star { color: var(--theme-text-dim); opacity: 0.3; animation: wnStar 8s infinite; }
+        @keyframes wnStar { 0%, 6% { opacity: 0.3; color: var(--theme-text-dim); } 10%, 86% { opacity: 1; color: var(--theme-accent); } 92%, 100% { opacity: 0.3; color: var(--theme-text-dim); } }
+        .wn-lock-status { position: relative; font-size: 0.8rem; min-width: 5em; text-align: center; color: var(--theme-text-muted); }
+        .wn-lock-a, .wn-lock-b { position: absolute; left: 0; right: 0; }
+        .wn-lock-a { animation: wnLockA 8s infinite; }
+        .wn-lock-b { opacity: 0; animation: wnLockB 8s infinite; }
+        @keyframes wnLockA { 0%, 44% { opacity: 1; } 50%, 92% { opacity: 0; } 98%, 100% { opacity: 1; } }
+        @keyframes wnLockB { 0%, 48% { opacity: 0; } 54%, 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
+
+        /* Math: dollars in, the formula out */
+        .wn-math { position: relative; min-height: 2.2em; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; }
+        .wn-math-src { color: var(--theme-text-muted); animation: wnMdSrc 8s infinite; white-space: nowrap; }
+        .wn-math-out { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; animation: wnMdOut 8s infinite; color: var(--theme-text); font-family: 'KaTeX_Main', 'Times New Roman', Times, serif; font-size: 1.35rem; white-space: nowrap; }
+        .wn-math-out sup { font-size: 0.7em; margin-left: 1px; }
+
+        /* Accessibility: the account rows, underline on the move */
+        .wn-opts { display: flex; flex-direction: column; font-size: 0.75rem; }
+        .wn-opt { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0; border-top: 1px solid var(--theme-border-light); }
+        .wn-opt:first-child { border-top: 0; }
+        .wn-opt-label { color: var(--theme-text-dim); }
+        .wn-opt-words { position: relative; display: flex; gap: 0.75rem; }
+        .wn-opt-w { color: var(--theme-text-dim); transition: color 300ms; }
+        .wn-opt-bar { position: absolute; bottom: -3px; height: 1px; background: var(--theme-accent); }
+        ${a11yCss}
+
+        /* Archive: one row folds away, the filter word lights up */
+        .wn-arch-filters { display: flex; gap: 0.75rem; font-size: 0.7rem; color: var(--theme-text-dim); margin-bottom: 0.6rem; }
+        .wn-arch-f { color: var(--theme-text-dim); }
+        .wn-arch-f-all { animation: wnArchAll 9s infinite; }
+        .wn-arch-f-arch { animation: wnArchArch 9s infinite; }
+        @keyframes wnArchAll { 0%, 50% { color: var(--theme-text); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--theme-accent); } 56%, 100% { color: var(--theme-text-dim); text-decoration: none; } }
+        @keyframes wnArchArch { 0%, 50% { color: var(--theme-text-dim); text-decoration: none; } 56%, 100% { color: var(--theme-text); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--theme-accent); } }
+        .wn-arch-list { animation: none; }
+        .wn-arch-row { overflow: hidden; animation: wnArchRow 9s infinite; }
+        .wn-arch-rest { animation: wnArchRest 9s infinite; }
+        @keyframes wnArchRow {
+          0%, 26% { max-height: 3rem; opacity: 1; }
+          32%, 50% { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; }
+          56%, 90% { max-height: 3rem; opacity: 1; }
+          94%, 100% { max-height: 3rem; opacity: 1; }
+        }
+        @keyframes wnArchRest { 0%, 50% { opacity: 1; max-height: 3rem; } 56%, 90% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; } 96%, 100% { opacity: 1; max-height: 3rem; } }
 
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }

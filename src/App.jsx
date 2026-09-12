@@ -35,7 +35,8 @@ import { relock } from './slateLock';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
-const WHATS_NEW_SEEN_KEY = 'justtype-whats-new-seen-v4';
+// Per release: a device that dismissed the last card must not silence this one
+const WHATS_NEW_SEEN_KEY = `justtype-whats-new-seen-${strings.whatsNewModal.version}`;
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'

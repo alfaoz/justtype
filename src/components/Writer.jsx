@@ -3184,6 +3184,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 got thoughts? <AboutLink href="/feedback">{strings.writer.about.links.feedback}</AboutLink>.
               </p>
               <p>
+                see <AboutLink href="/whats-new">{strings.writer.about.links.whatsNew}</AboutLink>.
+              </p>
+              <p>
                 {strings.writer.about.byline}{' '}
                 <AboutLink href="https://alfaoz.dev">alfaoz</AboutLink>
               </p>
