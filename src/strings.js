@@ -1619,7 +1619,7 @@ take care!
       {
         id: 'a11y',
         title: 'accessibility options',
-        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
+        body: 'motion, big text, a readable font, line focus, sounds and haptics.'
       },
       {
         id: 'brand',
