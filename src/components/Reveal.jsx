@@ -53,9 +53,11 @@ export function Fade({ show, children, className = '', duration = 280 }) {
 }
 
 // Measures the inner box and reports its height whenever it changes
+// (A layout effect, so the first measure lands in the same flush that arms
+// the transition: a height can only glide from a number, never from auto)
 function useMeasuredHeight(ref, deps = []) {
   const [height, setHeight] = useState(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     setHeight(el.offsetHeight);
