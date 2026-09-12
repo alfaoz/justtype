@@ -27,7 +27,7 @@ function useLoop(delays) {
 }
 
 // Math: someone types the formula. The editor closes each pair as it opens,
-// so `$$` and `{}` land whole, plain text with a caret. Then the source
+// so `$$` and `{}` land whole, as plain text. Then the source
 // gives way to the set formula, holds, and the frame empties for the next go.
 function MathDemo({ steps }) {
   const n = steps.length;
@@ -37,7 +37,7 @@ function MathDemo({ steps }) {
   const set = k === n;
   return (
     <div className="wn-math">
-      <span className="wn-math-src" style={{ opacity: set ? 0 : 1 }}>{text}{text && <span className="wn-search-caret" />}</span>
+      <span className="wn-math-src" style={{ opacity: set ? 0 : 1 }}>{text}</span>
       <span className="wn-math-out" style={{ opacity: set ? 1 : 0 }}><i>e</i><sup><i>i</i>π</sup> + 1 = 0</span>
     </div>
   );
