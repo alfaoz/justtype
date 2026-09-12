@@ -120,6 +120,7 @@ function mountCollab(app, deps) {
       if (slate.is_system_slate) return res.status(403).json({ error: 'System slates cannot be shared' });
       if (slate.adoption_pending) return res.status(409).json({ error: 'Slate is pending adoption' });
       if (slate.is_collab) return res.status(409).json({ error: 'Slate is already collaborative' });
+      if (slate.is_locked) return res.status(409).json({ error: 'Locked slates cannot be shared', code: 'SLATE_LOCKED' });
       if (typeof ownerWrappedKey !== 'string' || !ownerWrappedKey.trim()) {
         return res.status(400).json({ error: 'Wrapped doc key required' });
       }

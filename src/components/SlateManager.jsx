@@ -1,9 +1,9 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
-import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
+import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { MarkGlyph } from './MarkGlyph';
@@ -12,6 +12,12 @@ import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveShar
 import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
+import { TextMorph } from './TextMorph';
+import { ChoiceRow } from './ChoiceRow';
+import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon } from './icons';
+import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
+import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -28,6 +34,10 @@ const formatDateShort = (dateString) =>
 const statusFor = (slate) =>
   slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
+    : slate.is_locked
+      ? slate.unlockedHere
+        ? { label: strings.slates.status.unlocked, cls: 'text-[var(--theme-text-muted)]' }
+        : { label: strings.slates.status.locked, cls: 'text-[var(--theme-text-muted)]' }
     : slate.is_published
       ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
       : slate.published_at
@@ -47,45 +57,36 @@ const SORT_OPTIONS = [
  * underlined in the accent colour instead of sitting in a bordered chip, so
  * five sort orders and two filters stop reading as a wall of buttons.
  */
-function ChoiceRow({ label, options, value, onChange }) {
-  return (
-    <div className="flex items-center flex-wrap gap-x-3 gap-y-1">
-      <span className="text-[var(--theme-text-dim)] select-none">{label}</span>
-      {options.map(option => (
-        <button
-          key={option.id}
-          onClick={() => onChange(option.id)}
-          title={option.title}
-          className={`transition-colors max-w-[12rem] truncate ${
-            value === option.id
-              ? 'text-[var(--theme-text)] underline underline-offset-4 decoration-[var(--theme-accent)]'
-              : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /**
  * The word-cluster a slate carries around: status, sync/collab/app markers and
  * clickable tags. Plain coloured words instead of bordered chips; tags wear a
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy }) {
+function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy, onKeep, markLast = false }) {
   const tags = Array.isArray(slate.tags) ? slate.tags : [];
   const visibleTags = tags.slice(0, maxTags);
   const remaining = tags.length - visibleTags.length;
   const status = statusFor(slate);
+  // Whether a copy of this slate is on this device. The mark hides until
+  // hovered, so on a card it goes last, after collab and the tags, where its
+  // space is the end of the line rather than a hole between two words.
+  const mark = <DeviceMark slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />;
 
   return (
     <>
-      {/* Whether a copy of this slate is on this device */}
-      <DeviceMark slate={slate} offline={offline} onCopy={onCopy} />
-      <span className={status.cls}>{status.label}</span>
+      {!markLast && mark}
+      {slate.is_locked && slate.unlockedHere ? (
+        // The open lock shuts on a click
+        <button
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); forgetDocKey(slate.slate_number); }}
+          className={`${status.cls} hover:text-[var(--theme-text)] transition-colors`}
+        >
+          {status.label}
+        </button>
+      ) : (
+        <span className={status.cls}>{status.label}</span>
+      )}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
           {strings.slates.status.syncing}
@@ -117,58 +118,117 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy 
         </button>
       ))}
       {remaining > 0 && <span className="text-[var(--theme-text-dim)]">+{remaining}</span>}
+      {markLast && mark}
     </>
   );
 }
 
 const menuItemCls = (danger) =>
-  `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm ${
+  `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm flex items-center gap-2.5 ${
     danger ? 'text-[var(--theme-red)]' : 'hover:text-[var(--theme-text)]'
-  }`;
+  } whitespace-nowrap`;
+
+// The icon before a menu word: a shade quieter than the word itself
+const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
 
 /**
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete, onLeave, leaveArmed, onKeepOffline }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onArchive, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
+  // Near the bottom of the window the menu opens upward instead of running
+  // off the page. Measured before paint, so it never shows in the wrong place.
+  const wrapRef = useRef(null);
+  const menuRef = useRef(null);
+  const [openUp, setOpenUp] = useState(false);
+  useLayoutEffect(() => {
+    if (!isOpen || !wrapRef.current || !menuRef.current) return;
+    const r = wrapRef.current.getBoundingClientRect();
+    const h = menuRef.current.offsetHeight + 8;
+    setOpenUp(window.innerHeight - r.bottom < h && r.top > h);
+  }, [isOpen]);
   return (
-    <div className="relative flex items-center flex-shrink-0">
+    <div ref={wrapRef} className="relative flex items-center flex-shrink-0">
       <button
         onClick={onToggle}
         className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
         title={strings.slates.menu.more}
       >
+        {/* Three dots that run together into one line while the menu is open,
+            the way the writer's do. Merging is a motion: the dots travel in
+            and the line grows from the middle. Splitting is not: the line
+            fades where it is and the dots fade back in at their own places
+            (the line's geometry snaps only after its fade is done). */}
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-          <circle cx="8" cy="2" r="1.5"/>
-          <circle cx="8" cy="8" r="1.5"/>
-          <circle cx="8" cy="14" r="1.5"/>
+          {[2, 8, 14].map((cy) => (
+            <circle
+              key={cy}
+              cx="8"
+              r="1.5"
+              style={isOpen
+                ? { cy: 8, opacity: 0, transition: 'cy 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease-out 60ms' }
+                : { cy, opacity: 1, transition: 'opacity 180ms ease-out' }}
+            />
+          ))}
+          <rect
+            x="7.25"
+            rx="0.75"
+            width="1.5"
+            style={isOpen
+              ? { y: 2, height: 12, opacity: 1, transition: 'y 220ms cubic-bezier(0.4, 0, 0.2, 1), height 220ms cubic-bezier(0.4, 0, 0.2, 1)' }
+              : { y: 8, height: 0, opacity: 0, transition: 'opacity 180ms ease-out, y 0s linear 180ms, height 0s linear 180ms' }}
+          />
         </svg>
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[160px] z-10">
+        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
+              <LeaveIcon className={menuIcon} />
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
             </button>
           ) : (
             <>
               <button onClick={onPin} className={menuItemCls(false)}>
+                {isPinned ? <UnpinIcon className={menuIcon} /> : <PinIcon className={menuIcon} />}
                 {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
               </button>
               <button onClick={onTags} className={menuItemCls(false)}>
+                <TagIcon className={menuIcon} />
                 {strings.slates.menu.tags}
               </button>
-              {!slate.local && (
-                <button onClick={onKeepOffline} className={menuItemCls(false)}>
-                  {slate.kept ? strings.slates.offline.unkeep : strings.slates.offline.keep}
+              {/* This device's copy: let it go, or get it. Keeping it past
+                  the budget is the check mark's job. A copy with an edit
+                  still on its way stays put. */}
+              {!slate.local && !slate.pending && (
+                <button onClick={slate.available ? onOffload : onCopyToDevice} className={menuItemCls(false)}>
+                  {slate.available ? <CloudOffIcon className={menuIcon} /> : <CloudDownIcon className={menuIcon} />}
+                  {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
                 </button>
               )}
-              <button onClick={onPublish} className={menuItemCls(false)}>
-                {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
-              </button>
+              {!slate.is_locked && (
+                <button onClick={onPublish} className={menuItemCls(false)}>
+                  {slate.is_published ? <EyeOffIcon className={menuIcon} /> : <GlobeIcon className={menuIcon} />}
+                  {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
+                </button>
+              )}
+              {/* A private, non-collab slate can lock; a locked one unlocks */}
+              {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
+                <button onClick={onLock} className={menuItemCls(false)}>
+                  {slate.is_locked ? <UnlockIcon className={menuIcon} /> : <LockIcon className={menuIcon} />}
+                  {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
+                </button>
+              )}
+              {!slate.local && (
+                <button onClick={onArchive} className={menuItemCls(false)}>
+                  {slate.archived_at ? <UnarchiveIcon className={menuIcon} /> : <ArchiveIcon className={menuIcon} />}
+                  {slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive}
+                </button>
+              )}
               <button onClick={onDelete} className={menuItemCls(true)}>
+                <TrashIcon className={menuIcon} />
                 {strings.slates.menu.delete}
               </button>
             </>
@@ -182,13 +242,15 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onDelete
 /**
  * The device mark: where this slate stands between this device and the
  * account. A check means a copy is here (dim when the app made it, green
- * when you asked for it to stay, and a green pop the moment a sync lands).
- * An orange ! means it is saved here but not in the account yet; while that
- * upload runs the ring spins. A cloud means it is not here yet; clicking it
- * copies the slate and keeps it. The icons are the ones people already read
- * this way in Drive, Spotify and iCloud.
+ * when you asked for it to stay, and a green pop the moment a sync lands);
+ * clicking it switches between the two. An orange ! means it is saved here
+ * but not in the account yet; while that upload runs the ring spins. A cloud
+ * means it is not here yet; clicking it copies the slate and keeps it. The
+ * mark is the one place for the device's copy; the menu only offloads or
+ * copies. The icons are the ones people already read this way in Drive,
+ * Spotify and iCloud.
  */
-const DeviceMark = ({ slate, offline, onCopy }) => {
+const DeviceMark = ({ slate, offline, onCopy, onKeep }) => {
   if (slate.shared) return null;
   const o = strings.slates.offline;
   const icon = 'w-[1em] h-[1em]';
@@ -208,17 +270,20 @@ const DeviceMark = ({ slate, offline, onCopy }) => {
   }
   if (slate.available) {
     const green = slate.kept || slate.justSynced;
+    const note = slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto;
     return (
-      <HoverNote plain note={slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
+      <HoverNote plain note={note} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
         {/* The dimming sits on the icon, not the wrapper: the hover card is a
             child of the wrapper and must stay opaque */}
-        <MarkGlyph kind="check" className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} aria-label={slate.kept ? o.kept : o.auto} role="img" />
+        <button type="button" onClick={onKeep} aria-label={slate.kept ? o.kept : o.auto} aria-pressed={Boolean(slate.kept)} className="flex items-center">
+          <MarkGlyph kind="check" className={`${icon} ${green ? '' : 'opacity-70'} ${slate.justSynced ? 'mark-pop' : ''}`} aria-hidden="true" />
+        </button>
       </HoverNote>
     );
   }
   const copying = Boolean(slate.copying);
   const canCopy = !offline && !copying;
-  const note = copying ? o.copying : offline ? o.missingOffline : o.missing;
+  const note = copying ? o.copying : offline ? o.missingOffline : slate.offloaded ? o.offloaded : o.missing;
   return (
     <HoverNote plain note={note} className={`device-mark p-1 -m-1 text-[var(--theme-text-dim)] ${copying ? 'animate-pulse is-live' : ''}`}>
       <button
@@ -246,8 +311,17 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false }) {
   const isPinned = Boolean(slate.pinned_at);
+  // The slate the writer has open (the one the writer button goes back to)
+  // rests in its hover state: no word, just the row already lit
+  // Content search: the line the query was found on, the match lit up
+  const snippet = hit && (
+    <p className="mt-1 text-xs text-[var(--theme-text-dim)] truncate animate-[fadeIn_0.3s_ease-out]">
+      {hit.before}<span className="text-[var(--theme-text)]">{hit.hit}</span>{hit.after}
+      {hit.count > 1 && <span className="ml-2 opacity-60">{strings.slates.search.hits(hit.count)}</span>}
+    </p>
+  );
   const unavailable = offline && !slate.available && !slate.local && !slate.shared;
   const open = unavailable ? undefined : onOpen;
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
@@ -263,7 +337,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     return (
       <div
         onClick={open}
-        className={`slate-item bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
+        className={`slate-item ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
         {/* The title is the card: let it wrap to two lines instead of
             truncating at twenty characters, and gather every piece of meta
@@ -276,10 +350,11 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           </div>
           <SlateMenu slate={slate} {...menuProps} />
         </div>
+        {snippet}
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} markLast />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -293,24 +368,25 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   return (
     <div
       onClick={open}
-      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
+      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
         </div>
+        {snippet}
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           {stats}
           <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
-        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} />
+        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
         {stats}
         <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
@@ -320,10 +396,10 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   );
 }
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, currentSlateNumber = null }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
-  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), pending: new Set() });
+  const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
   const [copying, setCopying] = useState(() => new Set());
   const refreshDeviceCopies = async () => {
     if (!userId) return;
@@ -332,6 +408,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       setDeviceCopies({
         available: new Set(rows.filter(r => r.data?.encryptedContent).map(r => r.slateNumber)),
         kept: new Set(rows.filter(r => r.keep).map(r => r.slateNumber)),
+        offloaded: new Set(rows.filter(r => r.offloaded && !r.data?.encryptedContent).map(r => r.slateNumber)),
         pending: new Set(queued.map(q => q.slateNumber)),
       });
     } catch { /* no local store: nothing is available offline */ }
@@ -360,6 +437,83 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Whether the account's lock is open right now: the open locked slate
+  // reads "unlocked" only while it is
+  // Lock changes re-render the list: the slates whose lock is open read
+  // "unlocked" while it is
+  const [, setLockTick] = useState(0);
+  useEffect(() => onLockChange(() => setLockTick(t => t + 1)), []);
+  // The panel asked for before a lock change from the list:
+  // { mode: 'setup' | 'gate', slate, info, recoveryKey, needsRecoveryKey }
+  const [lockAsk, setLockAsk] = useState(null);
+
+  const fetchSlateForLock = async (slate) => {
+    const res = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('load failed');
+    return res.json();
+  };
+  const noteLockChange = (slateNumber, lockFields, updatedAt) => {
+    setSlates(prev => prev.map(s => s.slate_number === slateNumber ? { ...s, ...lockFields, updated_at: updatedAt ?? s.updated_at } : s));
+  };
+  // Lock a slate from its menu: fetch it, decrypt under the master key, save
+  // it re-keyed to the chosen secret
+  const lockFromList = async (slate, { secret, phrase }, ask) => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('no key');
+    let recoveryKey = ask.recoveryKey;
+    if (!recoveryKey) recoveryKey = await registerRecoveryKey(phrase, ask.info);
+    const d = await fetchSlateForLock(slate);
+    if (d.is_locked) return;
+    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, master) : (d.content || '');
+    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: true, secret, recoveryKey, baseUpdatedAt: d.updated_at });
+    noteLockChange(slate.slate_number, lockFields, data.updated_at);
+  };
+  // Remove a slate's lock: its doc key must be open (the secret, or recovery)
+  const removeLockFromList = async (slate, docKey) => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('no key');
+    const d = await fetchSlateForLock(slate);
+    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, docKey) : '';
+    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: false, baseUpdatedAt: d.updated_at });
+    noteLockChange(slate.slate_number, lockFields, data.updated_at);
+  };
+  const toggleLock = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    if (!isOnline()) { showToast(strings.writer.lock.needsNetwork); return; }
+    try {
+      if (!slate.is_locked) {
+        const info = await fetchLockRecovery();
+        const recoveryKey = currentRecoveryKey(info);
+        setLockAsk({ mode: 'setup', slate, info, recoveryKey, needsRecoveryKey: !recoveryKey });
+        return;
+      }
+      const open = openDocKey(slate.slate_number);
+      if (open) { await removeLockFromList(slate, open); return; }
+      const d = await fetchSlateForLock(slate);
+      setLockAsk({ mode: 'gate', slate: { ...slate, ...d } });
+    } catch (err) {
+      console.error('lock change failed:', err);
+      showToast(strings.writer.lock.failed);
+    }
+  };
+  const handleLockAskSubmit = async (entry) => {
+    const ask = lockAsk;
+    if (ask.mode === 'setup') {
+      await lockFromList(ask.slate, entry, ask);
+    } else {
+      const docKey = await unlockSlate(ask.slate.slate_number, entry.secret, ask.slate);
+      await removeLockFromList(ask.slate, docKey);
+    }
+    setLockAsk(null);
+  };
+  const handleLockAskRecover = async ({ phrase }) => {
+    const ask = lockAsk;
+    const docKey = await recoverSlate(ask.slate.slate_number, phrase, ask.slate);
+    await removeLockFromList(ask.slate, docKey);
+    setLockAsk(null);
+  };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
@@ -376,6 +530,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
+  const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
@@ -644,18 +799,37 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     if (next && !deviceCopies.available.has(slate.slate_number)) await copyToDevice([slate.slate_number]);
   };
 
+  // The check mark: dim (the app's copy) to green (kept past the budget) and back
   const toggleKeepOffline = (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
-    setOpenMenuId(null);
+    // A mouse click leaves focus on the button, and the row shows its mark
+    // while anything inside has focus; drop it so the mark hides on mouse-out
+    // (a keyboard toggle, detail 0, keeps its focus)
+    if (e.detail > 0) e.currentTarget.blur();
     setSlateKept(slate, !deviceCopies.kept.has(slate.slate_number));
   };
 
-  // The cloud mark: copy it now and keep it
+  // The cloud mark, or the menu: copy it now and keep it, budget or not
   const copySlateNow = (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
+    setOpenMenuId(null);
     setSlateKept(slate, true);
+  };
+
+  // Free the space: the copy goes, and stays gone until asked for
+  const offloadFromDevice = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    if (!userId) return;
+    try {
+      await offloadSlate(userId, slate.slate_number);
+    } catch (err) {
+      console.error('offload failed:', err);
+    }
+    refreshDeviceCopies();
   };
 
   // A local slate got its number, or a queued edit landed: refresh
@@ -699,6 +873,29 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     } catch (err) {
       console.error('Failed to delete slate:', err);
       showToast(strings.errors.deleteSlate);
+    }
+  };
+
+  // Archive: the slate leaves the list for the archived section, and comes
+  // back the same way. Nothing else about it changes.
+  const toggleArchive = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    const archived = !slate.archived_at;
+    try {
+      const response = await fetch(`${API_URL}/slates/${slate.slate_number}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ archived }),
+      });
+      const data = await response.json();
+      if (!response.ok) { showToast(data.error || strings.errors.archiveFailed); return; }
+      setSlates(prev => prev.map(s => s.slate_number === slate.slate_number ? { ...s, archived_at: data.archived_at } : s));
+    } catch (err) {
+      console.error('Failed to toggle archive:', err);
+      showToast(strings.errors.archiveFailed);
     }
   };
 
@@ -949,6 +1146,59 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return Array.from(map, ([id, name]) => ({ id, name }));
   }, [slates]);
 
+  // Content search. Two characters or more searches the text of every copy
+  // on this device as you type; the rest can be fetched with 'search deeper'.
+  const contentQuery = debouncedSearchQuery.trim().toLowerCase().length >= 2 ? debouncedSearchQuery.trim().toLowerCase() : '';
+  // The text index lives in the search module for the session; this counter
+  // ticks whenever it grows so the hits below are recomputed
+  const [indexVersion, setIndexVersion] = useState(0);
+  const [deepSearch, setDeepSearch] = useState(null); // { done, total } while fetching
+  const [deepNote, setDeepNote] = useState('');
+  const deepNoteTimerRef = useRef(null);
+  useEffect(() => {
+    if (!contentQuery || !userId) return;
+    let cancelled = false;
+    indexDevice(userId).then(() => { if (!cancelled) setIndexVersion(v => v + 1); });
+    return () => { cancelled = true; };
+  }, [contentQuery ? userId : null]);
+  useEffect(() => () => clearTimeout(deepNoteTimerRef.current), []);
+  const { contentHits, unsearched } = useMemo(() => {
+    const hits = new Map(); // number -> snippet
+    const missing = []; // numbers with no text on this device
+    if (!contentQuery || !userId) return { contentHits: hits, unsearched: missing };
+    for (const s of slates) {
+      if (s.shared || s.local) continue;
+      if (!isIndexed(userId, s.slate_number)) { missing.push(s.slate_number); continue; }
+      const found = findIn(userId, s.slate_number, contentQuery);
+      if (found) hits.set(s.slate_number, found);
+    }
+    return { contentHits: hits, unsearched: missing };
+  }, [contentQuery, indexVersion, slates, userId]);
+  const searchDeeper = async () => {
+    if (!userId || deepSearch || !unsearched.length || !isOnline()) return;
+    const total = unsearched.length;
+    let done = 0;
+    setDeepSearch({ done, total });
+    await indexDeeper(userId, unsearched, () => {
+      done++;
+      setDeepSearch({ done, total });
+      setIndexVersion(v => v + 1);
+    });
+    refreshDeviceCopies();
+    setDeepSearch(null);
+    setDeepNote(strings.slates.search.everything);
+    clearTimeout(deepNoteTimerRef.current);
+    deepNoteTimerRef.current = setTimeout(() => setDeepNote(''), 2500);
+  };
+  // The line under the results: it morphs between its states and fades out
+  // with its last words
+  // Nothing to say until the device has been indexed once: the count would
+  // be every slate for a moment and then fade
+  const deepLine = deepSearch ? strings.slates.search.progress(deepSearch.done, deepSearch.total)
+    : deepNote || (indexVersion > 0 && unsearched.length ? strings.slates.search.notOnDevice(unsearched.length) : '');
+  const lastDeepLineRef = useRef('');
+  if (deepLine) lastDeepLineRef.current = deepLine;
+
   const filteredAndSortedSlates = useMemo(() => {
     const q = debouncedSearchQuery.trim().toLowerCase();
     const activeTag = tagFilter;
@@ -983,6 +1233,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         return false;
       }
 
+      // Archived slates live in their own section and nowhere else
+      if (visibilityFilter === 'archived') return Boolean(slate.archived_at);
+      if (slate.archived_at) return false;
+      if (visibilityFilter === 'public' && !slate.is_published) return false;
+      if (visibilityFilter === 'private' && slate.is_published) return false;
+
       if (collabFilter && !slate.is_collab) {
         return false;
       }
@@ -996,7 +1252,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       const title = (slate.title || '').toString().toLowerCase();
       if (title.includes(q)) return true;
 
-      return tags.some(t => (t || '').toString().toLowerCase().includes(q));
+      if (tags.some(t => (t || '').toString().toLowerCase().includes(q))) return true;
+
+      return contentHits.has(slate.slate_number);
     });
 
     const compareBySort = (a, b) => {
@@ -1030,7 +1288,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, sharedSlates, debouncedSearchQuery, tagFilter, appFilter, collabFilter, sortBy]);
+  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, appFilter, collabFilter, visibilityFilter, sortBy]);
 
   // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
   useEffect(() => {
@@ -1142,6 +1400,17 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 value={sortBy}
                 onChange={setSortBy}
               />
+              <ChoiceRow
+                label={strings.slates.filterVisibility}
+                options={[
+                  { id: 'all', label: strings.slates.filterVisibilityAll },
+                  { id: 'public', label: strings.slates.filterVisibilityPublic },
+                  { id: 'private', label: strings.slates.filterVisibilityPrivate },
+                  { id: 'archived', label: strings.slates.filterVisibilityArchived },
+                ]}
+                value={visibilityFilter}
+                onChange={setVisibilityFilter}
+              />
               {hasCollabSlates && (
                 <ChoiceRow
                   label={strings.collab.filter.label}
@@ -1189,15 +1458,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         </div>
       ) : filteredAndSortedSlates.length === 0 ? (
         <div className="text-center py-16">
-          <p className="text-[var(--theme-text-dim)] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
+          <p className="text-[var(--theme-text-dim)] text-sm md:text-base">{searchQuery.trim() ? strings.slates.noMatches(searchQuery) : (strings.slates.noneUnder[visibilityFilter] || strings.slates.noneUnder.all)}</p>
         </div>
       ) : (
         <div
-          className={
+          key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}:${collabFilter}`}
+          className={`animate-[fadeIn_0.3s_ease-out] ${
             effectiveViewMode === 'list'
               ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
               : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
-          }
+          }`}
         >
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem
@@ -1206,13 +1476,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 ...slate,
                 kept: deviceCopies.kept.has(slate.slate_number),
                 available: deviceCopies.available.has(slate.slate_number),
+                offloaded: deviceCopies.offloaded.has(slate.slate_number),
                 pending: slate.local || deviceCopies.pending.has(slate.slate_number),
                 syncing: syncing.has(slate.slate_number),
                 justSynced: justSynced.has(slate.slate_number),
                 copying: copying.has(slate.slate_number),
+                unlockedHere: isOpen(slate.slate_number),
               }}
               offline={!online}
+              hit={contentHits.get(slate.slate_number) || null}
+              editing={currentSlateNumber != null && slate.slate_number === currentSlateNumber}
               onCopy={(e) => copySlateNow(slate, e)}
+              onKeep={(e) => toggleKeepOffline(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
               onOpen={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
               onTagFilter={setTagFilter}
@@ -1221,8 +1496,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onToggle: (e) => toggleMenu(slate.slate_number, e),
                 onPin: (e) => togglePin(slate, e),
                 onTags: (e) => openTagsEditor(slate, e),
-                onKeepOffline: (e) => toggleKeepOffline(slate, e),
+                onOffload: (e) => offloadFromDevice(slate, e),
+                onCopyToDevice: (e) => copySlateNow(slate, e),
                 onPublish: (e) => togglePublish(slate, e),
+                onLock: (e) => toggleLock(slate, e),
+                onArchive: (e) => toggleArchive(slate, e),
                 onDelete: (e) => {
                   setOpenMenuId(null);
                   showDeleteConfirmation(slate.slate_number, slate.title, e);
@@ -1232,6 +1510,26 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               }}
             />
           ))}
+        </div>
+      )}
+
+      {/* Content search: what is not on this device, and the way to search it */}
+      {contentQuery && (
+        <div className={`py-5 text-center text-xs text-[var(--theme-text-dim)] transition-opacity duration-500 ${deepLine ? 'opacity-100' : 'opacity-0'}`}>
+          <TextMorph>{lastDeepLineRef.current}</TextMorph>
+          {!deepSearch && !deepNote && unsearched.length > 0 && (
+            <>
+              <span className="opacity-30 mx-2">·</span>
+              <button
+                type="button"
+                onClick={searchDeeper}
+                disabled={!online}
+                className="hover:text-[var(--theme-text)] transition-colors disabled:cursor-default disabled:hover:text-[var(--theme-text-dim)]"
+              >
+                {online ? strings.slates.search.deeper : strings.slates.search.offline}
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -1333,6 +1631,19 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
       </div>
       {toastNode}
+      {lockAsk && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4" onClick={() => setLockAsk(null)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <LockPanel
+              mode={lockAsk.mode}
+              needsRecoveryKey={!!lockAsk.needsRecoveryKey}
+              onSubmit={handleLockAskSubmit}
+              onRecover={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskRecover : undefined}
+              onCancel={() => setLockAsk(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

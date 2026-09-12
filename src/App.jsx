@@ -31,10 +31,12 @@ import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
+import { relock } from './slateLock';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
-const WHATS_NEW_SEEN_KEY = 'justtype-whats-new-seen-v4';
+// Per release: a device that dismissed the last card must not silence this one
+const WHATS_NEW_SEEN_KEY = `justtype-whats-new-seen-${strings.whatsNewModal.version}`;
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
@@ -760,6 +762,8 @@ export default function App() {
       }
     }
 
+    relock();
+
     // Clear local state and storage
     setToken(null);
     setUsername(null);
@@ -1145,6 +1149,10 @@ export default function App() {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
         @keyframes slideDown {
           from { opacity: 0; transform: translateY(-20px); }
           to { opacity: 1; transform: translateY(0); }
@@ -1345,6 +1353,7 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
+              currentSlateNumber={currentSlate?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);
                 setView('shared');

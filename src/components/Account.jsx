@@ -5,6 +5,13 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { ShareSlates } from './ShareSlates';
+import { SupportButtons } from './SupportButtons';
+import { Collapse } from './Reveal';
+import { ChoiceRow, wordOptions } from './ChoiceRow';
+import { useMotion, setMotion } from '../motion';
+import { SCALES, useScale, setScale } from '../scale';
+import { readableFont, lineFocus } from '../reading';
+import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -15,7 +22,8 @@ import { useToast } from './Toast';
  * settings block on this page uses it, so the page reads as three short lists
  * instead of a stack of loose look-alike cards.
  */
-function Section({ title, tone, children }) {
+/** `note` is a quiet line under the box, for a remark that is not a row. */
+function Section({ title, tone, note, children }) {
   const border = tone === 'danger' ? 'border-red-900/50' : 'border-[var(--theme-border)]';
   const divide = tone === 'danger' ? 'divide-red-900/50' : 'divide-[var(--theme-border)]';
   return (
@@ -24,6 +32,7 @@ function Section({ title, tone, children }) {
         <h2 className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-2 px-1">{title}</h2>
       )}
       <div className={`border ${border} rounded-lg overflow-hidden divide-y ${divide}`}>{children}</div>
+      {note && <p className="mt-2 px-1 text-xs text-[var(--theme-text-dim)]">{note}</p>}
     </section>
   );
 }
@@ -163,6 +172,14 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   // Collapsible sections state
   const [showSessions, setShowSessions] = useState(false);
   const [showPasswordSection, setShowPasswordSection] = useState(false);
+  // Device preferences shown under accessibility, shared with the writer's settings row
+  const [showAccessibility, setShowAccessibility] = useState(false);
+  const motion = useMotion();
+  const scale = useScale();
+  const readable = readableFont.use();
+  const focusLine = lineFocus.use();
+  const sounds = soundsPref.use();
+  const haptics = hapticsPref.use();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -1227,22 +1244,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {strings.writer.about.support.limits}
               </a>.
             </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => window.location.href = '/?donate=one_time'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.donate}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
-              </button>
-              <button
-                onClick={() => window.location.href = '/?donate=quarterly'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
-              </button>
-            </div>
+            <SupportButtons
+              disabled
+              onDonate={() => window.location.href = '/?donate=one_time'}
+              onSubscribe={() => window.location.href = '/?donate=quarterly'}
+            />
           </div>
         )}
 
@@ -1284,8 +1290,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showPasswordSection}
                 onToggle={() => setShowPasswordSection(!showPasswordSection)}
               />
-              {showPasswordSection && (
-                <div className="px-4 pb-4 -mt-1">
+              <Collapse open={showPasswordSection}>
+                <div className="px-4 pb-4">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
                       type="password"
@@ -1322,7 +1328,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1341,8 +1347,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showRecoverySection}
                 onToggle={() => setShowRecoverySection(!showRecoverySection)}
               />
-              {showRecoverySection && (
-                <div className="px-4 pb-4 -mt-1">
+              <Collapse open={showRecoverySection}>
+                <div className="px-4 pb-4">
                   <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
                     <input
@@ -1363,7 +1369,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1394,8 +1400,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showSessions}
                 onToggle={() => setShowSessions(!showSessions)}
               />
-            {showSessions && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse open={showSessions}>
+              <div className="px-4 pb-4">
                 {loadingSessions ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
                 ) : (
@@ -1446,9 +1452,44 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
+        </Section>
+
+        <Section title={strings.account.sections.accessibility} note={showAccessibility ? strings.account.accessibility.note : null}>
+          <div>
+            <DisclosureHeader
+              label={strings.account.accessibility.title}
+              open={showAccessibility}
+              onToggle={() => setShowAccessibility(!showAccessibility)}
+            />
+            <Collapse open={showAccessibility}>
+              <div className="border-t border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
+          <InfoRow label={strings.account.accessibility.motion}>
+            <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.size}>
+            <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.font}>
+            <ChoiceRow options={wordOptions(readableFont.values)} value={readable} onChange={readableFont.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.lineFocus}>
+            <ChoiceRow options={wordOptions(lineFocus.values)} value={focusLine} onChange={lineFocus.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.sounds}>
+            {/* Turning it on plays the save tick, so you hear what you chose */}
+            <ChoiceRow options={wordOptions(soundsPref.values)} value={sounds} onChange={(v) => { soundsPref.set(v); if (v === 'on') cue('save'); }} />
+          </InfoRow>
+          {canVibrate && (
+            <InfoRow label={strings.account.accessibility.haptics}>
+              <ChoiceRow options={wordOptions(hapticsPref.values)} value={haptics} onChange={(v) => { hapticsPref.set(v); if (v === 'on') cue('save'); }} />
+            </InfoRow>
+          )}
+              </div>
+            </Collapse>
+          </div>
         </Section>
 
         <Section title={strings.account.sections.connections}>
@@ -1459,8 +1500,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showConnectedApps}
                 onToggle={() => setShowConnectedApps(!showConnectedApps)}
               />
-            {showConnectedApps && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse open={showConnectedApps}>
+              <div className="px-4 pb-4">
                 {loadingApps ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
                 ) : connectedApps.length === 0 ? (
@@ -1512,7 +1553,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
           {shareApp && (
@@ -1544,8 +1585,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showDangerZone}
                 onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
               />
-            {showDangerZone && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse open={showDangerZone}>
+              <div className="px-4 pb-4">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
                 </p>
@@ -1557,7 +1598,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   {deleting ? 'deleting...' : 'delete account'}
                 </button>
               </div>
-            )}
+            </Collapse>
           </div>
         </Section>
 
@@ -2028,9 +2069,16 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         <RecoveryKeyModal
           recoveryPhrase={setPasswordRecoveryPhrase}
           subtitle={strings.account.googleAuth.setPassword.success.subtitle}
-          onAcknowledge={() => {
+          onAcknowledge={async () => {
             setShowSetPasswordSuccess(false);
             setSetPasswordRecoveryPhrase(null);
+            if (onRecoveryKeyAcknowledged) onRecoveryKeyAcknowledged();
+            // The key was shown and promised safe: tell the server before the
+            // reload asks it, or the page comes back warning it was never shown
+            await fetch(`${API_URL}/account/acknowledge-recovery-key`, {
+              method: 'POST',
+              credentials: 'include'
+            }).catch(() => {});
             window.location.reload();
           }}
         />

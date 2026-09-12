@@ -1030,6 +1030,43 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN is_collab INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added is_collab column to slates');
   }
+
+  // Locked slates: the content sits under its own doc key, wrapped to a lock
+  // key the account derives from a pin or passphrase that never reaches the
+  // server. The title stays under the master key so the list keeps reading.
+  if (!slateColsCollab.some(col => col.name === 'is_locked')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN is_locked INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added is_locked and lock_wrapped_key columns to slates');
+  }
+  const userColsLock = db.pragma('table_info(users)');
+  if (!userColsLock.some(col => col.name === 'lock_salt')) {
+    db.exec(`ALTER TABLE users ADD COLUMN lock_salt TEXT;`);
+    db.exec(`ALTER TABLE users ADD COLUMN lock_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added lock key columns to users');
+  }
+  // Each locked slate has its own secret: a salt per slate, the doc key
+  // wrapped to the secret, and the doc key wrapped again to the account's
+  // lock-recovery public key (RSA), whose private key is wrapped to the
+  // recovery phrase. The keypairs live as a JSON list on the user, newest
+  // first, so slates locked under an older phrase stay recoverable with it.
+  const slateColsLock = db.pragma('table_info(slates)');
+  if (!slateColsLock.some(col => col.name === 'lock_salt')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_salt TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_key_id TEXT;`);
+    console.log('✓ Database migrated: Added per-slate lock columns to slates');
+  }
+  // Archived slates leave the main list for a section of their own
+  if (!slateColsLock.some(col => col.name === 'archived_at')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN archived_at INTEGER;`);
+    console.log('✓ Database migrated: Added archived_at column to slates');
+  }
+  if (!userColsLock.some(col => col.name === 'lock_recovery_keys')) {
+    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_keys TEXT;`);
+    console.log('✓ Database migrated: Added lock_recovery_keys column to users');
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS collab_members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

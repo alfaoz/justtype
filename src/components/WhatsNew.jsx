@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { TextMorph } from './TextMorph';
 import { PageHeader } from './PageHeader';
 import { HoverNote } from './HoverNote';
 import { MarkGlyph } from './MarkGlyph';
@@ -14,6 +15,64 @@ const goHome = () => {
   window.history.pushState({}, '', '/');
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
+
+// A phase counter that walks `delays` (ms per phase) and starts over
+function useLoop(delays) {
+  const [k, setK] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setK((k + 1) % delays.length), delays[k]);
+    return () => clearTimeout(t);
+  }, [k, delays]);
+  return k;
+}
+
+// Math: someone types the formula. The editor closes each pair as it opens,
+// so `$$` and `{}` land whole, as plain text. Then the source
+// gives way to the set formula, holds, and the frame empties for the next go.
+function MathDemo({ steps }) {
+  const n = steps.length;
+  const delays = useRef([...steps.map((_, i) => (i === n - 1 ? 1500 : i === 0 ? 700 : 150)), 2800, 900]).current;
+  const k = useLoop(delays);
+  const text = k < n ? steps[k] : k === n ? steps[n - 1] : '';
+  const set = k === n;
+  return (
+    <div className="wn-math">
+      <span className="wn-math-src" style={{ opacity: set ? 0 : 1 }}>{text}</span>
+      <span className="wn-math-out" style={{ opacity: set ? 1 : 0 }}><i>e</i><sup><i>i</i>π</sup> + 1 = 0</span>
+    </div>
+  );
+}
+
+// Content search: the word is typed into the box and this device answers
+// with the slates that hold it, snippet and all
+function SearchDemo({ demo }) {
+  const n = demo.steps.length;
+  const delays = useRef([...demo.steps.map((_, i) => (i === n - 1 ? 600 : 170)), 3200, 900]).current;
+  const k = useLoop(delays);
+  const query = k < n ? demo.steps[k] : k === n ? demo.steps[n - 1] : '';
+  const hits = k === n;
+  const word = demo.steps[n - 1];
+  const mark = (text) => {
+    const at = text.indexOf(word);
+    if (at < 0) return text;
+    return <>{text.slice(0, at)}<b>{text.slice(at, at + word.length)}</b>{text.slice(at + word.length)}</>;
+  };
+  return (
+    <div className="wn-search">
+      <div className="wn-search-box">
+        {query}<span className="wn-search-caret" />
+      </div>
+      <div className="wn-hits">
+        {demo.hits.map((h) => (
+          <div key={h.title} className="wn-hit" style={{ opacity: hits ? 1 : 0, transform: hits ? 'none' : 'translateY(4px)' }}>
+            <span className="wn-hit-title">{h.title}</span>
+            <span className="wn-hit-snippet">{mark(h.snippet)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function WhatsNew() {
   const s = strings.whatsNew;
@@ -104,6 +163,52 @@ export function WhatsNew() {
     </div>
     ),
 
+    // Lock: the stars fill one by one, then the word turns
+    lock: (
+    <div className="wn-frame wn-frame-center" key="lock">
+      <div className="wn-lock">
+        <div className="wn-lock-stars">
+          {Array.from({ length: d.lock.stars }, (_, i) => (
+            <span key={i} className="wn-star" style={{ animationDelay: `${i * 0.35}s` }}>*</span>
+          ))}
+        </div>
+        <div className="wn-lock-status">
+          <span className="wn-lock-a">{d.lock.before}</span>
+          <span className="wn-lock-b">{d.lock.after}</span>
+        </div>
+      </div>
+    </div>
+    ),
+
+    math: (
+    <div className="wn-frame wn-frame-center" key="math">
+      <MathDemo steps={d.math.steps} />
+    </div>
+    ),
+
+    // Accessibility: three option rows, one underline each, gliding
+    a11y: (
+    <div className="wn-frame" key="a11y">
+      <div className="wn-opts">
+        {d.a11y.rows.map(([label, words], r) => (
+          <div key={label} className="wn-opt">
+            <span className="wn-opt-label">{label}</span>
+            <span className="wn-opt-words">
+              {words.map((w, i) => <span key={w} className={`wn-opt-w wn-opt-w-${r}-${i}`}>{w}</span>)}
+              <i className={`wn-opt-bar wn-opt-bar-${r}`} />
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+    ),
+
+    search: (
+    <div className="wn-frame wn-frame-list" key="search">
+      <SearchDemo demo={d.search} />
+    </div>
+    ),
+
     // Offline: the real list, marks only. Copies land on their own, cloud by
     // cloud; then one slate is written while offline, waits orange, spins,
     // lands green and settles.
@@ -149,6 +254,31 @@ export function WhatsNew() {
         .wn-mark-${n} .wn-mk-check { animation: wnCheck${n} 12s infinite; }
         @keyframes wnCloud${n} { 0%, ${t}% { opacity: 1; } ${t + 2}%, 96% { opacity: 0; } 98%, 100% { opacity: 1; } }
         @keyframes wnCheck${n} { ${check} }`;
+  }).join('');
+
+  // Each option row's underline walks its words on a 9s loop: word widths are
+  // 1ch a letter (monospace), gaps 0.75rem
+  const a11yCss = d.a11y.rows.map(([, words], r) => {
+    const stops = words.map((_, i) => {
+      const before = words.slice(0, i).reduce((n, w) => n + w.length, 0);
+      return { left: `calc(${before}ch + ${i * 0.75}rem)`, width: `${words[i].length}ch` };
+    });
+    const n = stops.length;
+    const frames = stops.map((st, i) => {
+      const a = Math.round((i / n) * 100);
+      const b = Math.round(((i + 1) / n) * 100) - 6;
+      return `${a}%, ${b}% { left: ${st.left}; width: ${st.width}; }`;
+    }).join(' ') + ` 100% { left: ${stops[0].left}; width: ${stops[0].width}; }`;
+    const lit = stops.map((_, i) => {
+      const a = Math.round((i / n) * 100);
+      const b = Math.round(((i + 1) / n) * 100) - 6;
+      return `.wn-opt-w-${r}-${i} { animation: wnOptW${r}${i} 9s infinite; animation-delay: ${r * 0.6}s; }
+        @keyframes wnOptW${r}${i} { 0%, 100% { color: var(--theme-text-dim); } ${a}%, ${b}% { color: var(--theme-text); } }`;
+    }).join('');
+    return `
+        .wn-opt-bar-${r} { animation: wnOptBar${r} 9s cubic-bezier(0.4, 0, 0.2, 1) infinite; animation-delay: ${r * 0.6}s; }
+        @keyframes wnOptBar${r} { ${frames} }
+        ${lit}`;
   }).join('');
 
   return (
@@ -255,6 +385,45 @@ export function WhatsNew() {
           84%, 100% { opacity: 0; transform: scale(1); }
         }
         ${offlineCss}
+
+        /* Lock: stars brighten in turn (delays inline), the word turns after */
+        .wn-lock { display: flex; flex-direction: column; align-items: center; gap: 0.9rem; }
+        .wn-lock-stars { display: flex; gap: 0.6rem; font-size: 1.4rem; line-height: 1; }
+        .wn-star { color: var(--theme-text-dim); opacity: 0.3; animation: wnStar 8s infinite; }
+        @keyframes wnStar { 0%, 6% { opacity: 0.3; color: var(--theme-text-dim); } 10%, 86% { opacity: 1; color: var(--theme-accent); } 92%, 100% { opacity: 0.3; color: var(--theme-text-dim); } }
+        .wn-lock-status { position: relative; font-size: 0.8rem; min-width: 5em; text-align: center; color: var(--theme-text-muted); }
+        .wn-lock-a, .wn-lock-b { position: absolute; left: 0; right: 0; }
+        .wn-lock-a { animation: wnLockA 8s infinite; }
+        .wn-lock-b { opacity: 0; animation: wnLockB 8s infinite; }
+        @keyframes wnLockA { 0%, 44% { opacity: 1; } 50%, 92% { opacity: 0; } 98%, 100% { opacity: 1; } }
+        @keyframes wnLockB { 0%, 48% { opacity: 0; } 54%, 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
+
+        /* Math: typed source, then the set formula (MathDemo drives the swap) */
+        .wn-math { position: relative; min-height: 2.2em; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; }
+        .wn-math-src { color: var(--theme-text-muted); white-space: pre; transition: opacity 400ms ease; }
+        .wn-math-out { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--theme-text); font-family: 'KaTeX_Main', 'Times New Roman', Times, serif; font-size: 1.35rem; white-space: nowrap; transition: opacity 400ms ease; }
+        .wn-math-out sup { font-size: 0.7em; margin-left: 1px; }
+
+        /* Accessibility: the account rows, underline on the move */
+        .wn-opts { display: flex; flex-direction: column; font-size: 0.75rem; }
+        .wn-opt { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 0; border-top: 1px solid var(--theme-border-light); }
+        .wn-opt:first-child { border-top: 0; }
+        .wn-opt-label { color: var(--theme-text-dim); }
+        .wn-opt-words { position: relative; display: flex; gap: 0.75rem; }
+        .wn-opt-w { color: var(--theme-text-dim); transition: color 300ms; }
+        .wn-opt-bar { position: absolute; bottom: -3px; height: 1px; background: var(--theme-accent); }
+        ${a11yCss}
+
+        /* Content search: the box, the hits, the deeper line (SearchDemo drives it) */
+        .wn-search { display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.75rem; }
+        .wn-search-box { display: flex; align-items: center; min-height: 2rem; padding: 0 0.75rem; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-bg); color: var(--theme-text); white-space: pre; }
+        .wn-search-caret { display: inline-block; width: 1px; height: 1.1em; margin-left: 1px; background: var(--theme-text); animation: wnBlink 1s steps(1) infinite; }
+        @keyframes wnBlink { 50% { opacity: 0; } }
+        .wn-hits { display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.6rem; }
+        .wn-hit { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; transition: opacity 350ms ease, transform 350ms ease; }
+        .wn-hit-title { color: var(--theme-text); white-space: nowrap; }
+        .wn-hit-snippet { color: var(--theme-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wn-hit-snippet b { color: var(--theme-text); font-weight: 500; }
 
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }

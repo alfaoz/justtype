@@ -1270,11 +1270,12 @@ app.post('/api/auth/login', verifyTurnstileToken, createRateLimitMiddleware('log
     return res.status(400).json({ error: 'Username and password required' });
   }
 
-  // Normalize username to lowercase
+  // Normalize username to lowercase. The box takes the email too: the
+  // reset flow asks for the email, and people come straight back with it.
   username = username.toLowerCase().trim();
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const user = db.prepare('SELECT * FROM users WHERE username = ? OR (email IS NOT NULL AND lower(email) = ?)').get(username, username);
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -2626,7 +2627,8 @@ app.get('/api/slates', authenticateToken, (req, res) => {
              s.is_system_slate, s.share_id, s.word_count, s.char_count, s.size_bytes, s.view_count,
              s.created_at, s.updated_at, s.published_at,
              s.source_app, s.adoption_pending, c.name AS source_app_name,
-             s.is_collab, cm.wrapped_key AS collab_wrapped_key
+             s.is_collab, cm.wrapped_key AS collab_wrapped_key,
+             s.is_locked, s.lock_wrapped_key, s.lock_salt, s.lock_recovery_wrapped_key, s.lock_recovery_key_id, s.archived_at
       FROM slates s
       LEFT JOIN oauth_clients c ON c.client_id = s.source_app
       LEFT JOIN collab_members cm ON cm.slate_id = s.id AND cm.user_id = s.user_id
@@ -2713,7 +2715,7 @@ app.post('/api/account/incident-recovery-success', authenticateToken, createRate
 
 // Update slate metadata (pinning, tags, etc.)
 app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
-  const { pinned, encryptedTags, editorMode } = req.body || {};
+  const { pinned, encryptedTags, editorMode, archived } = req.body || {};
 
   try {
     const slate = db.prepare('SELECT id, slate_number FROM slates WHERE slate_number = ? AND user_id = ?')
@@ -2733,6 +2735,15 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
       params.push(pinnedAt);
     } else if (pinned !== undefined) {
       return res.status(400).json({ error: 'Invalid pinned value' });
+    }
+
+    let archivedAt = undefined;
+    if (typeof archived === 'boolean') {
+      archivedAt = archived ? Date.now() : null;
+      updates.push('archived_at = ?');
+      params.push(archivedAt);
+    } else if (archived !== undefined) {
+      return res.status(400).json({ error: 'Invalid archived value' });
     }
 
     if (encryptedTags !== undefined) {
@@ -2769,7 +2780,7 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
     db.prepare(`UPDATE slates SET ${updates.join(', ')} WHERE slate_number = ? AND user_id = ?`)
       .run(...params, req.params.id, req.user.id);
 
-    res.json({ success: true, pinned_at: pinnedAt });
+    res.json({ success: true, pinned_at: pinnedAt, archived_at: archivedAt });
   } catch (error) {
     console.error('Update slate metadata error:', error);
     res.status(500).json({ error: 'Failed to update slate metadata' });
@@ -2977,7 +2988,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
   const {
     title, encryptedTitle, content, encryptedContent,
     wordCount: clientWordCount, charCount: clientCharCount, sizeBytes: clientSizeBytes,
-    incidentRecovery, recoverySource,
+    incidentRecovery, recoverySource, lock,
   } = req.body || {};
   const maxSize = 5 * 1024 * 1024; // 5 MB
 
@@ -2991,6 +3002,34 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       return res.status(404).json({ error: 'Slate not found' });
     }
 
+    // Lock change riding on this save: the content arrives re-keyed, so the
+    // flag and the wrapped doc key change in the same write. Only private,
+    // non-collab, end-to-end slates can lock.
+    let lockChange = null;
+    if (lock !== undefined) {
+      if (!lock || typeof lock !== 'object' || typeof lock.locked !== 'boolean') {
+        return res.status(400).json({ error: 'Invalid lock', code: 'LOCK_INVALID' });
+      }
+      const isBlob = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= 4096;
+      if (lock.locked) {
+        if (!isBlob(lock.wrappedKey) || typeof lock.salt !== 'string' || !/^[0-9a-f]{32,128}$/.test(lock.salt)) {
+          return res.status(400).json({ error: 'Wrapped doc key and salt required', code: 'LOCK_INVALID' });
+        }
+        if ((lock.recoveryWrappedKey != null && !isBlob(lock.recoveryWrappedKey)) || (lock.recoveryKeyId != null && !isBlob(lock.recoveryKeyId))) {
+          return res.status(400).json({ error: 'Invalid recovery wrap', code: 'LOCK_INVALID' });
+        }
+        if (slate.is_collab || slate.is_published || slate.is_system_slate) {
+          return res.status(409).json({ error: 'Only private slates can be locked', code: 'LOCK_REFUSED' });
+        }
+        lockChange = {
+          locked: 1, wrappedKey: lock.wrappedKey, salt: lock.salt,
+          recoveryWrappedKey: lock.recoveryWrappedKey || null, recoveryKeyId: lock.recoveryKeyId || null,
+        };
+      } else {
+        lockChange = { locked: 0, wrappedKey: null, salt: null, recoveryWrappedKey: null, recoveryKeyId: null };
+      }
+    }
+
     // Optimistic concurrency: a client that says which version its edits
     // started from gets a 409 when the slate moved on, and merges client-side
     // (offline saves, two devices, agent edits). Clients that send no base
@@ -3001,6 +3040,9 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 
     const isE2E = !!(userE2E && userE2E.e2e_migrated && !slate.is_system_slate);
     let encryptedBuffer = null;
+    if (lockChange && !isE2E) {
+      return res.status(409).json({ error: 'Only end-to-end encrypted slates can be locked', code: 'LOCK_REFUSED' });
+    }
 
     if (isE2E) {
       // E2E users must send encrypted content — reject plaintext to prevent unencrypted storage
@@ -3116,13 +3158,20 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 	    // For E2E private slates, never store plaintext title in the DB (ZK).
 	    const titleToStore = (!slate.is_system_slate && isE2E) ? '' : title;
 	    const encryptedTitleToStore = (!slate.is_system_slate && isE2E) ? encryptedTitle : (encryptedTitle || null);
+	    const lockToStore = lockChange || {
+	      locked: slate.is_locked || 0, wrappedKey: slate.lock_wrapped_key || null, salt: slate.lock_salt || null,
+	      recoveryWrappedKey: slate.lock_recovery_wrapped_key || null, recoveryKeyId: slate.lock_recovery_key_id || null,
+	    };
+	    const isLockedToStore = lockToStore.locked;
 	    const stmt = db.prepare(`
 	      UPDATE slates
 	      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
-	          is_published = ?, b2_public_file_id = ?, updated_at = CURRENT_TIMESTAMP
+	          is_published = ?, b2_public_file_id = ?, is_locked = ?, lock_wrapped_key = ?, lock_salt = ?,
+	          lock_recovery_wrapped_key = ?, lock_recovery_key_id = ?, updated_at = CURRENT_TIMESTAMP
 	      WHERE slate_number = ? AND user_id = ?
 	    `);
-	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId, req.params.id, req.user.id);
+	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId,
+	      lockToStore.locked, lockToStore.wrappedKey, lockToStore.salt, lockToStore.recoveryWrappedKey, lockToStore.recoveryKeyId, req.params.id, req.user.id);
 
     // Collaborative slate: the canonical blob changed — tell live viewers to refetch.
     if (slate.is_collab) collabHub.notifySlateChanged(slate.id);
@@ -3172,6 +3221,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       was_unpublished: wasUnpublished,
       is_published: newPublishedState === 1,
       share_id: slate.share_id,
+      is_locked: isLockedToStore === 1,
       slateCount: currentSlateCount.count,
       recovery_receipt: recoveryReceipt,
     });
@@ -3201,6 +3251,10 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    if (isPublished && slate.is_locked) {
+      return res.status(409).json({ error: 'Locked slates stay private', code: 'SLATE_LOCKED' });
     }
 
     let shareId = slate.share_id;
@@ -4807,6 +4861,50 @@ app.get('/api/account/wrapped-key', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('Get wrapped key error:', error);
     res.status(500).json({ error: 'Failed to get key data' });
+  }
+});
+
+// Slate lock recovery. Each locked slate's doc key is also wrapped (RSA-OAEP)
+// to a lock-recovery public key; the matching private key is wrapped to the
+// key the account's recovery phrase derives. The list keeps every keypair
+// ever made, newest first, so a slate locked under an older phrase still
+// opens with that phrase. The server holds ciphertext and public keys only.
+const readLockRecoveryKeys = (raw) => {
+  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+};
+app.get('/api/account/lock-recovery', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT lock_recovery_keys, recovery_wrapped_key, recovery_salt FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      keys: readLockRecoveryKeys(user.lock_recovery_keys),
+      recoverySalt: user.recovery_salt || null,
+      recoveryWrappedKey: user.recovery_wrapped_key || null,
+    });
+  } catch (error) {
+    console.error('Get lock recovery error:', error);
+    res.status(500).json({ error: 'Failed to get lock recovery data' });
+  }
+});
+
+app.put('/api/account/lock-recovery', authenticateToken, (req, res) => {
+  const { id, publicKey, wrappedPrivateKey, salt } = req.body || {};
+  const isBlob = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+  if (!isBlob(id, 256) || !isBlob(publicKey, 2048) || !isBlob(wrappedPrivateKey, 8192) || !/^[0-9a-f]{32,128}$/.test(salt || '')) {
+    return res.status(400).json({ error: 'Recovery keypair fields required', code: 'LOCK_INVALID' });
+  }
+  try {
+    const user = db.prepare('SELECT e2e_migrated, lock_recovery_keys FROM users WHERE id = ?').get(req.user.id);
+    if (!user || !user.e2e_migrated) {
+      return res.status(409).json({ error: 'Locking needs end-to-end encryption', code: 'LOCK_REFUSED' });
+    }
+    const keys = readLockRecoveryKeys(user.lock_recovery_keys).filter(k => k && k.id !== id);
+    keys.unshift({ id, publicKey, wrappedPrivateKey, salt, createdAt: Date.now() });
+    db.prepare('UPDATE users SET lock_recovery_keys = ? WHERE id = ?').run(JSON.stringify(keys.slice(0, 20)), req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Set lock recovery error:', error);
+    res.status(500).json({ error: 'Failed to set lock recovery' });
   }
 });
 

@@ -5,6 +5,10 @@ import { strings } from '../strings';
 import { applyThemeVariables, deviceDefaultTheme } from '../themes';
 import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
+import { TextMorph } from './TextMorph';
+import { useMotion, setMotion } from '../motion';
+import { nextPunto, usePunto, setPunto } from '../punto';
+import { SettingsRow, controlLabel } from './SettingsRow';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -15,7 +19,8 @@ export function PublicViewer() {
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
-  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const punto = usePunto();
+  const motion = useMotion();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
 
@@ -98,28 +103,12 @@ export function PublicViewer() {
     }
   }, [slate]);
 
-  // Save punto to localStorage
-  useEffect(() => {
-    localStorage.setItem('justtype-punto', punto);
-  }, [punto]);
-
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   const cyclePunto = () => {
-    const sizes = ['small', 'base', 'large'];
-    const currentIndex = sizes.indexOf(punto);
-    const nextIndex = (currentIndex + 1) % sizes.length;
-    setPunto(sizes[nextIndex]);
-  };
-
-  const getPuntoLabel = () => {
-    switch (punto) {
-      case 'small': return 'Aa−';
-      case 'large': return 'Aa+';
-      default: return 'Aa';
-    }
+    setPunto(nextPunto(punto));
   };
 
   const copyContent = async () => {
@@ -176,27 +165,23 @@ export function PublicViewer() {
     );
   }
 
-  // One definition of the reader's controls, rendered twice: inline in the
-  // header on desktop, as a bottom bar on mobile.
-  const controlButtons = [
-    { key: 'theme', label: theme, onClick: toggleTheme },
-    { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
-    { key: 'view', label: strings.public.viewMode(viewMode), onClick: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
-    { key: 'copy', label: copied ? strings.public.copied : strings.public.copy, onClick: copyContent },
-  ];
-
-  const controls = (
-    <div className="text-sm flex items-center gap-3">
-      {controlButtons.map((c, i) => (
-        <React.Fragment key={c.key}>
-          {i > 0 && <span className="opacity-30">·</span>}
-          <button onClick={c.onClick} className="opacity-60 hover:opacity-100 transition-opacity">
-            {c.label}
-          </button>
-        </React.Fragment>
-      ))}
-    </div>
-  );
+  // The reader's controls use the writer's settings-row model, so they read
+  // `noun: value` and morph in place the same way. Rendered twice: the row
+  // itself in the header on desktop, a bottom bar on mobile.
+  const readerControls = {
+    device: [
+      { id: 'theme', label: 'theme', kind: 'cycle', value: theme, onCycle: toggleTheme },
+      { id: 'size', label: 'size', kind: 'cycle', value: punto, onCycle: cyclePunto },
+      { id: 'motion', label: 'motion', kind: 'cycle', value: motion, onCycle: () => setMotion(motion === 'on' ? 'off' : 'on') },
+    ],
+    slate: [
+      { id: 'view', label: 'view', kind: 'cycle', value: viewMode, onCycle: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
+    ],
+    actions: [
+      { id: 'copy', label: copied ? strings.public.copied : strings.public.copy, kind: 'action', onClick: copyContent },
+    ],
+  };
+  const flatControls = [...readerControls.device, ...readerControls.slate, ...readerControls.actions];
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
@@ -210,7 +195,7 @@ export function PublicViewer() {
       `}</style>
 
       {/* HEADER */}
-      <PageHeader right={<div className="hidden md:flex">{controls}</div>} />
+      <PageHeader right={<div className="hidden md:flex items-center gap-2"><SettingsRow controls={readerControls} /></div>} />
 
       {/* SLATE CONTENT */}
       <main className="max-w-3xl mx-auto px-6 md:px-8 py-10 md:py-12">
@@ -267,13 +252,13 @@ export function PublicViewer() {
       {/* CONTROLS - a real bar on mobile, folded into the header on desktop */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--theme-bg)] border-t border-[var(--theme-border-light)] pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-stretch justify-between px-2 h-12">
-          {controlButtons.map((c) => (
+          {flatControls.map((c) => (
             <button
-              key={c.key}
-              onClick={c.onClick}
+              key={c.id}
+              onClick={(e) => (c.kind === 'action' ? c.onClick?.(e) : c.onCycle?.(e))}
               className="flex-1 min-w-0 text-xs text-[var(--theme-text-muted)] active:text-[var(--theme-accent)] transition-colors px-1 truncate"
             >
-              {c.label}
+              <TextMorph>{controlLabel(c)}</TextMorph>
             </button>
           ))}
         </div>

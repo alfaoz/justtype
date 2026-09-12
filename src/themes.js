@@ -50,6 +50,27 @@ export const builtInThemes = {
     },
     fonts: defaultFonts
   },
+  ash: {
+    id: 'ash',
+    name: 'ash',
+    colors: {
+      bg: '#19191b',
+      bgSecondary: '#202023',
+      bgTertiary: '#27272b',
+      text: '#d0d0d8',
+      textMuted: '#85858f',
+      textDim: '#54545c',
+      border: '#2c2c31',
+      borderLight: '#242428',
+      accent: '#d0d0d8',
+      // Semantic colors
+      blue: '#4cc9f0',
+      orange: '#f77f00',
+      red: '#e94560',
+      green: '#06d6a0',
+    },
+    fonts: defaultFonts
+  },
   legacy: {
     id: 'legacy',
     name: 'legacy',
