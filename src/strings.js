@@ -1523,13 +1523,13 @@ take care!
   },
   // One-time announcement card for users arriving on v4 for the first time.
   whatsNewModal: {
-    version: 'v4.2', // the seen-once key: change it and every account sees the card again
-    title: 'locks, math and a quieter app',
-    body: '4.2 is about writing the way you need to.',
+    version: 'v4', // the seen-once key: it stays, so 4.2 makes no card; its rows sit on the page
+    title: 'markdown and collab are here',
+    body: 'justtype just picked up the two things people asked for most.',
     points: [
-      'lock any slate behind a pin or passphrase',
-      'write math between dollar signs and watch it set itself',
-      'accessibility options on your account page'
+      'write markdown and watch it format itself as you type',
+      'turn any slate collaborative and write together, live',
+      'still end to end encrypted, still just typing'
     ],
     tour: 'take the tour',
     dismiss: 'hell yeah!'
