@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * Three ways for a piece of the page to arrive and leave without a jump.
@@ -12,24 +12,34 @@ import React, { useEffect, useRef, useState } from 'react';
  */
 export const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
-export function Fade({ show, children, className = '', duration = 280 }) {
+// Mounted while `show` or still fading out; `visible` flips one style flush
+// after mounting, so there is a starting state to transition from. The flush
+// is forced by reading a layout property, not by waiting for a frame: hidden
+// tabs stop frames, but the transition should still be armed when they return.
+function usePresence(show, duration) {
   const [present, setPresent] = useState(show);
   const [visible, setVisible] = useState(show);
-  const kept = useRef(children);
-  if (show) kept.current = children;
+  const ref = useRef(null);
   useEffect(() => {
-    if (show) {
-      setPresent(true);
-      const id = requestAnimationFrame(() => setVisible(true));
-      return () => cancelAnimationFrame(id);
-    }
+    if (show) { setPresent(true); return; }
     setVisible(false);
     const t = setTimeout(() => setPresent(false), duration);
     return () => clearTimeout(t);
   }, [show, duration]);
+  useLayoutEffect(() => {
+    if (show && present && !visible) { void ref.current?.offsetHeight; setVisible(true); }
+  }, [show, present, visible]);
+  return { present, visible, ref };
+}
+
+export function Fade({ show, children, className = '', duration = 280 }) {
+  const { present, visible, ref } = usePresence(show, duration);
+  const kept = useRef(children);
+  if (show) kept.current = children;
   if (!present) return null;
   return (
     <div
+      ref={ref}
       className={className}
       style={{
         opacity: visible ? 1 : 0,
@@ -67,30 +77,19 @@ export function AutoHeight({ children, className = '', innerClassName = 'flex fl
 }
 
 export function Collapse({ open, children, className = '', duration = 320 }) {
+  const { present, visible, ref } = usePresence(open, duration);
   const inner = useRef(null);
-  const [present, setPresent] = useState(open);
-  const [shown, setShown] = useState(open);
   const kept = useRef(children);
   if (open) kept.current = children;
-  useEffect(() => {
-    if (open) {
-      setPresent(true);
-      // One frame at zero, so there is a height to grow from
-      const id = requestAnimationFrame(() => setShown(true));
-      return () => cancelAnimationFrame(id);
-    }
-    setShown(false);
-    const t = setTimeout(() => setPresent(false), duration);
-    return () => clearTimeout(t);
-  }, [open, duration]);
   const height = useMeasuredHeight(inner, [present]);
   if (!present) return null;
   return (
     <div
+      ref={ref}
       className={className}
       style={{
-        height: shown ? (height ?? 'auto') : 0,
-        opacity: shown ? 1 : 0,
+        height: visible ? (height ?? 'auto') : 0,
+        opacity: visible ? 1 : 0,
         overflow: 'hidden',
         transition: `height ${duration}ms ${EASE}, opacity ${duration * 0.75}ms ${EASE}`,
       }}
