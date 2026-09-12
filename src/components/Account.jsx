@@ -20,7 +20,8 @@ import { useToast } from './Toast';
  * settings block on this page uses it, so the page reads as three short lists
  * instead of a stack of loose look-alike cards.
  */
-function Section({ title, tone, children }) {
+/** `note` is a quiet line under the box, for a remark that is not a row. */
+function Section({ title, tone, note, children }) {
   const border = tone === 'danger' ? 'border-red-900/50' : 'border-[var(--theme-border)]';
   const divide = tone === 'danger' ? 'divide-red-900/50' : 'divide-[var(--theme-border)]';
   return (
@@ -29,6 +30,7 @@ function Section({ title, tone, children }) {
         <h2 className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-2 px-1">{title}</h2>
       )}
       <div className={`border ${border} rounded-lg overflow-hidden divide-y ${divide}`}>{children}</div>
+      {note && <p className="mt-2 px-1 text-xs text-[var(--theme-text-dim)]">{note}</p>}
     </section>
   );
 }
@@ -1448,14 +1450,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
         </Section>
 
-        <Section title={strings.account.sections.accessibility}>
+        <Section title={strings.account.sections.accessibility} note={strings.account.accessibility.note}>
           <InfoRow label={strings.account.accessibility.motion}>
             <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
           </InfoRow>
           <InfoRow label={strings.account.accessibility.size}>
             <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
           </InfoRow>
-          <div className="px-4 py-3 text-xs text-[var(--theme-text-dim)]">{strings.account.accessibility.note}</div>
         </Section>
 
         <Section title={strings.account.sections.connections}>

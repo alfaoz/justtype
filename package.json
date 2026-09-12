@@ -1,6 +1,6 @@
 {
   "name": "justtype",
-  "version": "4.1.1-beta.58",
+  "version": "4.1.1-beta.59",
   "description": "Just Type - Minimalist writing app with slates",
   "main": "server/index.js",
   "scripts": {
