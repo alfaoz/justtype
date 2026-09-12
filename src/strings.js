@@ -1564,14 +1564,13 @@ take care!
       // braces as they open, so the pairs appear together
       math: { steps: ['$$', '$e$', '$e^$', '$e^{}$', '$e^{i}$', '$e^{i\\}$', '$e^{i\\p}$', '$e^{i\\pi}$', '$e^{i\\pi} $', '$e^{i\\pi} +$', '$e^{i\\pi} + $', '$e^{i\\pi} + 1$', '$e^{i\\pi} + 1 $', '$e^{i\\pi} + 1 =$', '$e^{i\\pi} + 1 = $', '$e^{i\\pi} + 1 = 0$'] },
       a11y: { rows: [['motion', ['on', 'off']], ['big text', ['off', 'big', 'bigger']], ['readable font', ['off', 'on']]] },
-      // Content search: the word is typed, this device answers, then deeper
+      // Content search: the word is typed, the slates that hold it answer
       search: {
         steps: ['j', 'ju', 'jun', 'june'],
         hits: [
           { title: 'letter to june', snippet: 'dear june, the garden is' },
           { title: 'reading notes', snippet: 'finished the june issue' },
         ],
-        deeper: { title: 'packing list', snippet: 'june trip: two shirts' },
       }
     },
     features: [

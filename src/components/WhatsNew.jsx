@@ -43,37 +43,32 @@ function MathDemo({ steps }) {
   );
 }
 
-// Content search: the word is typed into the box, this device answers with
-// its hits, "search deeper" appears, and one more hit comes back from the rest
+// Content search: the word is typed into the box and this device answers
+// with the slates that hold it, snippet and all
 function SearchDemo({ demo }) {
   const n = demo.steps.length;
-  const delays = useRef([...demo.steps.map((_, i) => (i === n - 1 ? 600 : 170)), 1000, 1100, 2600, 900]).current;
+  const delays = useRef([...demo.steps.map((_, i) => (i === n - 1 ? 600 : 170)), 3200, 900]).current;
   const k = useLoop(delays);
-  const query = k < n ? demo.steps[k] : k === delays.length - 1 ? '' : demo.steps[n - 1];
-  const hits = k >= n && k < delays.length - 1;
-  const link = k >= n + 1 && k < delays.length - 1;
-  const deep = k === n + 2;
+  const query = k < n ? demo.steps[k] : k === n ? demo.steps[n - 1] : '';
+  const hits = k === n;
+  const word = demo.steps[n - 1];
   const mark = (text) => {
-    const at = text.indexOf(demo.steps[n - 1]);
+    const at = text.indexOf(word);
     if (at < 0) return text;
-    return <>{text.slice(0, at)}<b>{text.slice(at, at + demo.steps[n - 1].length)}</b>{text.slice(at + demo.steps[n - 1].length)}</>;
+    return <>{text.slice(0, at)}<b>{text.slice(at, at + word.length)}</b>{text.slice(at + word.length)}</>;
   };
-  const row = (h, on) => (
-    <div key={h.title} className="wn-hit" style={{ opacity: on ? 1 : 0, transform: on ? 'none' : 'translateY(4px)' }}>
-      <span className="wn-hit-title">{h.title}</span>
-      <span className="wn-hit-snippet">{mark(h.snippet)}</span>
-    </div>
-  );
   return (
     <div className="wn-search">
       <div className="wn-search-box">
-        <TextMorph>{query}</TextMorph>
-        <span className="wn-search-caret" />
+        {query}<span className="wn-search-caret" />
       </div>
       <div className="wn-hits">
-        {demo.hits.map((h) => row(h, hits))}
-        <div className="wn-deeper" style={{ opacity: link ? 1 : 0 }}>{strings.slates.search?.deeper || 'search deeper'}</div>
-        {row(demo.deeper, deep)}
+        {demo.hits.map((h) => (
+          <div key={h.title} className="wn-hit" style={{ opacity: hits ? 1 : 0, transform: hits ? 'none' : 'translateY(4px)' }}>
+            <span className="wn-hit-title">{h.title}</span>
+            <span className="wn-hit-snippet">{mark(h.snippet)}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -424,12 +419,11 @@ export function WhatsNew() {
         .wn-search-box { display: flex; align-items: center; min-height: 2rem; padding: 0 0.75rem; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-bg); color: var(--theme-text); white-space: pre; }
         .wn-search-caret { display: inline-block; width: 1px; height: 1.1em; margin-left: 1px; background: var(--theme-text); animation: wnBlink 1s steps(1) infinite; }
         @keyframes wnBlink { 50% { opacity: 0; } }
-        .wn-hits { display: flex; flex-direction: column; gap: 0.35rem; min-height: 5.4rem; }
+        .wn-hits { display: flex; flex-direction: column; gap: 0.35rem; min-height: 2.6rem; }
         .wn-hit { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; transition: opacity 350ms ease, transform 350ms ease; }
         .wn-hit-title { color: var(--theme-text); white-space: nowrap; }
         .wn-hit-snippet { color: var(--theme-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
         .wn-hit-snippet b { color: var(--theme-text); font-weight: 500; }
-        .wn-deeper { color: var(--theme-text-dim); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--theme-accent); transition: opacity 350ms ease; width: fit-content; }
 
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }
