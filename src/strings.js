@@ -1599,7 +1599,7 @@ take care!
       {
         id: 'lock',
         title: 'locked slates',
-        body: 'give a slate its own pin or passphrase. the title stays in your list, the words stay yours until you type it. forget it and your recovery key opens it.'
+        body: 'give a slate its own pin or passphrase.'
       },
       {
         id: 'unpublish',
