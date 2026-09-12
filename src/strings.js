@@ -1038,7 +1038,6 @@ const strings = {
     title: 'feedback',
     subtitle: (username) => `hey ${username}, what's on your mind?`,
     placeholder: 'anything at all. bugs, ideas, or just say hi...',
-    hint: 'goes straight to alfaoz. no ticket queue, no bot.',
     words: (n) => `${n} ${n === 1 ? 'word' : 'words'}`,
     emailLabel: 'reply to (optional)',
     emailPlaceholder: 'your email',
