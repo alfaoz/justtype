@@ -12,7 +12,7 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { TextMorph } from './TextMorph';
 import { useMotion, setMotion } from '../motion';
-import { PUNTO_SIZES, nextPunto, readPunto } from '../punto';
+import { PUNTO_SIZES, nextPunto, usePunto, setPunto } from '../punto';
 import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
@@ -388,7 +388,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return localStorage.getItem('justtype-theme') || deviceDefaultTheme();
   });
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
-  const [punto, setPunto] = useState(readPunto);
+  const punto = usePunto();
   const motion = useMotion();
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
@@ -661,11 +661,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       localStorage.setItem('justtype-theme', theme);
     }
   }, [theme, previewTheme]);
-
-  // Save punto to localStorage
-  useEffect(() => {
-    localStorage.setItem('justtype-punto', punto);
-  }, [punto]);
 
   // Save focus mode preference to localStorage
   useEffect(() => {

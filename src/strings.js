@@ -675,8 +675,14 @@ const strings = {
     sections: {
       account: 'account',
       security: 'security',
+      accessibility: 'accessibility',
       connections: 'connections',
       danger: 'danger zone'
+    },
+    accessibility: {
+      motion: 'motion',
+      size: 'text size',
+      note: 'for this device. the same as the settings row in the writer.',
     },
     info: {
       title: 'account info',

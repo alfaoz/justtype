@@ -7,7 +7,7 @@ import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
 import { TextMorph } from './TextMorph';
 import { useMotion, setMotion } from '../motion';
-import { nextPunto, readPunto } from '../punto';
+import { nextPunto, usePunto, setPunto } from '../punto';
 import { SettingsRow, controlLabel } from './SettingsRow';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
@@ -19,7 +19,7 @@ export function PublicViewer() {
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
-  const [punto, setPunto] = useState(readPunto);
+  const punto = usePunto();
   const motion = useMotion();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
@@ -102,11 +102,6 @@ export function PublicViewer() {
       setViewMode(slate.editor_mode === 'wysiwyg' ? 'rich' : 'plain');
     }
   }, [slate]);
-
-  // Save punto to localStorage
-  useEffect(() => {
-    localStorage.setItem('justtype-punto', punto);
-  }, [punto]);
 
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
