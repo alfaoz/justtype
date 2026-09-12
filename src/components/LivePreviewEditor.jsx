@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view';
+import { EditorView, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
@@ -43,6 +43,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
         doc: lastContentRef.current,
         extensions: [
           ...baseExtensions({ reveal: true }),
+          highlightActiveLine(), // marks the caret's line for line focus (index.css)
           history(),
           drawSelection(),
           placeholder(strings.writer.contentPlaceholder),

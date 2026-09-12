@@ -10,6 +10,8 @@ import { Collapse } from './Reveal';
 import { ChoiceRow, wordOptions } from './ChoiceRow';
 import { useMotion, setMotion } from '../motion';
 import { SCALES, useScale, setScale } from '../scale';
+import { readableFont, lineFocus } from '../reading';
+import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -173,6 +175,10 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   // Device preferences shown under accessibility, shared with the writer's settings row
   const motion = useMotion();
   const scale = useScale();
+  const readable = readableFont.use();
+  const focusLine = lineFocus.use();
+  const sounds = soundsPref.use();
+  const haptics = hapticsPref.use();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -1457,6 +1463,21 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           <InfoRow label={strings.account.accessibility.size}>
             <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
           </InfoRow>
+          <InfoRow label={strings.account.accessibility.font}>
+            <ChoiceRow options={wordOptions(readableFont.values)} value={readable} onChange={readableFont.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.lineFocus}>
+            <ChoiceRow options={wordOptions(lineFocus.values)} value={focusLine} onChange={lineFocus.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.sounds}>
+            {/* Turning it on plays the save tick, so you hear what you chose */}
+            <ChoiceRow options={wordOptions(soundsPref.values)} value={sounds} onChange={(v) => { soundsPref.set(v); if (v === 'on') cue('save'); }} />
+          </InfoRow>
+          {canVibrate && (
+            <InfoRow label={strings.account.accessibility.haptics}>
+              <ChoiceRow options={wordOptions(hapticsPref.values)} value={haptics} onChange={(v) => { hapticsPref.set(v); if (v === 'on') cue('save'); }} />
+            </InfoRow>
+          )}
         </Section>
 
         <Section title={strings.account.sections.connections}>

@@ -12,6 +12,7 @@ import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
 import { TextMorph } from './TextMorph';
 import { PUNTO_SIZES, nextPunto, usePunto, setPunto } from '../punto';
+import { cue } from '../cues';
 import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
@@ -1742,6 +1743,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           }, 10000); // 10 seconds after save
         }
       }
+
+      // A save you asked for, or the first one, gets its cue (autosave stays quiet)
+      if (explicit || creating) cue('save');
 
       // Handle unpublishing due to edit
       if (data.was_unpublished) {

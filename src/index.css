@@ -6,6 +6,10 @@
 @import "@fontsource/ibm-plex-mono/latin-500.css";
 @import "@fontsource/ibm-plex-mono/latin-600.css";
 @import "@fontsource/ibm-plex-mono/latin-400-italic.css";
+/* The readable font (accessibility: readable font), self-hosted the same way */
+@import "@fontsource/atkinson-hyperlegible/latin-400.css";
+@import "@fontsource/atkinson-hyperlegible/latin-700.css";
+@import "@fontsource/atkinson-hyperlegible/latin-400-italic.css";
 @import "@fontsource/ibm-plex-mono/latin-500-italic.css";
 
 /* ========================================
@@ -65,6 +69,18 @@ body {
    off big bigger` on the account page) */
 html[data-scale="big"] { font-size: 112.5%; }
 html[data-scale="bigger"] { font-size: 125%; }
+
+/* Readable font: Atkinson Hyperlegible over whatever the theme chose. The
+   theme sets these variables inline on <html>; important here outranks that. */
+html[data-readable="on"] {
+  --theme-font-writer: 'Atkinson Hyperlegible', Verdana, sans-serif !important;
+  --theme-font-ui: 'Atkinson Hyperlegible', Verdana, sans-serif !important;
+}
+
+/* Line focus: in the rich editor, every line but the caret's steps back */
+html[data-linefocus="on"] .wysiwyg-editor .cm-line { transition: opacity 200ms ease-out; }
+html[data-linefocus="on"] .wysiwyg-editor .cm-focused .cm-line:not(.cm-activeLine) { opacity: 0.35; }
+.wysiwyg-editor .cm-activeLine { background: transparent !important; }
 
 /* Motion off: every animation and transition collapses to nothing. Events
    still fire (0.01ms, not none), so anything waiting on an end still runs.

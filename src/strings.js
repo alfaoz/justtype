@@ -682,6 +682,10 @@ const strings = {
     accessibility: {
       motion: 'motion',
       size: 'big text',
+      font: 'readable font',
+      lineFocus: 'line focus',
+      sounds: 'sounds',
+      haptics: 'haptics',
       note: 'for this device.',
     },
     info: {
