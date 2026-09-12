@@ -173,6 +173,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const [showSessions, setShowSessions] = useState(false);
   const [showPasswordSection, setShowPasswordSection] = useState(false);
   // Device preferences shown under accessibility, shared with the writer's settings row
+  const [showAccessibility, setShowAccessibility] = useState(false);
   const motion = useMotion();
   const scale = useScale();
   const readable = readableFont.use();
@@ -1456,7 +1457,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
         </Section>
 
-        <Section title={strings.account.sections.accessibility} note={strings.account.accessibility.note}>
+        <Section title={strings.account.sections.accessibility} note={showAccessibility ? strings.account.accessibility.note : null}>
+          <div>
+            <DisclosureHeader
+              label={strings.account.accessibility.title}
+              open={showAccessibility}
+              onToggle={() => setShowAccessibility(!showAccessibility)}
+            />
+            <Collapse open={showAccessibility}>
+              <div className="border-t border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
           <InfoRow label={strings.account.accessibility.motion}>
             <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
           </InfoRow>
@@ -1478,6 +1487,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               <ChoiceRow options={wordOptions(hapticsPref.values)} value={haptics} onChange={(v) => { hapticsPref.set(v); if (v === 'on') cue('save'); }} />
             </InfoRow>
           )}
+              </div>
+            </Collapse>
+          </div>
         </Section>
 
         <Section title={strings.account.sections.connections}>

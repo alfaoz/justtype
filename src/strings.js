@@ -680,6 +680,7 @@ const strings = {
       danger: 'danger zone'
     },
     accessibility: {
+      title: 'accessibility options',
       motion: 'motion',
       size: 'big text',
       font: 'readable font',
