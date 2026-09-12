@@ -156,12 +156,29 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
         title={strings.slates.menu.more}
       >
         {/* Three dots that run together into one line while the menu is open,
-            the way the writer's do */}
+            the way the writer's do. Merging is a motion: the dots travel in
+            and the line grows from the middle. Splitting is not: the line
+            fades where it is and the dots fade back in at their own places
+            (the line's geometry snaps only after its fade is done). */}
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
           {[2, 8, 14].map((cy) => (
-            <circle key={cy} cx="8" r="1.5" style={{ cy: isOpen ? 8 : cy, opacity: isOpen ? 0 : 1, transition: 'cy 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease-out 60ms' }} />
+            <circle
+              key={cy}
+              cx="8"
+              r="1.5"
+              style={isOpen
+                ? { cy: 8, opacity: 0, transition: 'cy 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease-out 60ms' }
+                : { cy, opacity: 1, transition: 'opacity 180ms ease-out' }}
+            />
           ))}
-          <rect x="7.25" rx="0.75" width="1.5" style={{ y: isOpen ? 2 : 8, height: isOpen ? 12 : 0, transition: 'y 220ms cubic-bezier(0.4, 0, 0.2, 1), height 220ms cubic-bezier(0.4, 0, 0.2, 1)' }} />
+          <rect
+            x="7.25"
+            rx="0.75"
+            width="1.5"
+            style={isOpen
+              ? { y: 2, height: 12, opacity: 1, transition: 'y 220ms cubic-bezier(0.4, 0, 0.2, 1), height 220ms cubic-bezier(0.4, 0, 0.2, 1)' }
+              : { y: 8, height: 0, opacity: 0, transition: 'opacity 180ms ease-out, y 0s linear 180ms, height 0s linear 180ms' }}
+          />
         </svg>
       </button>
 
