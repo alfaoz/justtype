@@ -68,8 +68,8 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
   const remaining = tags.length - visibleTags.length;
   const status = statusFor(slate);
   // Whether a copy of this slate is on this device. The mark hides until
-  // hovered, so on a card it sits after the status where its space is at
-  // the end of the line rather than a hole before the first word.
+  // hovered, so on a card it goes last, after collab and the tags, where its
+  // space is the end of the line rather than a hole between two words.
   const mark = <DeviceMark slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />;
 
   return (
@@ -86,7 +86,6 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
       ) : (
         <span className={status.cls}>{status.label}</span>
       )}
-      {markLast && mark}
       {Boolean(slate.adoption_pending) && (
         <span className="text-[var(--theme-text-muted)] animate-pulse" title={strings.slates.status.syncingTitle}>
           {strings.slates.status.syncing}
@@ -118,6 +117,7 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
         </button>
       ))}
       {remaining > 0 && <span className="text-[var(--theme-text-dim)]">+{remaining}</span>}
+      {markLast && mark}
     </>
   );
 }
