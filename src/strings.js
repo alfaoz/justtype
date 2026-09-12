@@ -682,7 +682,7 @@ const strings = {
     accessibility: {
       motion: 'motion',
       size: 'text size',
-      note: 'for this device. the same as the settings row in the writer.',
+      note: 'for this device.',
     },
     info: {
       title: 'account info',
