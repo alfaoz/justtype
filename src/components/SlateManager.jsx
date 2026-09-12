@@ -155,15 +155,18 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
         className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
         title={strings.slates.menu.more}
       >
+        {/* Three dots that run together into one line while the menu is open,
+            the way the writer's do */}
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
-          <circle cx="8" cy="2" r="1.5"/>
-          <circle cx="8" cy="8" r="1.5"/>
-          <circle cx="8" cy="14" r="1.5"/>
+          {[2, 8, 14].map((cy) => (
+            <circle key={cy} cx="8" r="1.5" style={{ cy: isOpen ? 8 : cy, opacity: isOpen ? 0 : 1, transition: 'cy 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 160ms ease-out 60ms' }} />
+          ))}
+          <rect x="7.25" rx="0.75" width="1.5" style={{ y: isOpen ? 2 : 8, height: isOpen ? 12 : 0, transition: 'y 220ms cubic-bezier(0.4, 0, 0.2, 1), height 220ms cubic-bezier(0.4, 0, 0.2, 1)' }} />
         </svg>
       </button>
 
       {isOpen && (
-        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
+        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
               <LeaveIcon className={menuIcon} />

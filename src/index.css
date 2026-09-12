@@ -373,6 +373,16 @@ html[data-motion="off"] *::after {
   .collab-tabpanel { transition-duration: 0.01ms; }
 }
 
+/* A menu unfolding from its button: quick, from the corner it hangs off */
+@keyframes menuInDown {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes menuInUp {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
 @keyframes fadeInFromRight {
   from {
     opacity: 0;
