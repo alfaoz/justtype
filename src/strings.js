@@ -1560,35 +1560,32 @@ take care!
       // 4.2: the lock's stars fill and the word turns; a formula sets itself;
       // three option rows with the underline gliding; one slate goes to the shelf
       lock: { stars: 6, before: 'locked', after: 'unlocked' },
-      math: { src: '$e^{i\\pi} + 1 = 0$' },
+      // The formula as someone types it: the editor closes the dollars and the
+      // braces as they open, so the pairs appear together
+      math: { steps: ['$$', '$e$', '$e^$', '$e^{}$', '$e^{i}$', '$e^{i\\}$', '$e^{i\\p}$', '$e^{i\\pi}$', '$e^{i\\pi} $', '$e^{i\\pi} +$', '$e^{i\\pi} + $', '$e^{i\\pi} + 1$', '$e^{i\\pi} + 1 $', '$e^{i\\pi} + 1 =$', '$e^{i\\pi} + 1 = $', '$e^{i\\pi} + 1 = 0$'] },
       a11y: { rows: [['motion', ['on', 'off']], ['big text', ['off', 'big', 'bigger']], ['readable font', ['off', 'on']]] },
-      archive: { slates: ['morning pages', 'letter to june', 'reading notes'], shelved: 1, filters: ['all', 'public', 'private', 'archived'] }
+      // Content search: the word is typed, this device answers, then deeper
+      search: {
+        steps: ['j', 'ju', 'jun', 'june'],
+        hits: [
+          { title: 'letter to june', snippet: 'dear june, the garden is' },
+          { title: 'reading notes', snippet: 'finished the june issue' },
+        ],
+        deeper: { title: 'packing list', snippet: 'june trip: two shirts' },
+      }
     },
     features: [
+      // New rows sit beside the older ones they belong with: math under rich text,
+      // search after offline copies, the options page last
       {
-        id: 'lock',
-        title: 'locked slates',
-        body: 'give a slate its own pin or passphrase. the title stays in your list, the words stay yours until you type it. forget it and your recovery key opens it.'
+        id: 'markdown',
+        title: 'rich formatting with markdown',
+        body: 'we all know it, we all love it. write markdown and watch it format itself as you type, or keep every slate plain. it is a per slate setting, so nothing changes until you ask for it.'
       },
       {
         id: 'math',
         title: 'math, typeset',
         body: 'write it between dollar signs and it sets itself as you go, inline or on a line of its own.'
-      },
-      {
-        id: 'a11y',
-        title: 'accessibility options',
-        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
-      },
-      {
-        id: 'archive',
-        title: 'archive',
-        body: 'put a slate away without deleting it. it waits under the archived filter.'
-      },
-      {
-        id: 'markdown',
-        title: 'rich formatting with markdown',
-        body: 'we all know it, we all love it. write markdown and watch it format itself as you type, or keep every slate plain. it is a per slate setting, so nothing changes until you ask for it.'
       },
       {
         id: 'collab',
@@ -1601,9 +1598,24 @@ take care!
         body: 'step back through earlier checkpoints of a collab slate, preview them, restore the one you want.'
       },
       {
+        id: 'lock',
+        title: 'locked slates',
+        body: 'give a slate its own pin or passphrase. the title stays in your list, the words stay yours until you type it. forget it and your recovery key opens it.'
+      },
+      {
         id: 'unpublish',
         title: 'unpublish, completely',
         body: "take a published slate all the way back. long overdue, but it's here!"
+      },
+      {
+        id: 'offline',
+        title: 'offline slates',
+        body: 'your slates are now kept on your device as well, not just on the server. lose your connection and keep writing; edits are saved locally and synced when you are back. automatic, and still end-to-end encrypted.'
+      },
+      {
+        id: 'search',
+        title: 'content search',
+        body: 'search the words inside your slates, not only their titles. this device answers first, and search deeper looks through the rest.'
       },
       {
         id: 'brand',
@@ -1613,9 +1625,9 @@ take care!
         note: 'ibm plex mono'
       },
       {
-        id: 'offline',
-        title: 'offline slates',
-        body: 'your slates are now kept on your device as well, not just on the server. lose your connection and keep writing; edits are saved locally and synced when you are back. automatic, and still end-to-end encrypted.'
+        id: 'a11y',
+        title: 'accessibility options',
+        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
       }
     ],
     backLink: 'back to writing'

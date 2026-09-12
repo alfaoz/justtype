@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { TextMorph } from './TextMorph';
 import { PageHeader } from './PageHeader';
 import { HoverNote } from './HoverNote';
 import { MarkGlyph } from './MarkGlyph';
@@ -14,6 +15,69 @@ const goHome = () => {
   window.history.pushState({}, '', '/');
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
+
+// A phase counter that walks `delays` (ms per phase) and starts over
+function useLoop(delays) {
+  const [k, setK] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => setK((k + 1) % delays.length), delays[k]);
+    return () => clearTimeout(t);
+  }, [k, delays]);
+  return k;
+}
+
+// Math: someone types the formula. The editor closes each pair as it opens,
+// so `$$` and `{}` land whole; the words morph as they grow. Then the source
+// gives way to the set formula, holds, and the frame empties for the next go.
+function MathDemo({ steps }) {
+  const n = steps.length;
+  const delays = useRef([...steps.map((_, i) => (i === n - 1 ? 1500 : i === 0 ? 700 : 150)), 2800, 900]).current;
+  const k = useLoop(delays);
+  const text = k < n ? steps[k] : k === n ? steps[n - 1] : '';
+  const set = k === n;
+  return (
+    <div className="wn-math">
+      <span className="wn-math-src" style={{ opacity: set ? 0 : 1 }}><TextMorph>{text}</TextMorph></span>
+      <span className="wn-math-out" style={{ opacity: set ? 1 : 0 }}><i>e</i><sup><i>i</i>π</sup> + 1 = 0</span>
+    </div>
+  );
+}
+
+// Content search: the word is typed into the box, this device answers with
+// its hits, "search deeper" appears, and one more hit comes back from the rest
+function SearchDemo({ demo }) {
+  const n = demo.steps.length;
+  const delays = useRef([...demo.steps.map((_, i) => (i === n - 1 ? 600 : 170)), 1000, 1100, 2600, 900]).current;
+  const k = useLoop(delays);
+  const query = k < n ? demo.steps[k] : k === delays.length - 1 ? '' : demo.steps[n - 1];
+  const hits = k >= n && k < delays.length - 1;
+  const link = k >= n + 1 && k < delays.length - 1;
+  const deep = k === n + 2;
+  const mark = (text) => {
+    const at = text.indexOf(demo.steps[n - 1]);
+    if (at < 0) return text;
+    return <>{text.slice(0, at)}<b>{text.slice(at, at + demo.steps[n - 1].length)}</b>{text.slice(at + demo.steps[n - 1].length)}</>;
+  };
+  const row = (h, on) => (
+    <div key={h.title} className="wn-hit" style={{ opacity: on ? 1 : 0, transform: on ? 'none' : 'translateY(4px)' }}>
+      <span className="wn-hit-title">{h.title}</span>
+      <span className="wn-hit-snippet">{mark(h.snippet)}</span>
+    </div>
+  );
+  return (
+    <div className="wn-search">
+      <div className="wn-search-box">
+        <TextMorph>{query}</TextMorph>
+        <span className="wn-search-caret" />
+      </div>
+      <div className="wn-hits">
+        {demo.hits.map((h) => row(h, hits))}
+        <div className="wn-deeper" style={{ opacity: link ? 1 : 0 }}>{strings.slates.search?.deeper || 'search deeper'}</div>
+        {row(demo.deeper, deep)}
+      </div>
+    </div>
+  );
+}
 
 export function WhatsNew() {
   const s = strings.whatsNew;
@@ -121,13 +185,9 @@ export function WhatsNew() {
     </div>
     ),
 
-    // Math: the source crossfades into the set formula
     math: (
     <div className="wn-frame wn-frame-center" key="math">
-      <div className="wn-math">
-        <span className="wn-math-src">{d.math.src}</span>
-        <span className="wn-math-out"><i>e</i><sup><i>i</i>π</sup> + 1 = 0</span>
-      </div>
+      <MathDemo steps={d.math.steps} />
     </div>
     ),
 
@@ -148,23 +208,9 @@ export function WhatsNew() {
     </div>
     ),
 
-    // Archive: the shelved slate leaves the list; the filter word lights up
-    archive: (
-    <div className="wn-frame wn-frame-list" key="archive">
-      <div className="wn-arch-filters">
-        <span className="wn-slate-meta">show:</span>
-        {d.archive.filters.map((f) => (
-          <span key={f} className={`wn-arch-f ${f === 'all' ? 'wn-arch-f-all' : ''} ${f === 'archived' ? 'wn-arch-f-arch' : ''}`}>{f}</span>
-        ))}
-      </div>
-      <div className="wn-slates wn-arch-list">
-        {d.archive.slates.map((title, i) => (
-          <div key={title} className={`wn-slate ${i === d.archive.shelved ? 'wn-arch-row' : 'wn-arch-rest'}`}>
-            <span className="wn-slate-title">{title}</span>
-            <span className="wn-slate-meta">{strings.slates.status.private}</span>
-          </div>
-        ))}
-      </div>
+    search: (
+    <div className="wn-frame wn-frame-list" key="search">
+      <SearchDemo demo={d.search} />
     </div>
     ),
 
@@ -357,10 +403,10 @@ export function WhatsNew() {
         @keyframes wnLockA { 0%, 44% { opacity: 1; } 50%, 92% { opacity: 0; } 98%, 100% { opacity: 1; } }
         @keyframes wnLockB { 0%, 48% { opacity: 0; } 54%, 88% { opacity: 1; } 94%, 100% { opacity: 0; } }
 
-        /* Math: dollars in, the formula out */
+        /* Math: typed source, then the set formula (MathDemo drives the swap) */
         .wn-math { position: relative; min-height: 2.2em; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; }
-        .wn-math-src { color: var(--theme-text-muted); animation: wnMdSrc 8s infinite; white-space: nowrap; }
-        .wn-math-out { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; animation: wnMdOut 8s infinite; color: var(--theme-text); font-family: 'KaTeX_Main', 'Times New Roman', Times, serif; font-size: 1.35rem; white-space: nowrap; }
+        .wn-math-src { color: var(--theme-text-muted); white-space: pre; transition: opacity 400ms ease; }
+        .wn-math-out { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--theme-text); font-family: 'KaTeX_Main', 'Times New Roman', Times, serif; font-size: 1.35rem; white-space: nowrap; transition: opacity 400ms ease; }
         .wn-math-out sup { font-size: 0.7em; margin-left: 1px; }
 
         /* Accessibility: the account rows, underline on the move */
@@ -373,23 +419,17 @@ export function WhatsNew() {
         .wn-opt-bar { position: absolute; bottom: -3px; height: 1px; background: var(--theme-accent); }
         ${a11yCss}
 
-        /* Archive: one row folds away, the filter word lights up */
-        .wn-arch-filters { display: flex; gap: 0.75rem; font-size: 0.7rem; color: var(--theme-text-dim); margin-bottom: 0.6rem; }
-        .wn-arch-f { color: var(--theme-text-dim); }
-        .wn-arch-f-all { animation: wnArchAll 9s infinite; }
-        .wn-arch-f-arch { animation: wnArchArch 9s infinite; }
-        @keyframes wnArchAll { 0%, 50% { color: var(--theme-text); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--theme-accent); } 56%, 100% { color: var(--theme-text-dim); text-decoration: none; } }
-        @keyframes wnArchArch { 0%, 50% { color: var(--theme-text-dim); text-decoration: none; } 56%, 100% { color: var(--theme-text); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--theme-accent); } }
-        .wn-arch-list { animation: none; }
-        .wn-arch-row { overflow: hidden; animation: wnArchRow 9s infinite; }
-        .wn-arch-rest { animation: wnArchRest 9s infinite; }
-        @keyframes wnArchRow {
-          0%, 26% { max-height: 3rem; opacity: 1; }
-          32%, 50% { max-height: 0; opacity: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; }
-          56%, 90% { max-height: 3rem; opacity: 1; }
-          94%, 100% { max-height: 3rem; opacity: 1; }
-        }
-        @keyframes wnArchRest { 0%, 50% { opacity: 1; max-height: 3rem; } 56%, 90% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; } 96%, 100% { opacity: 1; max-height: 3rem; } }
+        /* Content search: the box, the hits, the deeper line (SearchDemo drives it) */
+        .wn-search { display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.75rem; }
+        .wn-search-box { display: flex; align-items: center; min-height: 2rem; padding: 0 0.75rem; border: 1px solid var(--theme-border); border-radius: 4px; background: var(--theme-bg); color: var(--theme-text); white-space: pre; }
+        .wn-search-caret { display: inline-block; width: 1px; height: 1.1em; margin-left: 1px; background: var(--theme-text); animation: wnBlink 1s steps(1) infinite; }
+        @keyframes wnBlink { 50% { opacity: 0; } }
+        .wn-hits { display: flex; flex-direction: column; gap: 0.35rem; min-height: 5.4rem; }
+        .wn-hit { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; transition: opacity 350ms ease, transform 350ms ease; }
+        .wn-hit-title { color: var(--theme-text); white-space: nowrap; }
+        .wn-hit-snippet { color: var(--theme-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wn-hit-snippet b { color: var(--theme-text); font-weight: 500; }
+        .wn-deeper { color: var(--theme-text-dim); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--theme-accent); transition: opacity 350ms ease; width: fit-content; }
 
         /* Alternating feature rows: frame one side, words the other */
         .wn-row { display: flex; flex-direction: column; gap: 1.25rem; }
