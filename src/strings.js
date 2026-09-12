@@ -1576,7 +1576,7 @@ take care!
     },
     features: [
       // New rows sit beside the older ones they belong with: math under rich text,
-      // search after offline copies, the options page last
+      // search after offline copies, the options page, then the new justtype last
       {
         id: 'markdown',
         title: 'rich formatting with markdown',
@@ -1615,7 +1615,12 @@ take care!
       {
         id: 'search',
         title: 'content search',
-        body: 'search the words inside your slates, not only their titles. this device answers first, and search deeper looks through the rest.'
+        body: 'search the words inside your slates, not only their titles.'
+      },
+      {
+        id: 'a11y',
+        title: 'accessibility options',
+        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
       },
       {
         id: 'brand',
@@ -1623,11 +1628,6 @@ take care!
         body: 'a new default identity, a new default font, a polished design, a new justtype.',
         notePhrase: 'a new default font',
         note: 'ibm plex mono'
-      },
-      {
-        id: 'a11y',
-        title: 'accessibility options',
-        body: 'motion, big text, a readable font, line focus, sounds and haptics. all on your account page, all for the device you are on.'
       }
     ],
     backLink: 'back to writing'
