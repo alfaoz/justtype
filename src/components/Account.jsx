@@ -1282,7 +1282,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 onToggle={() => setShowPasswordSection(!showPasswordSection)}
               />
               <Collapse open={showPasswordSection}>
-                <div className="px-4 pb-4 -mt-1">
+                <div className="px-4 pb-4">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
                       type="password"
@@ -1339,7 +1339,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 onToggle={() => setShowRecoverySection(!showRecoverySection)}
               />
               <Collapse open={showRecoverySection}>
-                <div className="px-4 pb-4 -mt-1">
+                <div className="px-4 pb-4">
                   <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
                     <input
@@ -1392,7 +1392,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 onToggle={() => setShowSessions(!showSessions)}
               />
             <Collapse open={showSessions}>
-              <div className="px-4 pb-4 -mt-1">
+              <div className="px-4 pb-4">
                 {loadingSessions ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
                 ) : (
@@ -1467,7 +1467,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 onToggle={() => setShowConnectedApps(!showConnectedApps)}
               />
             <Collapse open={showConnectedApps}>
-              <div className="px-4 pb-4 -mt-1">
+              <div className="px-4 pb-4">
                 {loadingApps ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
                 ) : connectedApps.length === 0 ? (
@@ -1552,7 +1552,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
               />
             <Collapse open={showDangerZone}>
-              <div className="px-4 pb-4 -mt-1">
+              <div className="px-4 pb-4">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
                 </p>

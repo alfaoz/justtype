@@ -96,7 +96,9 @@ export function Collapse({ open, children, className = '', duration = 320 }) {
         transition: `height ${duration}ms ${EASE}, opacity ${duration * 0.75}ms ${EASE}`,
       }}
     >
-      <div ref={inner}>{kept.current}</div>
+      {/* flow-root keeps a child's top margin inside the measured box instead of
+          letting it collapse through and get clipped */}
+      <div ref={inner} className="flow-root">{kept.current}</div>
     </div>
   );
 }
