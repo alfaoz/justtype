@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { strings } from '../strings';
 import { SecretField } from './SecretField';
-import { TextMorph } from 'torph/react';
+import { TextMorph } from './TextMorph';
 
 export function PinSetupModal({ onSubmit, onRecover, isSetup = true }) {
   const [pin, setPin] = useState('');

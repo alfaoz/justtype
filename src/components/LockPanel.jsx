@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { strings } from '../strings';
 import { SecretField } from './SecretField';
 import { MIN_SECRET_LENGTH, normalizeSecret, normalizePhrase } from '../slateLock';
+import { Fade, AutoHeight, EASE } from './Reveal';
 
 /**
  * The lock's face: a word, rows of stars, a quiet line under them.
@@ -23,59 +24,6 @@ import { MIN_SECRET_LENGTH, normalizeSecret, normalizePhrase } from '../slateLoc
  */
 const SETUP_ORDER = ['secret', 'confirm', 'phrase', 'sure'];
 const GATE_ORDER = ['secret', 'phrase', 'newSecret', 'newConfirm'];
-const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
-
-// Mounts its children with a fade and a small rise, and lets them fade out
-// before they leave, so nothing pops in or blinks away
-function Fade({ show, children, className = '' }) {
-  const [present, setPresent] = useState(show);
-  const [visible, setVisible] = useState(show);
-  const kept = useRef(children); // what fades out is what was last shown
-  if (show) kept.current = children;
-  useEffect(() => {
-    if (show) {
-      setPresent(true);
-      const id = requestAnimationFrame(() => setVisible(true));
-      return () => cancelAnimationFrame(id);
-    }
-    setVisible(false);
-    const t = setTimeout(() => setPresent(false), 280);
-    return () => clearTimeout(t);
-  }, [show]);
-  if (!present) return null;
-  return (
-    <div
-      className={className}
-      style={{
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'none' : 'translateY(-4px)',
-        transition: `opacity 280ms ${EASE}, transform 280ms ${EASE}`,
-      }}
-    >
-      {kept.current}
-    </div>
-  );
-}
-
-// Follows its content's height with a transition, so the panel and whatever
-// holds it glide to their new size instead of jumping
-function AutoHeight({ children, className = '' }) {
-  const inner = useRef(null);
-  const [height, setHeight] = useState(null);
-  useEffect(() => {
-    const el = inner.current;
-    if (!el) return;
-    setHeight(el.offsetHeight);
-    const ro = new ResizeObserver(() => setHeight(el.offsetHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return (
-    <div className={className} style={{ height: height ?? 'auto', overflow: 'hidden', transition: `height 320ms ${EASE}` }}>
-      <div ref={inner} className="flex flex-col items-center">{children}</div>
-    </div>
-  );
-}
 
 export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover, onCancel, className = '' }) {
   const s = strings.writer.lock;

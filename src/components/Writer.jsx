@@ -10,7 +10,9 @@ import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, f
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
 import { withViewTransition } from '../viewTransition';
-import { TextMorph } from 'torph/react';
+import { TextMorph } from './TextMorph';
+import { useMotion, setMotion } from '../motion';
+import { PUNTO_SIZES, nextPunto, readPunto } from '../punto';
 import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
@@ -386,7 +388,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return localStorage.getItem('justtype-theme') || deviceDefaultTheme();
   });
   const [previewTheme, setPreviewTheme] = useState(null); // For hover preview
-  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const [punto, setPunto] = useState(readPunto);
+  const motion = useMotion();
   const [threeDotsTransform, setThreeDotsTransform] = useState(0);
   const textareaRef = useRef(null);
   const richEditorRef = useRef(null); // LivePreviewEditor handle ({ focus })
@@ -2149,10 +2152,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
 
   const cyclePunto = () => {
-    const sizes = ['small', 'base', 'large'];
-    const currentIndex = sizes.indexOf(punto);
-    const nextIndex = (currentIndex + 1) % sizes.length;
-    setPunto(sizes[nextIndex]);
+    setPunto(nextPunto(punto));
   };
 
   const cycleFocus = () => {
@@ -2504,9 +2504,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const stripControls = {
     device: [
       { id: 'theme', label: 'theme', kind: 'menu', value: theme, options: getThemeIds(), onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
-      { id: 'size', label: 'size', kind: 'cycle', value: punto, options: ['small', 'base', 'large'], onCycle: cyclePunto, onSet: setPunto },
+      { id: 'size', label: 'size', kind: 'cycle', value: punto, options: PUNTO_SIZES, onCycle: cyclePunto, onSet: setPunto },
       { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
       { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
+      { id: 'motion', label: 'motion', kind: 'toggle', value: motion, onCycle: () => setMotion(motion === 'on' ? 'off' : 'on'), onSet: setMotion },
     ],
     slate: [
       { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },

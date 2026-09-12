@@ -6,6 +6,7 @@ import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { ShareSlates } from './ShareSlates';
 import { SupportButtons } from './SupportButtons';
+import { Collapse } from './Reveal';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { wordlist } from '../bip39-wordlist';
@@ -1274,7 +1275,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showPasswordSection}
                 onToggle={() => setShowPasswordSection(!showPasswordSection)}
               />
-              {showPasswordSection && (
+              <Collapse open={showPasswordSection}>
                 <div className="px-4 pb-4 -mt-1">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
@@ -1312,7 +1313,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1331,7 +1332,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showRecoverySection}
                 onToggle={() => setShowRecoverySection(!showRecoverySection)}
               />
-              {showRecoverySection && (
+              <Collapse open={showRecoverySection}>
                 <div className="px-4 pb-4 -mt-1">
                   <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
@@ -1353,7 +1354,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1384,7 +1385,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showSessions}
                 onToggle={() => setShowSessions(!showSessions)}
               />
-            {showSessions && (
+            <Collapse open={showSessions}>
               <div className="px-4 pb-4 -mt-1">
                 {loadingSessions ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
@@ -1436,7 +1437,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
         </Section>
@@ -1449,7 +1450,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showConnectedApps}
                 onToggle={() => setShowConnectedApps(!showConnectedApps)}
               />
-            {showConnectedApps && (
+            <Collapse open={showConnectedApps}>
               <div className="px-4 pb-4 -mt-1">
                 {loadingApps ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
@@ -1502,7 +1503,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
           {shareApp && (
@@ -1534,7 +1535,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showDangerZone}
                 onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
               />
-            {showDangerZone && (
+            <Collapse open={showDangerZone}>
               <div className="px-4 pb-4 -mt-1">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
@@ -1547,7 +1548,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   {deleting ? 'deleting...' : 'delete account'}
                 </button>
               </div>
-            )}
+            </Collapse>
           </div>
         </Section>
 

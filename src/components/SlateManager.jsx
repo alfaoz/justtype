@@ -12,7 +12,7 @@ import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveShar
 import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
-import { TextMorph } from 'torph/react';
+import { TextMorph } from './TextMorph';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
@@ -1468,7 +1468,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         </div>
       ) : filteredAndSortedSlates.length === 0 ? (
         <div className="text-center py-16">
-          <p className="text-[var(--theme-text-dim)] text-sm md:text-base">{strings.slates.noMatches(searchQuery)}</p>
+          <p className="text-[var(--theme-text-dim)] text-sm md:text-base">{searchQuery.trim() ? strings.slates.noMatches(searchQuery) : (strings.slates.noneUnder[visibilityFilter] || strings.slates.noneUnder.all)}</p>
         </div>
       ) : (
         <div

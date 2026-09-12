@@ -56,9 +56,25 @@ body {
 }
 
 /* Font size (punto) variants - use CSS variables for color and font */
-.punto-small { font-size: 14px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
-.punto-base { font-size: 15px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
-.punto-large { font-size: 18px !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+/* In rem so a browser set to larger text scales the writing with it */
+.punto-small { font-size: 0.875rem !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-base { font-size: 0.9375rem !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-large { font-size: 1.125rem !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-larger { font-size: 1.375rem !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+
+/* Motion off: every animation and transition collapses to nothing. Events
+   still fire (0.01ms, not none), so anything waiting on an end still runs.
+   Set from motion.js: the system preference, or `motion: off` in settings. */
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
 
 /* Punto theme overrides - CSS variables handle this now */
 
@@ -88,7 +104,7 @@ body {
 @media (max-width: 767px) {
   .punto-small,
   .punto-base {
-    font-size: 16px !important;
+    font-size: 1rem !important;
   }
   input,
   textarea,

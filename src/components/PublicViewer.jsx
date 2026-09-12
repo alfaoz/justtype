@@ -5,7 +5,9 @@ import { strings } from '../strings';
 import { applyThemeVariables, deviceDefaultTheme } from '../themes';
 import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
-import { TextMorph } from 'torph/react';
+import { TextMorph } from './TextMorph';
+import { useMotion, setMotion } from '../motion';
+import { nextPunto, readPunto } from '../punto';
 import { SettingsRow, controlLabel } from './SettingsRow';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
@@ -17,7 +19,8 @@ export function PublicViewer() {
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
-  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const [punto, setPunto] = useState(readPunto);
+  const motion = useMotion();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
 
@@ -110,10 +113,7 @@ export function PublicViewer() {
   };
 
   const cyclePunto = () => {
-    const sizes = ['small', 'base', 'large'];
-    const currentIndex = sizes.indexOf(punto);
-    const nextIndex = (currentIndex + 1) % sizes.length;
-    setPunto(sizes[nextIndex]);
+    setPunto(nextPunto(punto));
   };
 
   const copyContent = async () => {
@@ -177,6 +177,7 @@ export function PublicViewer() {
     device: [
       { id: 'theme', label: 'theme', kind: 'cycle', value: theme, onCycle: toggleTheme },
       { id: 'size', label: 'size', kind: 'cycle', value: punto, onCycle: cyclePunto },
+      { id: 'motion', label: 'motion', kind: 'cycle', value: motion, onCycle: () => setMotion(motion === 'on' ? 'off' : 'on') },
     ],
     slate: [
       { id: 'view', label: 'view', kind: 'cycle', value: viewMode, onCycle: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },

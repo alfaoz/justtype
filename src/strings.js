@@ -250,6 +250,8 @@ const strings = {
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
+    // The empty list under a filter, when nothing was searched for
+    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived' },
     // Content search: what is on this device is searched as you type; the
     // line under the results offers the rest
     search: {

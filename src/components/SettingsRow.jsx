@@ -1,4 +1,4 @@
-import { TextMorph } from 'torph/react';
+import { TextMorph } from './TextMorph';
 import React from 'react';
 
 /**
