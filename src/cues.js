@@ -8,7 +8,10 @@ import { onLockChange } from './slateLock';
 
 export const soundsPref = makePref({ key: 'justtype-sounds', values: ['off', 'on'], fallback: 'off' });
 export const hapticsPref = makePref({ key: 'justtype-haptics', values: ['off', 'on'], fallback: 'off' });
-export const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+// Desktop Chrome exposes vibrate() and does nothing with it; the row is only
+// worth showing where there is a hand on the glass
+export const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
+  && typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
 
 let ctx = null;
 function audio() {
