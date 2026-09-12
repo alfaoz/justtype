@@ -14,6 +14,7 @@ import { withViewTransition } from '../viewTransition';
 import { useEscape } from '../useEscape';
 import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
+import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
@@ -123,9 +124,12 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
 }
 
 const menuItemCls = (danger) =>
-  `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm ${
+  `w-full px-4 py-2 text-left hover:bg-[var(--theme-bg-tertiary)] transition-colors text-xs md:text-sm flex items-center gap-2.5 ${
     danger ? 'text-[var(--theme-red)]' : 'hover:text-[var(--theme-text)]'
   } whitespace-nowrap`;
+
+// The icon before a menu word: a shade quieter than the word itself
+const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
 
 /**
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
@@ -162,14 +166,17 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
         <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1' : 'top-full mt-1'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
           {slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
+              <LeaveIcon className={menuIcon} />
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
             </button>
           ) : (
             <>
               <button onClick={onPin} className={menuItemCls(false)}>
+                {isPinned ? <UnpinIcon className={menuIcon} /> : <PinIcon className={menuIcon} />}
                 {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
               </button>
               <button onClick={onTags} className={menuItemCls(false)}>
+                <TagIcon className={menuIcon} />
                 {strings.slates.menu.tags}
               </button>
               {/* This device's copy: let it go, or get it. Keeping it past
@@ -177,26 +184,31 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
                   still on its way stays put. */}
               {!slate.local && !slate.pending && (
                 <button onClick={slate.available ? onOffload : onCopyToDevice} className={menuItemCls(false)}>
+                  {slate.available ? <CloudOffIcon className={menuIcon} /> : <CloudDownIcon className={menuIcon} />}
                   {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
                 </button>
               )}
               {!slate.is_locked && (
                 <button onClick={onPublish} className={menuItemCls(false)}>
+                  {slate.is_published ? <EyeOffIcon className={menuIcon} /> : <GlobeIcon className={menuIcon} />}
                   {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
                 </button>
               )}
               {/* A private, non-collab slate can lock; a locked one unlocks */}
               {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
                 <button onClick={onLock} className={menuItemCls(false)}>
+                  {slate.is_locked ? <UnlockIcon className={menuIcon} /> : <LockIcon className={menuIcon} />}
                   {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
                 </button>
               )}
               {!slate.local && (
                 <button onClick={onArchive} className={menuItemCls(false)}>
+                  {slate.archived_at ? <UnarchiveIcon className={menuIcon} /> : <ArchiveIcon className={menuIcon} />}
                   {slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive}
                 </button>
               )}
               <button onClick={onDelete} className={menuItemCls(true)}>
+                <TrashIcon className={menuIcon} />
                 {strings.slates.menu.delete}
               </button>
             </>
