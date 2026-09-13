@@ -200,7 +200,7 @@ module.exports = function mountSeo(app, { db, b2Storage }) {
         SELECT slates.*, users.username, users.is_system_user
         FROM slates
         JOIN users ON slates.user_id = users.id
-        WHERE slates.share_id = ? AND slates.is_published = 1
+        WHERE slates.share_id = ? AND slates.is_published = 1 AND slates.deleted_at IS NULL
       `).get(id);
     } catch (error) {
       console.error('seo: slate lookup', error);

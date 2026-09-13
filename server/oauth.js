@@ -1045,7 +1045,7 @@ function mountOAuth(app, deps) {
   app.get('/api/oauth/slates', publicCors, authenticateOAuth('slates:read:meta'), (req, res) => {
     const rows = db.prepare(`SELECT slate_number, is_published, share_id, word_count, char_count,
       created_at, updated_at, published_at, title, encrypted_title
-      FROM slates WHERE user_id = ? ORDER BY updated_at DESC`).all(req.oauth.userId);
+      FROM slates WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`).all(req.oauth.userId);
     res.json(rows.map(s => ({
       slate_number: s.slate_number,
       is_published: !!s.is_published,
@@ -1085,9 +1085,9 @@ function mountOAuth(app, deps) {
       const cols = `slate_number, is_published, share_id, word_count, char_count,
         created_at, updated_at, published_at, title, encrypted_title`;
       const changedRows = since
-        ? db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND updated_at > datetime(?)
+        ? db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND deleted_at IS NULL AND updated_at > datetime(?)
             ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, since, SYNC_CAP)
-        : db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ?
+        : db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND deleted_at IS NULL
             ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, SYNC_CAP);
       const has_more = changedRows.length === SYNC_CAP;
 
@@ -1124,7 +1124,7 @@ function mountOAuth(app, deps) {
     try {
       const rows = db.prepare(`SELECT slate_number, title, share_id, word_count, char_count,
         created_at, updated_at, published_at, b2_public_file_id, b2_file_id
-        FROM slates WHERE user_id = ? AND is_published = 1 ORDER BY published_at DESC`).all(req.oauth.userId);
+        FROM slates WHERE user_id = ? AND is_published = 1 AND deleted_at IS NULL ORDER BY published_at DESC`).all(req.oauth.userId);
       const out = [];
       for (const s of rows) {
         let content = null;

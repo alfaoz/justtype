@@ -162,7 +162,7 @@ const strings = {
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
       savedAs: (n) => `saved as /slate/${n}`,
-      deleted: 'deleted',
+      deleted: 'moved to trash',
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
@@ -231,6 +231,7 @@ const strings = {
     filterVisibilityPublic: 'public',
     filterVisibilityPrivate: 'private',
     filterVisibilityArchived: 'archived',
+    filterVisibilityTrash: 'trash',
     sortOptions: {
       recent: 'recent',
       oldest: 'oldest',
@@ -266,7 +267,8 @@ const strings = {
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
     // The empty list under a filter, when nothing was searched for
-    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived' },
+    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived', trash: 'the trash is empty' },
+    trash: { moved: 'moved to trash', undo: 'undo', restored: 'restored', empty: 'empty trash', emptied: 'trash emptied', gone: 'deleted' },
     // Content search: what is on this device is searched as you type; the
     // line under the results offers the rest
     search: {
@@ -282,6 +284,7 @@ const strings = {
       unlocked: 'unlocked',
       public: 'public',
       private: 'private',
+      inTrash: 'in trash',
       wasPublic: 'draft (was public)',
       fromApp: 'from {app}',
       fromAppTitle: 'this slate was created by {app} and imported into your account. it is now yours and stays even if you remove the app.',
@@ -315,7 +318,9 @@ const strings = {
       unarchive: 'unarchive',
       tags: 'tags',
       more: 'more',
-      delete: 'delete'
+      delete: 'delete',
+      restore: 'restore',
+      deleteForever: 'delete forever'
     },
     pin: {
       pin: 'pin',
@@ -343,12 +348,6 @@ const strings = {
       confirm: 'delete',
       cancel: 'keep',
     },
-    deleteModal: {
-      title: 'delete slate?',
-      message: (title) => `Are you sure you want to delete "${title}"? This cannot be undone!`,
-      confirm: 'delete',
-      cancel: 'cancel'
-    }
   },
 
   // e2ee collaborative slates

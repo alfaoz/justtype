@@ -1076,6 +1076,12 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added history columns to slates');
   }
+  // Trash: a deleted slate keeps its row and files for thirty days
+  if (!slateColsLock.some(col => col.name === 'deleted_at')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN deleted_at INTEGER;`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_slates_deleted ON slates(deleted_at);`);
+    console.log('✓ Database migrated: Added deleted_at column to slates');
+  }
   // Archived slates leave the main list for a section of their own
   if (!slateColsLock.some(col => col.name === 'archived_at')) {
     db.exec(`ALTER TABLE slates ADD COLUMN archived_at INTEGER;`);

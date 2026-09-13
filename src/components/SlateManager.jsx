@@ -34,7 +34,9 @@ const formatDateShort = (dateString) =>
 // the rest of the app already speaks (blue = public, orange = was public,
 // accent = shared with me). Private is the default state, so it stays dim.
 const statusFor = (slate) =>
-  slate.shared
+  slate.deleted_at
+    ? { label: strings.slates.status.inTrash, cls: 'text-[var(--theme-text-dim)]' }
+  : slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
     : slate.is_locked
       ? slate.unlockedHere
@@ -144,7 +146,7 @@ const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onArchive, onDelete, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
@@ -193,7 +195,18 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
 
       {isOpen && (
         <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
-          {slate.shared ? (
+          {slate.deleted_at ? (
+            <>
+              <button onClick={onRestore} className={menuItemCls(false)}>
+                <UnarchiveIcon className={menuIcon} />
+                {strings.slates.menu.restore}
+              </button>
+              <button onClick={onDeleteForever} className={menuItemCls(true)}>
+                <TrashIcon className={menuIcon} />
+                {strings.slates.menu.deleteForever}
+              </button>
+            </>
+          ) : slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
               <LeaveIcon className={menuIcon} />
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
@@ -445,7 +458,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const leaveTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(leaveTimerRef.current), []);
   const [showToast, toastNode] = useToast();
-  const [deleteModal, setDeleteModal] = useState({ show: false, slateId: null, slateTitle: '' });
   const [openMenuId, setOpenMenuId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   // Whether the account's lock is open right now: the open locked slate
@@ -559,7 +571,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   // Every tag across the library, most used first
   const allTags = useMemo(() => {
     const counts = new Map();
-    for (const s of [...slates, ...sharedSlates]) for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1);
+    for (const s of [...slates, ...sharedSlates]) { if (s.deleted_at) continue; for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1); }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
   }, [slates, sharedSlates]);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
@@ -673,6 +685,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       // Network first; the last list this device saw when the network fails
       let data;
       let fromCache = false;
+      let trashRows = [];
       try {
         if (!isOnline()) throw new Error('offline');
         const response = await fetch(`${API_URL}/slates`, {
@@ -683,6 +696,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           throw new Error(data?.error || strings.errors.loadFailed);
         }
         if (userId) cacheList(userId, data).catch(() => {});
+        // What sits in the trash, shown under its own filter
+        try {
+          const tr = await fetch(`${API_URL}/slates?trash=1`, { credentials: 'include' });
+          trashRows = tr.ok ? await tr.json() : [];
+        } catch { trashRows = []; }
       } catch (netErr) {
         reportNetworkFailure();
         const cached = userId ? await getCachedList(userId).catch(() => null) : null;
@@ -700,6 +718,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       }));
       data = [...locals, ...data];
       refreshDeviceCopies();
+      data = [...data, ...trashRows];
 
       // Get slate key for decryption
       const slateKey = userId ? await getSlateKey(userId) : null;
@@ -875,36 +894,60 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     else if (ev.type === 'finished') { setSyncing(new Set()); refreshDeviceCopies(); }
   }), [userId]);
 
-  const showDeleteConfirmation = (id, title, e) => {
+  // Delete: to the trash, with a word to bring it straight back. Restore
+  // and delete forever act on what is in the trash; empty trash clears it.
+  const markDeleted = (n, deletedAt) => setSlates(prev => prev.map(s => (s.slate_number === n ? { ...s, deleted_at: deletedAt } : s)));
+  const restoreSlate = async (slate, e) => {
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    setOpenMenuId(null);
+    try {
+      const r = await fetch(`${API_URL}/slates/${slate.slate_number}/restore`, { method: 'POST', credentials: 'include' });
+      if (!r.ok) throw new Error('restore failed');
+      markDeleted(slate.slate_number, null);
+      showToast(strings.slates.trash.restored);
+    } catch (err) {
+      console.error('Failed to restore slate:', err);
+      showToast(strings.errors.deleteSlate);
+    }
+  };
+  const trashSlate = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
-    setDeleteModal({ show: true, slateId: id, slateTitle: title });
-  };
-
-  const cancelDelete = () => {
-    withViewTransition(() => setDeleteModal({ show: false, slateId: null, slateTitle: '' }));
-  };
-
-  const confirmDelete = async () => {
-    const id = deleteModal.slateId;
-
-    // Close modal immediately
-    setDeleteModal({ show: false, slateId: null, slateTitle: '' });
-
+    setOpenMenuId(null);
     try {
-      const response = await fetch(`${API_URL}/slates/${id}`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        setSlates(prevSlates => prevSlates.filter(s => s.slate_number !== id));
-      } else {
-        const data = await response.json();
-        showToast(data.error || strings.errors.deleteSlate);
-      }
+      const r = await fetch(`${API_URL}/slates/${slate.slate_number}`, { method: 'DELETE', credentials: 'include' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast(data.error || strings.errors.deleteSlate); return; }
+      markDeleted(slate.slate_number, data.deleted_at || Math.floor(Date.now() / 1000));
+      showToast(strings.slates.trash.moved, { action: { label: strings.slates.trash.undo, onClick: () => restoreSlate(slate) } });
     } catch (err) {
       console.error('Failed to delete slate:', err);
+      showToast(strings.errors.deleteSlate);
+    }
+  };
+  const deleteForever = async (slate, e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setOpenMenuId(null);
+    try {
+      const r = await fetch(`${API_URL}/slates/${slate.slate_number}?forever=1`, { method: 'DELETE', credentials: 'include' });
+      if (!r.ok) { const data = await r.json().catch(() => ({})); showToast(data.error || strings.errors.deleteSlate); return; }
+      setSlates(prev => prev.filter(s => s.slate_number !== slate.slate_number));
+      showToast(strings.slates.trash.gone);
+    } catch (err) {
+      console.error('Failed to delete slate:', err);
+      showToast(strings.errors.deleteSlate);
+    }
+  };
+  const emptyTrash = async () => {
+    try {
+      const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
+      if (!r.ok) throw new Error('empty failed');
+      setSlates(prev => prev.filter(s => !s.deleted_at));
+      showToast(strings.slates.trash.emptied);
+    } catch (err) {
+      console.error('Failed to empty the trash:', err);
       showToast(strings.errors.deleteSlate);
     }
   };
@@ -986,7 +1029,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setTagsSaving(false);
   };
 
-  useEscape(deleteModal.show, cancelDelete);
   useEscape(tagsModal.show, closeTagsEditor);
 
   const normalizeTag = (raw) => raw.trim().toLowerCase();
@@ -1266,7 +1308,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         return false;
       }
 
-      // Archived slates live in their own section and nowhere else
+      // The trash and the archive each live in their own section
+      if (visibilityFilter === 'trash') return Boolean(slate.deleted_at);
+      if (slate.deleted_at) return false;
       if (visibilityFilter === 'archived') return Boolean(slate.archived_at);
       if (slate.archived_at) return false;
       if (visibilityFilter === 'public' && !slate.is_published) return false;
@@ -1440,10 +1484,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   { id: 'public', label: strings.slates.filterVisibilityPublic },
                   { id: 'private', label: strings.slates.filterVisibilityPrivate },
                   { id: 'archived', label: strings.slates.filterVisibilityArchived },
+                  { id: 'trash', label: strings.slates.filterVisibilityTrash },
                 ]}
                 value={visibilityFilter}
                 onChange={setVisibilityFilter}
               />
+              {visibilityFilter === 'trash' && slates.some(s => s.deleted_at) && (
+                <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
+                  {strings.slates.trash.empty}
+                </button>
+              )}
               {hasCollabSlates && (
                 <ChoiceRow
                   label={strings.collab.filter.label}
@@ -1539,10 +1589,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 onPublish: (e) => togglePublish(slate, e),
                 onLock: (e) => toggleLock(slate, e),
                 onArchive: (e) => toggleArchive(slate, e),
-                onDelete: (e) => {
-                  setOpenMenuId(null);
-                  showDeleteConfirmation(slate.slate_number, slate.title, e);
-                },
+                onDelete: (e) => trashSlate(slate, e),
+                onRestore: (e) => restoreSlate(slate, e),
+                onDeleteForever: (e) => deleteForever(slate, e),
                 onLeave: (e) => handleLeaveClick(slate, e),
                 leaveArmed: leaveConfirmId === slate.sharedSlateId,
               }}
@@ -1572,30 +1621,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
 
       {/* Delete Confirmation Modal */}
-      {deleteModal.show && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full">
-            <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-4">{strings.slates.deleteModal.title}</h2>
-            <p className="text-sm text-[var(--theme-text-muted)] mb-6 break-words">
-              {strings.slates.deleteModal.message(deleteModal.slateTitle.length > 100 ? deleteModal.slateTitle.substring(0, 100) + '...' : deleteModal.slateTitle)}
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={confirmDelete}
-                className="flex-1 bg-red-600 text-white px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
-              >
-                {strings.slates.deleteModal.confirm}
-              </button>
-              <button
-                onClick={cancelDelete}
-                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-text)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
-              >
-                {strings.slates.deleteModal.cancel}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Tags Modal */}
       {tagsModal.show && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">

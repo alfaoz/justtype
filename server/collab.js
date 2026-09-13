@@ -505,7 +505,7 @@ function mountCollab(app, deps) {
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
         JOIN users u ON u.id = s.user_id
-        WHERE m.user_id = ? AND m.status = 'pending'
+        WHERE m.user_id = ? AND m.status = 'pending' AND s.deleted_at IS NULL
         ORDER BY m.created_at DESC
       `).all(req.user.id);
       res.json({ invites });
@@ -595,7 +595,7 @@ function mountCollab(app, deps) {
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
         JOIN users u ON u.id = s.user_id
-        WHERE m.user_id = ? AND m.status = 'accepted' AND m.role != 'owner'
+        WHERE m.user_id = ? AND m.status = 'accepted' AND m.role != 'owner' AND s.deleted_at IS NULL
         ORDER BY s.updated_at DESC
       `).all(req.user.id);
       res.json({ shared });

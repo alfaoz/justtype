@@ -128,7 +128,7 @@ function membership(slateId, userId) {
   return deps.db.prepare(`
     SELECT m.status, m.role FROM collab_members m
     JOIN slates s ON s.id = m.slate_id
-    WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1
+    WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1 AND s.deleted_at IS NULL
   `).get(slateId, userId);
 }
 

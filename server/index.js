@@ -999,7 +999,7 @@ const createSession = (userId, token, req) => {
 // Helper function to update user's storage usage
 const updateUserStorage = (userId) => {
   try {
-    const result = db.prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM slates WHERE user_id = ?').get(userId);
+    const result = db.prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM slates WHERE user_id = ? AND deleted_at IS NULL').get(userId);
     db.prepare('UPDATE users SET storage_used = ? WHERE id = ?').run(result.total, userId);
   } catch (err) {
     console.error('Storage update error:', err);
@@ -2711,11 +2711,12 @@ app.get('/api/slates', authenticateToken, (req, res) => {
              s.created_at, s.updated_at, s.published_at,
              s.source_app, s.adoption_pending, c.name AS source_app_name,
              s.is_collab, cm.wrapped_key AS collab_wrapped_key,
-             s.is_locked, s.lock_wrapped_key, s.lock_salt, s.lock_recovery_wrapped_key, s.lock_recovery_key_id, s.archived_at
+             s.is_locked, s.lock_wrapped_key, s.lock_salt, s.lock_recovery_wrapped_key, s.lock_recovery_key_id, s.archived_at,
+             s.deleted_at
       FROM slates s
       LEFT JOIN oauth_clients c ON c.client_id = s.source_app
       LEFT JOIN collab_members cm ON cm.slate_id = s.id AND cm.user_id = s.user_id
-      WHERE s.user_id = ?
+      WHERE s.user_id = ? AND s.deleted_at IS ${req.query.trash === '1' ? 'NOT NULL' : 'NULL'}
     `).all(req.user.id);
 
     // For unpublished slates with encrypted_title, hide plaintext (client decrypts)
@@ -3496,6 +3497,54 @@ app.put('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware(
   }
 });
 
+// Remove a slate for good: its files, its collab state, its history, its row
+const destroySlate = async (slate, userId) => {
+  try {
+    await b2Storage.deleteSlate(slate.b2_file_id);
+  } catch (err) {
+    console.warn('Failed to delete B2 file:', err);
+  }
+  // Collab state too (no FK cascade)
+  const collabDoc = slate.is_collab
+    ? db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id)
+    : null;
+  const files = new Set(
+    db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id = ?').all(slate.id).map((r) => r.b2_file_id)
+  );
+  if (collabDoc && collabDoc.snapshot_b2_file_id) files.add(collabDoc.snapshot_b2_file_id);
+  if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) files.add(slate.b2_public_file_id);
+  if (slate.history_b2_file_id) files.add(slate.history_b2_file_id);
+  db.transaction(() => {
+    db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+    db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
+    if (slate.history_bytes) db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) - ?) WHERE id = ?').run(slate.history_bytes, userId);
+    db.prepare('DELETE FROM slates WHERE id = ? AND user_id = ?').run(slate.id, userId);
+  })();
+  if (slate.is_collab) collabHub.closeRoom(slate.id);
+  for (const fileId of files) {
+    try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete slate B2 file:', err); }
+  }
+  updateUserStorage(userId);
+};
+const TRASH_KEEP_SECONDS = 30 * 24 * 3600;
+
+// Empty the trash: every slate in it goes for good
+app.delete('/api/slates/trash', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
+  try {
+    const rows = db.prepare('SELECT * FROM slates WHERE user_id = ? AND deleted_at IS NOT NULL AND is_system_slate = 0').all(req.user.id);
+    for (const slate of rows) await destroySlate(slate, req.user.id);
+    res.json({ success: true, removed: rows.length });
+  } catch (error) {
+    console.error('Empty trash error:', error);
+    res.status(500).json({ error: 'Failed to empty the trash' });
+  }
+});
+
+// Delete: to the trash, where it stays thirty days and can come back.
+// ?forever=1 removes it now (or takes it out of the trash for good).
 app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -3509,38 +3558,20 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       return res.status(403).json({ error: 'System slates cannot be deleted' });
     }
 
-    // Delete from B2
-    try {
-      await b2Storage.deleteSlate(slate.b2_file_id);
-    } catch (err) {
-      console.warn('Failed to delete B2 file:', err);
+    if (req.query.forever === '1') {
+      await destroySlate(slate, req.user.id);
+      return res.json({ success: true });
     }
 
-    // Delete from database (collab state too — no FK cascade)
-    const collabDoc = slate.is_collab
-      ? db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id)
-      : null;
-    const collabFiles = new Set(
-      db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id = ?').all(slate.id).map((r) => r.b2_file_id)
-    );
-    if (collabDoc && collabDoc.snapshot_b2_file_id) collabFiles.add(collabDoc.snapshot_b2_file_id);
-    db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
-    db.prepare('DELETE FROM collab_updates WHERE slate_id = ?').run(slate.id);
-    db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
-    db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
-    db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
-    if (slate.history_b2_file_id) collabFiles.add(slate.history_b2_file_id);
-    if (slate.history_bytes) db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) - ?) WHERE id = ?').run(slate.history_bytes, req.user.id);
-    db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
-    if (slate.is_collab) collabHub.closeRoom(slate.id);
-    for (const fileId of collabFiles) {
-      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
+    if (!slate.deleted_at) {
+      const deletedAt = Math.floor(Date.now() / 1000);
+      db.prepare('UPDATE slates SET deleted_at = ? WHERE id = ?').run(deletedAt, slate.id);
+      // Live collaborators lose the room while the slate is in the trash
+      if (slate.is_collab) collabHub.closeRoom(slate.id);
+      updateUserStorage(req.user.id);
+      return res.json({ success: true, trashed: true, deleted_at: deletedAt });
     }
-
-    // Update user's total storage usage
-    updateUserStorage(req.user.id);
-
-    res.json({ success: true });
+    res.json({ success: true, trashed: true, deleted_at: slate.deleted_at });
   } catch (error) {
     console.error('Delete slate error:', error);
     if (error instanceof B2Error) {
@@ -3550,6 +3581,22 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       });
     }
     res.status(500).json({ error: 'Failed to delete slate' });
+  }
+});
+
+// Out of the trash, as it was
+app.post('/api/slates/:id/restore', authenticateToken, (req, res) => {
+  try {
+    const slate = db.prepare('SELECT id, deleted_at FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'Slate not found' });
+    if (slate.deleted_at) {
+      db.prepare('UPDATE slates SET deleted_at = NULL WHERE id = ?').run(slate.id);
+      updateUserStorage(req.user.id);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Restore slate error:', error);
+    res.status(500).json({ error: 'Failed to restore slate' });
   }
 });
 
@@ -3600,7 +3647,7 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
       SELECT slates.*, users.username, users.supporter_tier, users.supporter_badge_visible, users.is_system_user
       FROM slates
       JOIN users ON slates.user_id = users.id
-      WHERE slates.share_id = ? AND slates.is_published = 1
+      WHERE slates.share_id = ? AND slates.is_published = 1 AND slates.deleted_at IS NULL
     `).get(req.params.shareId);
 
     if (!slate) {
@@ -6087,6 +6134,14 @@ const runCleanup = async () => {
     if (expiredCodes.changes > 0 || oldSessions.changes > 0) {
       console.log(`✓ Cleanup: Removed ${expiredCodes.changes} expired codes and ${oldSessions.changes} old sessions`);
     }
+
+    // The trash empties itself after thirty days
+    const expiredTrash = db.prepare('SELECT * FROM slates WHERE deleted_at IS NOT NULL AND deleted_at < ? AND is_system_slate = 0 LIMIT 200')
+      .all(Math.floor(Date.now() / 1000) - TRASH_KEEP_SECONDS);
+    for (const slate of expiredTrash) {
+      try { await destroySlate(slate, slate.user_id); } catch (err) { console.warn('Trash purge failed for slate', slate.id, err); }
+    }
+    if (expiredTrash.length) console.log(`✓ Cleanup: Emptied ${expiredTrash.length} slates from the trash`);
 
     // Handle expired grace periods - delete latest slates until storage is below limit
     const usersWithExpiredGrace = db.prepare(`
