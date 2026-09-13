@@ -210,11 +210,14 @@ module.exports = function mountSeo(app, { db, b2Storage }) {
     }
     const author = slate.is_system_user ? 'alfaoz' : slate.username;
     const doc = pages.docs[id];
+    const hidden = !!slate.share_private || (slate.share_expires_at && slate.share_expires_at < Math.floor(Date.now() / 1000));
     let content = '';
-    try {
-      content = await slateContent(b2Storage, slate);
-    } catch (error) {
-      console.error('seo: slate content', error.message || error);
+    if (!hidden) {
+      try {
+        content = await slateContent(b2Storage, slate);
+      } catch (error) {
+        console.error('seo: slate content', error.message || error);
+      }
     }
     send(res, render({
       title: (slate.title || doc?.title || 'untitled').slice(0, 70),

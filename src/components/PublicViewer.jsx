@@ -9,6 +9,8 @@ import { TextMorph } from './TextMorph';
 import { useMotion, setMotion } from '../motion';
 import { nextPunto, usePunto, setPunto } from '../punto';
 import { SettingsRow, controlLabel } from './SettingsRow';
+import { SecretField } from './SecretField';
+import { keyFromFragment, decryptShare, unwrapWithPassphrase } from '../share';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -23,6 +25,25 @@ export function PublicViewer() {
   const motion = useMotion();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
+  // A private link: ciphertext until the key from the address, or a passphrase, opens it
+  const [sealed, setSealed] = useState(null); // { blob, pass, meta }
+  const [phrase, setPhrase] = useState('');
+  const [phraseError, setPhraseError] = useState('');
+  const openSealed = async (blobAndMeta, key) => {
+    const { title, text } = await decryptShare(blobAndMeta.blob, key);
+    setSlate({ ...blobAndMeta.meta, title: title || 'untitled slate', content: text });
+    setSealed(null);
+  };
+  const submitPhrase = async () => {
+    if (!sealed?.pass || phrase.trim().length < 4) return;
+    try {
+      const key = await unwrapWithPassphrase(sealed.pass.wrappedKey, sealed.pass.salt, phrase);
+      await openSealed(sealed, key);
+    } catch {
+      setPhraseError(strings.public.locked.wrong);
+      setPhrase('');
+    }
+  };
 
   useEffect(() => {
     const shareId = window.location.pathname.split('/s/')[1];
@@ -133,6 +154,16 @@ export function PublicViewer() {
         throw new Error('Slate not found');
       }
       const data = await response.json();
+      if (data.encrypted) {
+        const { blob, pass, ...meta } = data;
+        const key = keyFromFragment();
+        if (key) {
+          try { await openSealed({ blob, meta }, key); return; } catch { /* the address key did not fit */ }
+        }
+        if (!pass) { setErrorMessage(strings.public.locked.noKey); throw new Error('key missing'); }
+        setSealed({ blob, pass, meta });
+        return;
+      }
       setSlate(data);
     } catch (err) {
       setError(err.message);
@@ -150,6 +181,20 @@ export function PublicViewer() {
     return (
       <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] flex items-center justify-center font-mono">
         <div>{strings.public.loading}</div>
+      </div>
+    );
+  }
+
+  if (sealed && !slate) {
+    return (
+      <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] flex items-center justify-center font-mono px-8">
+        <div className="flex flex-col items-center text-center">
+          <div className="text-sm text-[var(--theme-text)] mb-5">{strings.public.locked.title}</div>
+          <SecretField value={phrase} onChange={(v) => { setPhrase(v); setPhraseError(''); }} grow autoFocus onSubmit={submitPhrase} />
+          <div className="text-xs mt-4 text-[var(--theme-text-dim)]">{strings.public.locked.hint}</div>
+          {phraseError && <div className="text-xs mt-2 text-[var(--theme-red)]">{phraseError}</div>}
+          <button onClick={submitPhrase} disabled={phrase.trim().length < 4} className="mt-6 text-xs text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40">{strings.public.locked.open}</button>
+        </div>
       </div>
     );
   }

@@ -28,6 +28,8 @@ import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
 import { LockRecoverModal } from './LockRecoverModal';
+import { SharePanel } from './SharePanel';
+import { makeShareKey, fragmentOf, encryptShare, wrapForPassphrase, expiryAt, expiryChoice } from '../share';
 import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
@@ -286,6 +288,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishModalUrl, setPublishModalUrl] = useState('');
+  // The share panel and what the server holds about the slate's link
+  const [sharePanel, setSharePanel] = useState(false);
+  const [shareInfo, setShareInfo] = useState(null); // { private, wrappedKey, passSalt, passWrappedKey, expiresAt }
+  const [shareLink, setShareLink] = useState(null); // the private link with its key in the fragment
+  const [shareBusy, setShareBusy] = useState(false);
+  const [sharePending, setSharePending] = useState(false); // passphrase chosen, not typed yet
+  const shareKeyRef = useRef(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [wasPublishedBeforeEdit, setWasPublishedBeforeEdit] = useState(false);
@@ -1332,6 +1341,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setLockPrompt(null);
       setEditorModeState(data.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain');
       setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
+      setShareInfo({ private: !!data.share_private, wrappedKey: data.share_wrapped_key || null, passSalt: data.share_pass_salt || null, passWrappedKey: data.share_pass_wrapped_key || null, expiresAt: data.share_expires_at || null });
+      shareKeyRef.current = null;
+      setShareLink(null);
+      setSharePending(false);
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
       setWasPublishedBeforeEdit(isPreviouslyPublishedDraft);
       lastSavedContentRef.current = JSON.stringify({ content: slateContent });
@@ -1415,7 +1428,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // Command palette methods
     saveSlate: () => saveSlate({ explicit: true }),
     toggleEditorMode: () => toggleEditorMode(),
-    openPublishMenu: () => setShowPublishMenu(true),
+    openPublishMenu: () => setSharePanel(true),
     openCollab: () => openCollab(),
     // Open the settings surface for this breakpoint and flag the new controls.
     revealNewFeatures: () => {
@@ -1913,124 +1926,137 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   };
 
-  const handlePublish = async () => {
-    if (!token) {
-      onLogin();
-      return;
-    }
+  // The link as the panel sees it
+  const shareState = () => ({
+    mode: shareUrl ? (shareInfo?.private ? 'private' : 'public') : 'off',
+    openWith: sharePending ? 'passphrase' : (shareInfo?.passWrappedKey ? 'passphrase' : 'link'),
+    expires: expiryChoice(shareInfo?.expiresAt),
+    url: shareUrl ? (shareInfo?.private ? (shareInfo?.passWrappedKey ? shareUrl : shareLink) : shareUrl) : null,
+    wasPublic: !!wasPublishedBeforeEdit || !!shareUrl,
+    hasPassphrase: !!shareInfo?.passWrappedKey,
+    busy: shareBusy,
+  });
+  // A private link's address needs its key: unwrapped once the slate is open
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!shareUrl || !shareInfo?.private || shareInfo?.passWrappedKey || !shareInfo?.wrappedKey || !userId) return;
+      try {
+        const master = await getSlateKey(userId);
+        const key = shareKeyRef.current || await unwrapKey(shareInfo.wrappedKey, master);
+        shareKeyRef.current = key;
+        if (!cancelled) setShareLink(`${shareUrl}#${fragmentOf(key)}`);
+      } catch (err) { console.warn('share key not opened', err); }
+    })();
+    return () => { cancelled = true; };
+  }, [shareUrl, shareInfo, userId]);
 
-    // Collab slates cannot be made public yet. Every UI path is greyed out;
-    // this is the backstop for the command palette and any future caller.
-    // Scoped to the FIRST publish so a slate that was public before it became
-    // collaborative can still sync or unpublish its existing copy.
-    if ((collabDocKey || isLocked) && !shareUrl && !wasPublishedBeforeEdit) return;
-
-    // If no current slate, save first
-    // If there are unsaved changes, save first (but keep using currentSlate for the ID)
+  // One change to the link: its mode, how it opens, when it ends. Publishing
+  // sends the copy the reader gets: plain text for a public link, title and
+  // text encrypted under the share key for a private one.
+  const applyShare = async (patch) => {
+    if (!token) { onLogin(); return; }
+    if (patch.pending) { setSharePending(true); return; }
     if (!currentSlate) {
       setStatus('saving...');
       const savedSlate = await saveSlate();
-      if (!savedSlate) {
-        // Error status already set by saveSlate
-        return;
-      }
-      // savedSlate has the full data including id when creating a new slate
-      // Now currentSlate will be set by onSlateChange, but we can't rely on it yet
-      // We need to wait for the next render, so just return and let user click again
-      // Actually, let's just proceed since onSlateChange was called
-      // But actually the issue is onSlateChange happens in saveSlate at line 469
-      // which updates the parent state, but we're still in this execution context
-      // So currentSlate is still null here. We should not try to publish yet.
-      setStatus('slate saved! click publish again to publish it.');
+      if (!savedSlate) return;
+      setStatus('slate saved! click share again to share it.');
       setTimeout(() => setStatus('ready'), 3000);
       return;
     }
-
-    if (hasUnsavedChanges) {
-      setStatus('saving...');
-      const savedSlate = await saveSlate();
-      if (!savedSlate) {
-        // Error status already set by saveSlate
-        return;
-      }
-      // Keep using currentSlate which has the id
-    }
-
-    // Detect if this is a first publish or republish
-    const isFirstPublish = !wasPublishedBeforeEdit && !shareUrl;
-    const isRepublish = wasPublishedBeforeEdit && !shareUrl;
-
+    if (collabDocKey && !shareUrl && !wasPublishedBeforeEdit && patch.mode && patch.mode !== 'off') return;
+    const cur = shareState();
+    const next = {
+      mode: patch.mode ?? (cur.mode === 'off' && (patch.openWith || patch.expires) ? (shareInfo?.private ? 'private' : 'public') : cur.mode),
+      openWith: patch.openWith ?? cur.openWith,
+      expires: patch.expires ?? cur.expires,
+    };
+    if (next.mode === 'off' && cur.mode === 'off' && !wasPublishedBeforeEdit) return;
+    if (next.mode === 'public' && isLocked) { announceStatus(strings.writer.lock.publishBlockedHint, 2500); return; }
+    if (next.mode === 'private' && next.openWith === 'passphrase' && !patch.passphrase && !shareInfo?.passWrappedKey) { setSharePending(true); return; }
+    setShareBusy(true);
     try {
-      // For E2E users publishing, send plaintext content and title for the public copy
-      // For unpublishing, send encrypted title to re-encrypt it
-      const publishBody = { isPublished: !shareUrl };
-      const slateKey = userId ? await getSlateKey(userId) : null;
-
-      if (!shareUrl) {
-        // Publishing — include plaintext for public copy (E2E users need this)
-        if (slateKey) {
-          publishBody.publicContent = content;
-          // Send plaintext title for public view
-          const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
-          publishBody.publicTitle = firstLine || 'untitled slate';
-        }
+      if (hasUnsavedChanges) {
+        setStatus('saving...');
+        const savedSlate = await saveSlate();
+        if (!savedSlate) return;
+      }
+      const master = userId ? await getSlateKey(userId) : null;
+      const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate';
+      const titleKey = collabDocKey || master;
+      const body = {};
+      if (next.mode === 'off') {
+        body.isPublished = false;
+        if (titleKey) body.encryptedTitle = await encryptTitle(firstLine, titleKey);
       } else {
-        // Unpublishing — encrypt title for private storage (collab slates
-        // keep their titles under the shared doc key)
-        if (slateKey) {
-          const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '');
-          const titleToEncrypt = firstLine || 'untitled slate';
-          publishBody.encryptedTitle = await encryptTitle(titleToEncrypt, collabDocKey || slateKey);
+        body.isPublished = true;
+        body.share = { private: next.mode === 'private', expiresAt: expiryAt(next.expires) };
+        if (next.mode === 'public') {
+          if (master) { body.publicContent = content; body.publicTitle = firstLine; }
+        } else {
+          if (!master) throw new Error('no key');
+          let key = shareKeyRef.current;
+          if (!key && shareInfo?.wrappedKey) { try { key = await unwrapKey(shareInfo.wrappedKey, master); } catch { key = null; } }
+          if (!key) key = await makeShareKey();
+          shareKeyRef.current = key;
+          body.publicContent = await encryptShare({ title: firstLine, text: content }, key);
+          body.encryptedTitle = await encryptTitle(firstLine, titleKey);
+          body.share.wrappedKey = await wrapKey(key, master);
+          if (next.openWith === 'passphrase') {
+            if (patch.passphrase) {
+              const w = await wrapForPassphrase(key, patch.passphrase);
+              body.share.passSalt = w.salt;
+              body.share.passWrappedKey = w.wrappedKey;
+            } else {
+              body.share.passSalt = shareInfo.passSalt;
+              body.share.passWrappedKey = shareInfo.passWrappedKey;
+            }
+          }
         }
       }
-
       const response = await fetch(`${API_URL}/slates/${currentSlate.slate_number}/publish`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(publishBody),
+        body: JSON.stringify(body),
       });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        if (data.share_url) {
-          setShareUrl(data.share_url);
-          setWasPublishedBeforeEdit(false); // Reset since we're now published
-
-          if (isFirstPublish) {
-            // First publish: Show modal with link
-            setPublishModalUrl(data.share_url);
-            setShowPublishModal(true);
-          } else if (isRepublish) {
-            // Republish: Just show status, no modal, no auto-copy
-            setStatus(strings.writer.status.republished);
-            setTimeout(() => setStatus('ready'), 2000);
-          } else {
-            // Already published, user clicked "unpublish" then "get shareable link" again
-            // This shouldn't happen with current UI, but handle it as first publish
-            setPublishModalUrl(data.share_url);
-            setShowPublishModal(true);
-          }
-        } else {
-          // Unpublishing
-          setShareUrl(null);
-          setWasPublishedBeforeEdit(false);
-          setStatus(strings.writer.status.unpublished);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { announceStatus(String(data.error || strings.writer.share.failed).toLowerCase(), 2500); return; }
+      if (next.mode === 'off') {
+        setShareUrl(null);
+        setWasPublishedBeforeEdit(false);
+        setShareInfo({ private: !!shareInfo?.private, wrappedKey: null, passSalt: null, passWrappedKey: null, expiresAt: null });
+        setShareLink(null);
+        setStatus(strings.writer.status.unpublished);
+        setTimeout(() => setStatus('ready'), 2000);
+      } else {
+        const wasOff = !shareUrl;
+        setShareUrl(data.share_url);
+        setWasPublishedBeforeEdit(false);
+        const info = { private: next.mode === 'private', wrappedKey: body.share.wrappedKey || null, passSalt: body.share.passSalt || null, passWrappedKey: body.share.passWrappedKey || null, expiresAt: body.share.expiresAt || null };
+        setShareInfo(info);
+        const link = info.private && !info.passWrappedKey && shareKeyRef.current ? `${data.share_url}#${fragmentOf(shareKeyRef.current)}` : null;
+        setShareLink(link);
+        if (wasOff && !sharePanel) {
+          setPublishModalUrl(link || data.share_url);
+          setShowPublishModal(true);
+        } else if (!wasOff) {
+          setStatus(strings.writer.status.republished);
           setTimeout(() => setStatus('ready'), 2000);
         }
-      } else {
-        setStatus('publish failed');
-        setTimeout(() => setStatus('ready'), 2000);
       }
-
-      setShowPublishMenu(false);
+      setSharePending(false);
     } catch (err) {
-      console.error('Publish failed:', err);
-      setStatus('publish failed');
-      setTimeout(() => setStatus('ready'), 2000);
+      console.error('share failed:', err);
+      announceStatus(strings.writer.share.failed, 2500);
+    } finally {
+      setShareBusy(false);
     }
   };
+  // The one-word paths (palette, the outdated word, the sheet): off, or back
+  // the way it was shared last
+  const handlePublish = () => applyShare({ mode: shareUrl ? 'off' : (shareInfo?.private ? 'private' : 'public') });
 
   // Complete unpublish: kill the share link for good and drop every trace of
   // having been public — the slate is plainly zero-knowledge private again.
@@ -2691,9 +2717,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       canLock && { id: 'lock', label: strings.writer.lock.label, kind: 'toggle', value: isLocked ? 'on' : 'off', onCycle: toggleLock, onSet: (v) => { if ((v === 'on') !== isLocked) toggleLock(); } },
     ].filter(Boolean),
     actions: [
-      token && !isScratch && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => openCollab('people'), active: !!collabDocKey, pulse: highlightNew },
+      token && !isScratch && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
       canHistory && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
-      token && !isShared && !isScratch && { id: 'share', label: 'share', kind: 'action', onClick: (e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); } },
+      token && !isShared && !isScratch && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl },
     ].filter(Boolean),
   };
 
@@ -2801,6 +2827,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           onVerify={(via) => verifyRecoveryWay(lockGate.slate, via, lockRecover.info)}
           onRecover={handleLockGateRecover}
           onClose={() => setLockRecover(null)}
+        />
+      )}
+
+      {sharePanel && currentSlate && !isShared && !isScratch && (
+        <SharePanel
+          share={shareState()}
+          onChange={applyShare}
+          onForget={handleForgetPublic}
+          onClose={() => setSharePanel(false)}
         />
       )}
 
@@ -2923,7 +2958,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   <SettingsRow controls={stripControls} />
                 </div>
                 {themePickerPopover}
-                {publishPopover}
               </>
             )}
 

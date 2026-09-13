@@ -172,6 +172,30 @@ const strings = {
       draftRestored: 'draft restored',
       forgottenPublic: 'unpublished, link disabled'
     },
+    share: {
+      title: 'share',
+      link: 'link:',
+      off: 'off',
+      public: 'public',
+      private: 'private',
+      hint: {
+        off: 'only you can read this slate.',
+        public: 'anyone with the link can read it, as plain text.',
+        private: 'the link carries the key. the server holds only ciphertext.',
+      },
+      openWith: 'open with:',
+      byLink: 'link',
+      byPassphrase: 'passphrase',
+      passphraseHint: 'four characters or more, then enter',
+      passphraseSet: 'a passphrase is set',
+      passphraseSetGo: 'set',
+      passphraseChange: 'change',
+      expires: 'expires:',
+      expiry: { never: 'never', day: 'in a day', week: 'in a week', month: 'in a month' },
+      copy: 'copy',
+      copied: 'copied',
+      failed: 'sharing failed',
+    },
     publishMenu: {
       forget: 'unpublish completely',
       forgetConfirm: 'sure?',
@@ -1041,7 +1065,14 @@ const strings = {
     },
     report: 'report',
     copy: 'copy',
-    copied: 'copied!'
+    copied: 'copied!',
+    locked: {
+      title: 'this slate has a passphrase',
+      hint: 'its passphrase, then enter',
+      open: 'open it',
+      wrong: 'that did not open it',
+      noKey: 'this link is missing its key. ask for the whole address.',
+    }
   },
 
   // 404 not found

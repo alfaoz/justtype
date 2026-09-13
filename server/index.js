@@ -3418,6 +3418,17 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 // Publish/unpublish slate
 app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('publishSlate'), async (req, res) => {
   const { isPublished, publicContent, publicTitle, encryptedTitle, forget } = req.body;
+  // How the link opens: { private, wrappedKey, passSalt, passWrappedKey, expiresAt }
+  const shareIn = req.body.share && typeof req.body.share === 'object' ? req.body.share : {};
+  const isBlobField = (v, max) => v == null || (typeof v === 'string' && v.length > 0 && v.length <= max);
+  const privateShare = isPublished && shareIn.private === true;
+  if (privateShare && (!req.e2e || !isBlobField(shareIn.wrappedKey, 4096) || !shareIn.wrappedKey)) {
+    return res.status(400).json({ error: 'A private link needs its wrapped key', code: 'SHARE_INVALID' });
+  }
+  if (!isBlobField(shareIn.passWrappedKey, 4096) || (shareIn.passSalt != null && !/^[0-9a-f]{32,128}$/.test(shareIn.passSalt)) || (shareIn.passWrappedKey && !shareIn.passSalt)) {
+    return res.status(400).json({ error: 'Invalid passphrase wrap', code: 'SHARE_INVALID' });
+  }
+  const expiresAt = Number.isInteger(shareIn.expiresAt) && shareIn.expiresAt > Math.floor(Date.now() / 1000) ? shareIn.expiresAt : null;
 
   // For E2E users, private titles must be zero-knowledge. When unpublishing, require an encrypted title.
   if (req.e2e && isPublished === false && !encryptedTitle) {
@@ -3431,7 +3442,8 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       return res.status(404).json({ error: 'Slate not found' });
     }
 
-    if (isPublished && slate.is_locked) {
+    // A locked slate may share a private link (its copy is ciphertext), never a public one
+    if (isPublished && slate.is_locked && !privateShare) {
       return res.status(409).json({ error: 'Locked slates stay private', code: 'SLATE_LOCKED' });
     }
 
@@ -3443,8 +3455,15 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       shareId = generateUniqueShareId();
     }
 
-    // If publishing an encrypted slate, create an unencrypted public copy
-    if (isPublished && slate.encryption_version === 1) {
+    // The shared copy: a private link's is ciphertext under the share key,
+    // a public one's is plain text
+    const oldPublicFileId = publicFileId;
+    if (isPublished && privateShare) {
+      let buffer;
+      try { buffer = decodeBase64Strict(String(publicContent || ''), { maxBytes: 5 * 1024 * 1024 }); }
+      catch { return res.status(400).json({ error: 'Invalid shared copy', code: 'SHARE_INVALID' }); }
+      publicFileId = await b2Storage.uploadRawSlate(`${req.user.id}-share-${Date.now()}`, buffer);
+    } else if (isPublished && slate.encryption_version === 1) {
       let content;
       if (req.e2e && publicContent) {
         // E2E user: client sends plaintext for public copy
@@ -3458,6 +3477,9 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       // Upload unencrypted version for public viewing
       const publicSlateId = `${req.user.id}-public-${Date.now()}`;
       publicFileId = await b2Storage.uploadSlate(publicSlateId, content, null); // null = no encryption
+    }
+    if (isPublished && oldPublicFileId && oldPublicFileId !== publicFileId && oldPublicFileId !== slate.b2_file_id) {
+      try { await b2Storage.deleteSlate(oldPublicFileId); } catch (err) { console.warn('Failed to delete old shared copy:', err); }
     }
 
     // If unpublishing, delete the public copy
@@ -3485,7 +3507,11 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
     let titleToStore = slate.title;
     let encryptedTitleToStore = slate.encrypted_title;
 
-    if (isPublished && publicTitle) {
+    if (isPublished && privateShare) {
+      // A private link: the title stays under the master key, nothing plain
+      titleToStore = '';
+      if (encryptedTitle) encryptedTitleToStore = encryptedTitle;
+    } else if (isPublished && publicTitle) {
       // Publishing: store plaintext title for public view, clear encrypted
       titleToStore = publicTitle;
       encryptedTitleToStore = null;
@@ -3499,16 +3525,21 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       }
     }
 
+    // Share fields: set with a publish, cleared by an unpublish asked for
+    const shareCols = isPublished
+      ? [privateShare ? 1 : 0, privateShare ? shareIn.wrappedKey : null, privateShare ? (shareIn.passSalt || null) : null, privateShare ? (shareIn.passWrappedKey || null) : null, expiresAt]
+      : [0, null, null, null, null];
     const stmt = db.prepare(`
       UPDATE slates
-      SET is_published = ?, share_id = ?, published_at = ?, b2_public_file_id = ?, title = ?, encrypted_title = ?
+      SET is_published = ?, share_id = ?, published_at = ?, b2_public_file_id = ?, title = ?, encrypted_title = ?,
+          share_private = ?, share_wrapped_key = ?, share_pass_salt = ?, share_pass_wrapped_key = ?, share_expires_at = ?
       WHERE slate_number = ? AND user_id = ?
     `);
-    stmt.run(isPublished ? 1 : 0, shareId, publishedAt, publicFileId, titleToStore, encryptedTitleToStore, req.params.id, req.user.id);
+    stmt.run(isPublished ? 1 : 0, shareId, publishedAt, publicFileId, titleToStore, encryptedTitleToStore, ...shareCols, req.params.id, req.user.id);
 
     const shareUrl = isPublished ? `${process.env.PUBLIC_URL}/s/${shareId}` : null;
 
-    res.json({ success: true, share_id: shareId, share_url: shareUrl });
+    res.json({ success: true, share_id: shareId, share_url: shareUrl, share_private: privateShare ? 1 : 0, share_expires_at: isPublished ? expiresAt : null });
   } catch (error) {
     console.error('Publish slate error:', error);
     if (error instanceof B2Error) {
@@ -3717,12 +3748,12 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
       WHERE slates.share_id = ? AND slates.is_published = 1 AND slates.deleted_at IS NULL
     `).get(req.params.shareId);
 
-    if (!slate) {
+    if (!slate || (slate.share_expires_at && slate.share_expires_at < Math.floor(Date.now() / 1000))) {
       return res.status(404).json({ error: 'Slate not found or not published' });
     }
 
     // Generate ETag from slate updated_at timestamp and share_id
-    const etag = `"${slate.share_id}-${new Date(slate.updated_at).getTime()}"`;
+    const etag = `"${slate.share_id}-${new Date(slate.updated_at).getTime()}-${slate.share_private ? 'p' : 'o'}"`;
 
     // Check if client has cached version
     if (req.headers['if-none-match'] === etag) {
@@ -3744,15 +3775,39 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
     // Use public file ID if available (for encrypted slates), otherwise use regular file ID
     const fileIdToFetch = slate.b2_public_file_id || slate.b2_file_id;
 
-    // Fetch content from B2 (public slates are always unencrypted)
-    const content = await b2Storage.getSlate(fileIdToFetch, null);
-
     // Display "alfaoz" for system users
     const displayUsername = slate.is_system_user ? 'alfaoz' : slate.username;
+
+    // A private link: the copy is ciphertext under a key the server never
+    // had; the reader's browser opens it with the key in the address, or a
+    // passphrase against the wrap kept here
+    if (slate.share_private) {
+      const data = await b2Storage.downloadRawFile(fileIdToFetch);
+      return res.json({
+        encrypted: true,
+        blob: data.toString('base64'),
+        pass: slate.share_pass_wrapped_key ? { salt: slate.share_pass_salt, wrappedKey: slate.share_pass_wrapped_key } : null,
+        title: null,
+        author: displayUsername,
+        supporter_tier: slate.supporter_tier,
+        supporter_badge_visible: slate.supporter_badge_visible === 1,
+        word_count: slate.word_count,
+        char_count: slate.char_count,
+        view_count: slate.view_count + 1,
+        created_at: slate.created_at,
+        updated_at: slate.updated_at,
+        expires_at: slate.share_expires_at || null,
+        editor_mode: slate.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain'
+      });
+    }
+
+    // Fetch content from B2 (public slates are always unencrypted)
+    const content = await b2Storage.getSlate(fileIdToFetch, null);
 
     res.json({
       title: slate.title,
       content,
+      expires_at: slate.share_expires_at || null,
       author: displayUsername,
       supporter_tier: slate.supporter_tier,
       supporter_badge_visible: slate.supporter_badge_visible === 1,
@@ -6201,6 +6256,17 @@ const runCleanup = async () => {
     if (expiredCodes.changes > 0 || oldSessions.changes > 0) {
       console.log(`✓ Cleanup: Removed ${expiredCodes.changes} expired codes and ${oldSessions.changes} old sessions`);
     }
+
+    // Links past their time go dark: the shared copy is removed, the slate
+    // stays private and keeps its address
+    const expiredShares = db.prepare('SELECT * FROM slates WHERE is_published = 1 AND share_expires_at IS NOT NULL AND share_expires_at < ? LIMIT 200').all(Math.floor(Date.now() / 1000));
+    for (const slate of expiredShares) {
+      try {
+        db.prepare('UPDATE slates SET is_published = 0, b2_public_file_id = NULL, share_expires_at = NULL, share_pass_salt = NULL, share_pass_wrapped_key = NULL WHERE id = ?').run(slate.id);
+        if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) await b2Storage.deleteSlate(slate.b2_public_file_id);
+      } catch (err) { console.warn('Expired share cleanup failed for slate', slate.id, err); }
+    }
+    if (expiredShares.length) console.log(`✓ Cleanup: ${expiredShares.length} shared links expired`);
 
     // The trash empties itself after thirty days
     const expiredTrash = db.prepare('SELECT * FROM slates WHERE deleted_at IS NOT NULL AND deleted_at < ? AND is_system_slate = 0 LIMIT 200')

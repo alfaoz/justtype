@@ -1076,6 +1076,16 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added history columns to slates');
   }
+  // Shares: a private link keeps its copy under a share key (wrapped to the
+  // owner's master key, and to a passphrase when one is set) and may expire
+  if (!slateColsLock.some(col => col.name === 'share_private')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN share_private INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_pass_salt TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_pass_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_expires_at INTEGER;`);
+    console.log('✓ Database migrated: Added share columns to slates');
+  }
   // Trash: a deleted slate keeps its row and files for thirty days
   if (!slateColsLock.some(col => col.name === 'deleted_at')) {
     db.exec(`ALTER TABLE slates ADD COLUMN deleted_at INTEGER;`);
