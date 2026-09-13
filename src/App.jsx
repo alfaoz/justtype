@@ -32,6 +32,7 @@ import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
+import { findTodaySlate, todayLine, DAILY_TAG } from './today';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -941,6 +942,23 @@ export default function App() {
   // Command palette execute handler
   const handleCommandExecute = async (cmd) => {
     switch (cmd.action) {
+      case 'TODAY': {
+        // Today's slate, opened at its end, or a new one that starts with the date
+        let found = null;
+        try { found = await findTodaySlate(userId); } catch { found = null; }
+        if (found) {
+          writerRef.current?.requestCaretEnd?.();
+          await handleSelectSlate(found);
+        } else {
+          await handleNewSlate();
+          setTimeout(() => {
+            writerRef.current?.setPendingTags?.([DAILY_TAG]);
+            writerRef.current?.setContent?.(`${todayLine()}\n\n`);
+          }, 0);
+        }
+        break;
+      }
+
       case 'NEW_SLATE':
         handleNewSlate();
         break;

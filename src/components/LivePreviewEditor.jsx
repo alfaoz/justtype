@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { EditorView, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
 import { markdownKeymap } from '@codemirror/lang-markdown';
@@ -28,10 +28,41 @@ const focusEnd = (view) => {
 // Live-preview markdown editor (Typora/Obsidian-style). Same contract as the
 // plain textarea: markdown string in via `content`, markdown string out via
 // `onChange` — storage, encryption and export pipelines are unaffected.
-const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false }, ref) {
+// With `centerCaret` the line being typed is kept in the middle of the
+// scroller; `initialSelection` / setNextSelection place the caret when the
+// document is next replaced (a slate opening where it was left)
+const centering = new Compartment();
+const keepCentered = (viewRef) => EditorView.updateListener.of((u) => {
+  if (!(u.selectionSet || u.docChanged)) return;
+  const head = u.state.selection.main.head;
+  requestAnimationFrame(() => {
+    const v = viewRef.current;
+    if (v && v.state.selection.main.head === head) v.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'center' }) });
+  });
+});
+const clampSel = (sel, len) => (sel && Number.isFinite(sel.anchor)
+  ? { anchor: Math.min(Math.max(0, sel.anchor), len), head: Math.min(Math.max(0, sel.head ?? sel.anchor), len) }
+  : { anchor: len });
+
+const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false, centerCaret = false, initialSelection = null }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
-  useImperativeHandle(ref, () => ({ focus: () => viewRef.current && focusEnd(viewRef.current) }), []);
+  const nextSelRef = useRef(initialSelection);
+  useImperativeHandle(ref, () => ({
+    focus: () => viewRef.current && focusEnd(viewRef.current),
+    getSelection: () => {
+      const v = viewRef.current;
+      if (!v) return null;
+      const m = v.state.selection.main;
+      return { anchor: m.anchor, head: m.head };
+    },
+    setNextSelection: (sel) => { nextSelRef.current = sel; },
+    setSelection: (sel) => {
+      const v = viewRef.current;
+      if (!v) return;
+      v.dispatch({ selection: clampSel(sel, v.state.doc.length), scrollIntoView: true });
+    },
+  }), []);
   const lastContentRef = useRef(content || '');
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -48,6 +79,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
           drawSelection(),
           placeholder(strings.writer.contentPlaceholder),
           keymap.of([...markdownKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+          centering.of(centerCaret ? keepCentered(viewRef) : []),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               const md = update.state.doc.toString();
@@ -59,6 +91,10 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
       }),
     });
     viewRef.current = view;
+    if (nextSelRef.current) {
+      view.dispatch({ selection: clampSel(nextSelRef.current, view.state.doc.length) });
+      nextSelRef.current = null;
+    }
     if (autofocus) focusEnd(view);
     return () => {
       view.destroy();
@@ -66,15 +102,24 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
     };
   }, []);
 
-  // External content changes (slate load, mode toggle) -> replace the doc
+  // Caret centring follows the device setting without a remount
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) view.dispatch({ effects: centering.reconfigure(centerCaret ? keepCentered(viewRef) : []) });
+  }, [centerCaret]);
+
+  // External content changes (slate load, mode toggle) -> replace the doc,
+  // the caret where it was asked to go, else at the end
   useEffect(() => {
     const view = viewRef.current;
     const next = content || '';
     if (view && next !== lastContentRef.current) {
       lastContentRef.current = next;
+      const sel = nextSelRef.current;
+      nextSelRef.current = null;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: next },
-        selection: { anchor: next.length },
+        selection: clampSel(sel, next.length),
       });
     }
   }, [content]);

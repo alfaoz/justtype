@@ -19,6 +19,18 @@ export const commands = {
     action: 'NEW_SLATE',
     cli: 'justtype new'
   },
+  today: {
+    id: 'today',
+    aliases: ['journal', 'daily', 'date'],
+    title: 'today',
+    description: "open today's slate",
+    icon: '+',
+    category: 'navigation',
+    shortcut: null,
+    context: ['writer', 'slates', 'account'],
+    requiresAuth: true,
+    action: 'TODAY',
+  },
   slates: {
     id: 'slates',
     aliases: ['list', 'my slates', '='],

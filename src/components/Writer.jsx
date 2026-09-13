@@ -4,7 +4,8 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
+import { SCROLL_MODES, useScroll, setScroll, nextScroll, centerTextareaCaret } from '../typewriter';
 import { getSlateKey } from '../keyStore';
 import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
@@ -250,6 +251,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [status, setStatus] = useState('ready');
   const [zenMode, setZenMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Caret memory, per device: where the caret and the scroll were when the
+  // slate was last left, kept with the device copy and put back on open
+  const mainRef = useRef(null);
+  const caretRestoreRef = useRef(null);   // { anchor, head, scroll } | { end: true }
+  const caretSlateRef = useRef(null);     // the slate whose caret is being tracked
+  const pendingTagsRef = useRef(null);    // tags for a slate about to be created
+  const scrollMode = useScroll();
   const [loadingFadeOut, setLoadingFadeOut] = useState(false);
   const [contentFadeKey, setContentFadeKey] = useState(0);
   const [showPublishMenu, setShowPublishMenu] = useState(false);
@@ -1116,8 +1124,45 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const toggleEditorMode = () => setEditorMode(editorMode === 'wysiwyg' ? 'plain' : 'wysiwyg');
 
+  const saveCaret = () => {
+    const n = caretSlateRef.current;
+    if (!userId || n == null || isLocalSlateNumber(n)) return;
+    let sel = null;
+    if (editorMode === 'wysiwyg') sel = richEditorRef.current?.getSelection?.() || null;
+    else if (textareaRef.current) sel = { anchor: textareaRef.current.selectionStart, head: textareaRef.current.selectionEnd };
+    if (!sel) return;
+    cacheSlate(userId, n, { caret: { ...sel, scroll: mainRef.current?.scrollTop || 0 } }).catch(() => {});
+  };
+  useEffect(() => {
+    const t = setInterval(saveCaret, 15000);
+    window.addEventListener('beforeunload', saveCaret);
+    return () => { clearInterval(t); window.removeEventListener('beforeunload', saveCaret); };
+  });
+  // Keep the caret line in the middle while typing in the plain editor
+  const centerIfWanted = () => {
+    if (scrollMode !== 'centered') return;
+    requestAnimationFrame(() => centerTextareaCaret(mainRef.current, textareaRef.current));
+  };
+  // The caret goes back where it was once the slate is on screen
+  useEffect(() => {
+    if (isLoading) return;
+    const c = caretRestoreRef.current;
+    if (!c || editorMode !== 'plain') return;
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const len = ta.value.length;
+    if (c.end) { ta.setSelectionRange(len, len); ta.focus(); if (mainRef.current) mainRef.current.scrollTop = mainRef.current.scrollHeight; }
+    else {
+      ta.setSelectionRange(Math.min(c.anchor ?? len, len), Math.min(c.head ?? len, len));
+      if (mainRef.current) mainRef.current.scrollTop = c.scroll || 0;
+    }
+    caretRestoreRef.current = null;
+  }, [isLoading, editorMode, contentFadeKey]);
+
   const loadSlate = async (id) => {
     relockOthers(id);
+    saveCaret();
+    caretSlateRef.current = id;
     lastLoadedRef.current = id;
     try {
       // The device copy: the truth for slates created offline and for slates
@@ -1244,6 +1289,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       setTitle(slateTitle);
+      if (!caretRestoreRef.current?.end) caretRestoreRef.current = cached?.data?.caret || null;
+      if (caretRestoreRef.current && !caretRestoreRef.current.end) richEditorRef.current?.setNextSelection?.(caretRestoreRef.current);
+      else if (caretRestoreRef.current?.end) richEditorRef.current?.setNextSelection?.({ anchor: slateContent.length });
       setContent(slateContent);
       const gate = gated ? { id, slate: data } : null;
       lockGateRef.current = gate;
@@ -1363,7 +1411,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
     },
     setTheme: (themeId) => setTheme(themeId),
-    setFocusMode: (mode) => setFocusMode(mode)
+    setFocusMode: (mode) => setFocusMode(mode),
+    // The next slate to open lands with its caret at the end
+    requestCaretEnd: () => { caretRestoreRef.current = { end: true }; },
+    // Tags for the slate the next first save creates
+    setPendingTags: (tags) => { pendingTagsRef.current = tags; },
   }));
 
   // The sheet's grab handle behaves like a native one: it follows the finger
@@ -1733,6 +1785,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           }, { opened: true }).catch(() => {});
         }
         if (stillOpen()) adoptSlate(data);
+        caretSlateRef.current = data.slate_number;
+        if (pendingTagsRef.current && slateKey) {
+          const tags = pendingTagsRef.current;
+          pendingTagsRef.current = null;
+          encryptTags(tags, slateKey)
+            .then((encryptedTags) => fetch(`${API_URL}/slates/${data.slate_number}/metadata`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ encryptedTags }),
+            }))
+            .catch(() => {});
+        }
       }
 
       // The user has moved on: the slate is saved, nothing else to show
@@ -2574,6 +2636,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       { id: 'size', label: 'size', kind: 'cycle', value: punto, options: PUNTO_SIZES, onCycle: cyclePunto, onSet: setPunto },
       { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
       { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
+      { id: 'scroll', label: 'scroll', kind: 'cycle', value: scrollMode, options: SCROLL_MODES, onCycle: () => setScroll(nextScroll(scrollMode)), onSet: setScroll },
     ],
     slate: [
       { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
@@ -2608,7 +2671,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
           instead of covering the text you are comparing against) */}
       <div className="flex-grow flex min-h-0 w-full">
-      <main key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
+      <main ref={mainRef} key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
         {lockGate || lockPrompt ? (
           <LockPanel
             key={lockGate ? `gate-${lockGate.id}` : 'setup'}
@@ -2649,6 +2712,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               onChange={setContent}
               autofocus={!currentSlate}
               puntoClass={`punto-${punto}`}
+              centerCaret={scrollMode === 'centered'}
+              initialSelection={caretRestoreRef.current && !caretRestoreRef.current.end ? caretRestoreRef.current : null}
             />
           </React.Suspense>
         ) : (
@@ -2657,6 +2722,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             value={content}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleTextareaKeyDown}
+            onKeyUp={centerIfWanted}
+            onClick={centerIfWanted}
+            onBlur={saveCaret}
             placeholder={strings.writer.contentPlaceholder}
             spellCheck={false}
             className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
