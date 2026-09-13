@@ -22,6 +22,7 @@ class RateLimiter {
     // Slate operations (user-based)
     createSlate: { max: 50, windowMs: 60 * 60 * 1000 }, // 50 per hour (reasonable for creates)
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
+    slateHistory: { max: 600, windowMs: 60 * 60 * 1000 }, // history bundle reads and label edits
     deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     recoverySources: { max: 10, windowMs: 60 * 60 * 1000 }, // one automatic incident sweep per login

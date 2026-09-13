@@ -398,6 +398,8 @@ const strings = {
       title: 'version history',
       loading: 'loading checkpoints...',
       empty: 'no checkpoints yet. they build up as you write together.',
+      emptySolo: 'no versions yet. they build up as you write.',
+      unavailable: 'history is not available right now',
       pick: 'pick a checkpoint to preview it.',
       loadingPreview: 'opening...',
       emptyDoc: '(empty)',
@@ -1607,7 +1609,7 @@ take care!
       {
         id: 'history',
         title: 'version history',
-        body: 'step back through earlier checkpoints of a collab slate, preview them, restore the one you want.'
+        body: 'step back through earlier versions of a slate, preview them, restore the one you want.'
       },
       {
         id: 'lock',

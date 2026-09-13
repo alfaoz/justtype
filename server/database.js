@@ -1052,6 +1052,10 @@ try {
     }
   }
   userColsLock = db.pragma('table_info(users)');
+  if (!userColsLock.some(col => col.name === 'history_bytes')) {
+    db.exec(`ALTER TABLE users ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added history_bytes column to users');
+  }
   // Each locked slate has its own secret: a salt per slate, the doc key
   // wrapped to the secret, and the doc key wrapped again to the account's
   // lock-recovery public key (RSA), whose private key is wrapped to the
@@ -1063,6 +1067,14 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_wrapped_key TEXT;`);
     db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_key_id TEXT;`);
     console.log('✓ Database migrated: Added per-slate lock columns to slates');
+  }
+  // Version history: one client-encrypted bundle of earlier versions per
+  // slate in B2, and how much of the account's history allowance it takes
+  if (!slateColsLock.some(col => col.name === 'history_b2_file_id')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN history_b2_file_id TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN history_count INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added history columns to slates');
   }
   // Archived slates leave the main list for a section of their own
   if (!slateColsLock.some(col => col.name === 'archived_at')) {

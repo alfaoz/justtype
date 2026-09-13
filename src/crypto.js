@@ -126,6 +126,34 @@ export async function decryptContent(base64Blob, slateKeyBytes) {
   return parsed.content;
 }
 
+// Encrypt raw bytes (a history bundle). Same layout as content:
+// IV(16) + AuthTag(16) + Ciphertext, as base64.
+export async function encryptBytes(bytes, keyBytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
+  const result = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 }, cryptoKey, bytes));
+  const ciphertext = result.slice(0, result.length - TAG_LENGTH);
+  const authTag = result.slice(result.length - TAG_LENGTH);
+  const combined = new Uint8Array(IV_LENGTH + TAG_LENGTH + ciphertext.length);
+  combined.set(iv, 0);
+  combined.set(authTag, IV_LENGTH);
+  combined.set(ciphertext, IV_LENGTH + TAG_LENGTH);
+  return bufToBase64(combined);
+}
+
+// Decrypt a blob made by encryptBytes. Returns Uint8Array.
+export async function decryptBytes(base64Blob, keyBytes) {
+  const data = base64ToBuf(base64Blob);
+  const iv = data.slice(0, IV_LENGTH);
+  const authTag = data.slice(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
+  const ciphertext = data.slice(IV_LENGTH + TAG_LENGTH);
+  const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
+  const input = new Uint8Array(ciphertext.length + TAG_LENGTH);
+  input.set(ciphertext, 0);
+  input.set(authTag, ciphertext.length);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, tagLength: TAG_LENGTH * 8 }, cryptoKey, input));
+}
+
 // Encrypt a title string. Returns base64 blob.
 export async function encryptTitle(plaintext, slateKeyBytes) {
   const enc = new TextEncoder();

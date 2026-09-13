@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useEscape } from '../useEscape';
 import * as Y from 'yjs';
 import { strings } from '../strings';
@@ -69,7 +69,11 @@ export function lineDiff(oldText, newText) {
   return out;
 }
 
-function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate }) {
+// `source` answers for the versions: list() newest first as
+// { id, created_at (unix seconds), label, author? }, text(cp), and
+// label(cp, name) -> the name as saved. Collab slates read checkpoints
+// through it; private slates read their history bundle.
+function HistoryTab({ source, currentText, onRestore, onOpenAsNewSlate }) {
   const s = strings.collab.history;
   const [checkpoints, setCheckpoints] = useState(null); // null = loading
   const [error, setError] = useState('');
@@ -89,7 +93,7 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
     let cancelled = false;
     (async () => {
       try {
-        const { checkpoints: list } = await fetchCheckpoints(slateId);
+        const list = await source.list();
         if (cancelled) return;
         setCheckpoints(list || []);
         if (list && list.length) {
@@ -101,7 +105,7 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
       }
     })();
     return () => { cancelled = true; };
-  }, [slateId]);
+  }, [source]);
 
   // The list is newest first, so a checkpoint's "previous" is the next one
   // along; the live row's predecessor is the most recent checkpoint.
@@ -118,8 +122,7 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
     if (!cp || texts[cp.id] !== undefined) return;
     setLoadingIds((m) => ({ ...m, [cp.id]: true }));
     try {
-      const bytes = await fetchCheckpointState(slateId, cp.id, docKey);
-      const text = rebuildText(bytes);
+      const text = await source.text(cp);
       setTexts((m) => ({ ...m, [cp.id]: text }));
     } catch (e) {
       setError(String(e.message || 'could not open this checkpoint').toLowerCase());
@@ -147,8 +150,8 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
     if (!selectedCp) return;
     setSavingName(true);
     try {
-      const { label } = await labelCheckpoint(slateId, selectedCp.id, nameDraft);
-      setCheckpoints((list) => list.map((c) => (c.id === selectedCp.id ? { ...c, label } : c)));
+      const label = await source.label(selectedCp, nameDraft);
+      setCheckpoints((list) => list.map((c) => (c.id === selectedCp.id ? { ...c, label: label || null } : c)));
       setNaming(false);
     } catch (e) {
       setError(String(e.message || '').toLowerCase());
@@ -173,7 +176,7 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
   if (checkpoints.length === 0) {
     return (
       <div className="p-4">
-        <p className="text-sm text-[var(--theme-text-muted)]">{s.empty}</p>
+        <p className="text-sm text-[var(--theme-text-muted)]">{source.emptyText || s.empty}</p>
         {error && <p className="text-sm mt-3" style={{ color: 'var(--theme-red)' }}>{error}</p>}
       </div>
     );
@@ -374,9 +377,16 @@ function HistoryTab({ slateId, docKey, currentText, onRestore, onOpenAsNewSlate 
 export default function CollabPanel({
   tab, onTabChange, onClose,
   slateId, docKey, currentText, onRestore, onOpenAsNewSlate,
-  canHistory, shareProps, getDoc,
+  canHistory, shareProps, getDoc, solo = false, historySource = null,
 }) {
   const p = strings.collab.panel;
+  // Collab checkpoints are full encrypted Y.Doc states, rebuilt here
+  const collabSource = useMemo(() => ({
+    list: async () => (await fetchCheckpoints(slateId)).checkpoints || [],
+    text: async (cp) => rebuildText(await fetchCheckpointState(slateId, cp.id, docKey)),
+    label: async (cp, name) => (await labelCheckpoint(slateId, cp.id, name)).label,
+  }), [slateId, docKey]);
+  const source = historySource || collabSource;
   const [closing, setClosing] = useState(false);
   const closeTimerRef = useRef(null);
 
@@ -425,9 +435,9 @@ export default function CollabPanel({
       <div className="collab-panel-inner">
         <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
           <div className="flex items-center gap-4">
-            <Tab id="people" label={p.tabPeople} />
+            {!solo && <Tab id="people" label={p.tabPeople} />}
             <Tab id="history" label={p.tabHistory} disabled={!canHistory} />
-            <Tab id="nearby" label={strings.collab.nearby.tab} disabled={!canHistory} />
+            {!solo && <Tab id="nearby" label={strings.collab.nearby.tab} disabled={!canHistory} />}
           </div>
           <button
             onClick={requestClose}
@@ -439,24 +449,27 @@ export default function CollabPanel({
         </div>
 
         <div className="collab-tabstack">
-          <div className={`collab-tabpanel ${tab === 'people' ? 'is-active' : ''}`}>
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-              <CollabShareModal embedded {...shareProps} />
+          {!solo && (
+            <div className={`collab-tabpanel ${tab === 'people' ? 'is-active' : ''}`}>
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+                <CollabShareModal embedded {...shareProps} />
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className={`collab-tabpanel ${tab === 'nearby' ? 'is-active' : ''}`}>
-            {canHistory && getDoc
-              ? (tab === 'nearby' && <NearbyTab slateId={slateId} getDoc={getDoc} />)
-              : <p className="text-sm text-[var(--theme-text-muted)] p-4">{strings.collab.nearby.unavailable}</p>}
-          </div>
+          {!solo && (
+            <div className={`collab-tabpanel ${tab === 'nearby' ? 'is-active' : ''}`}>
+              {canHistory && getDoc
+                ? (tab === 'nearby' && <NearbyTab slateId={slateId} getDoc={getDoc} />)
+                : <p className="text-sm text-[var(--theme-text-muted)] p-4">{strings.collab.nearby.unavailable}</p>}
+            </div>
+          )}
 
           <div className={`collab-tabpanel ${tab === 'history' ? 'is-active' : ''}`}>
             {canHistory ? (
               historyMounted && (
                 <HistoryTab
-                  slateId={slateId}
-                  docKey={docKey}
+                  source={source}
                   currentText={currentText}
                   onRestore={onRestore}
                   onOpenAsNewSlate={onOpenAsNewSlate}

@@ -1006,6 +1006,42 @@ const updateUserStorage = (userId) => {
   }
 };
 
+// Version history: one client-encrypted bundle per slate. The bundle is
+// base64 from the browser, at most HISTORY_BUNDLE_MAX bytes decoded, and an
+// account's bundles together never take more than its storage limit. They
+// do not count toward storage itself.
+const HISTORY_BUNDLE_MAX = 2 * 1024 * 1024;
+const parseHistoryBody = (history) => {
+  if (!history || typeof history !== 'object' || typeof history.blob !== 'string' || !history.blob.trim()) {
+    return { error: 'Invalid history bundle', code: 'HISTORY_INVALID', status: 400 };
+  }
+  const count = Number.isInteger(history.count) && history.count >= 0 ? history.count : 0;
+  try {
+    return { buffer: decodeBase64Strict(history.blob, { maxBytes: HISTORY_BUNDLE_MAX }), count };
+  } catch (err) {
+    if (err && err.code === 'BASE64_TOO_LARGE') return { error: 'History bundle too large', code: 'HISTORY_OVER', status: 413 };
+    return { error: 'Invalid history bundle', code: 'HISTORY_INVALID', status: 400 };
+  }
+};
+const checkHistoryAllowance = (userId, delta) => {
+  const user = db.prepare('SELECT history_bytes, storage_limit, supporter_tier FROM users WHERE id = ?').get(userId);
+  if (!user) return { allowed: false, error: 'User not found' };
+  if (user.supporter_tier === 'quarterly') return { allowed: true };
+  const limit = user.storage_limit || 25000000;
+  if ((user.history_bytes || 0) + delta > limit) {
+    return { allowed: false, error: 'History allowance used up. Older versions will make room.' };
+  }
+  return { allowed: true };
+};
+// Write the bundle's rows: the slate's file, count and size, and the
+// account's running total
+const applyHistoryRows = (userId, slate, fileId, bytes, count) => {
+  db.transaction(() => {
+    db.prepare('UPDATE slates SET history_b2_file_id = ?, history_count = ?, history_bytes = ? WHERE id = ?').run(fileId, count, bytes, slate.id);
+    db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) + ?) WHERE id = ?').run(bytes - (slate.history_bytes || 0), userId);
+  })();
+};
+
 // Helper function to check if user has exceeded storage limit
 const checkStorageLimit = (userId, newContentSize) => {
   try {
@@ -2419,11 +2455,12 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
     }
 
     // Delete all user slates from B2 and DB
-    const slates = db.prepare('SELECT id, b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(user.id);
+    const slates = db.prepare('SELECT id, b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(user.id);
     for (const slate of slates) {
       try {
         if (slate.b2_file_id) await b2Storage.deleteSlate(slate.b2_file_id);
         if (slate.b2_public_file_id) await b2Storage.deleteSlate(slate.b2_public_file_id);
+        if (slate.history_b2_file_id) await b2Storage.deleteSlate(slate.history_b2_file_id);
       } catch (err) {
         console.error(`Failed to delete B2 file for slate #${slate.id}:`, err);
       }
@@ -3085,6 +3122,17 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     }
 
     const isE2E = !!(userE2E && userE2E.e2e_migrated && !slate.is_system_slate);
+    // A history bundle riding on this save: checked before anything is
+    // uploaded, written in the same update as the content
+    let historyIn = null;
+    if (req.body && req.body.history != null) {
+      const parsed = parseHistoryBody(req.body.history);
+      if (parsed.error) return res.status(parsed.status).json({ error: parsed.error, code: parsed.code });
+      if (!isE2E || slate.is_collab) return res.status(409).json({ error: 'History needs a private end-to-end slate', code: 'HISTORY_REFUSED' });
+      const allowance = checkHistoryAllowance(req.user.id, parsed.buffer.length - (slate.history_bytes || 0));
+      if (!allowance.allowed) return res.status(413).json({ error: allowance.error, code: 'HISTORY_OVER' });
+      historyIn = parsed;
+    }
     let encryptedBuffer = null;
     if (lockChange && !isE2E) {
       return res.status(409).json({ error: 'Only end-to-end encrypted slates can be locked', code: 'LOCK_REFUSED' });
@@ -3209,15 +3257,28 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 	      recoveryWrappedKey: slate.lock_recovery_wrapped_key || null, recoveryKeyId: slate.lock_recovery_key_id || null,
 	    };
 	    const isLockedToStore = lockToStore.locked;
+    let historyFileId = slate.history_b2_file_id || null;
+    let historyBytes = slate.history_bytes || 0;
+    let historyCount = slate.history_count || 0;
+    if (historyIn) {
+      historyFileId = await b2Storage.uploadRawSlate(`history-${slate.id}-${Date.now()}`, historyIn.buffer);
+      historyBytes = historyIn.buffer.length;
+      historyCount = historyIn.count;
+    }
 	    const stmt = db.prepare(`
 	      UPDATE slates
 	      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
 	          is_published = ?, b2_public_file_id = ?, is_locked = ?, lock_wrapped_key = ?, lock_salt = ?,
-	          lock_recovery_wrapped_key = ?, lock_recovery_key_id = ?, updated_at = CURRENT_TIMESTAMP
+	          lock_recovery_wrapped_key = ?, lock_recovery_key_id = ?,
+	          history_b2_file_id = ?, history_count = ?, history_bytes = ?, updated_at = CURRENT_TIMESTAMP
 	      WHERE slate_number = ? AND user_id = ?
 	    `);
 	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId,
-	      lockToStore.locked, lockToStore.wrappedKey, lockToStore.salt, lockToStore.recoveryWrappedKey, lockToStore.recoveryKeyId, req.params.id, req.user.id);
+	      lockToStore.locked, lockToStore.wrappedKey, lockToStore.salt, lockToStore.recoveryWrappedKey, lockToStore.recoveryKeyId,
+	      historyFileId, historyCount, historyBytes, req.params.id, req.user.id);
+    if (historyIn) {
+      db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) + ?) WHERE id = ?').run(historyBytes - (slate.history_bytes || 0), req.user.id);
+    }
 
     // Collaborative slate: the canonical blob changed — tell live viewers to refetch.
     if (slate.is_collab) collabHub.notifySlateChanged(slate.id);
@@ -3228,9 +3289,12 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     if (oldPublicFileId && oldPublicFileId !== oldB2FileId) fileIdsToDelete.add(oldPublicFileId);
     if (publicFileIdToDelete) fileIdsToDelete.add(publicFileIdToDelete);
 
+    if (historyIn && slate.history_b2_file_id && slate.history_b2_file_id !== historyFileId) fileIdsToDelete.add(slate.history_b2_file_id);
+
     // Never delete newly-referenced files.
     fileIdsToDelete.delete(b2FileId);
     if (newPublicFileId) fileIdsToDelete.delete(newPublicFileId);
+    if (historyFileId) fileIdsToDelete.delete(historyFileId);
 
     for (const fileId of fileIdsToDelete) {
       try {
@@ -3390,6 +3454,48 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
 });
 
 // Delete slate
+// The slate's history bundle: opaque to the server, decrypted and inflated
+// in the browser
+app.get('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware('slateHistory'), async (req, res) => {
+  try {
+    const slate = db.prepare('SELECT id, history_b2_file_id, history_count, history_bytes FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'Slate not found' });
+    if (!slate.history_b2_file_id) return res.json({ blob: null, count: 0, bytes: 0 });
+    const data = await b2Storage.downloadRawFile(slate.history_b2_file_id);
+    res.json({ blob: data.toString('base64'), count: slate.history_count || 0, bytes: slate.history_bytes || 0 });
+  } catch (error) {
+    console.error('Get history error:', error);
+    if (error instanceof B2Error) return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({ error: error.message, code: error.code });
+    res.status(500).json({ error: 'Failed to load history' });
+  }
+});
+
+// A bundle change without a content change (a version named, thinned)
+app.put('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware('slateHistory'), async (req, res) => {
+  try {
+    const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'Slate not found' });
+    const userE2E = db.prepare('SELECT e2e_migrated FROM users WHERE id = ?').get(req.user.id);
+    if (!userE2E || !userE2E.e2e_migrated || slate.is_system_slate || slate.is_collab) {
+      return res.status(409).json({ error: 'History needs a private end-to-end slate', code: 'HISTORY_REFUSED' });
+    }
+    const parsed = parseHistoryBody(req.body && req.body.history);
+    if (parsed.error) return res.status(parsed.status).json({ error: parsed.error, code: parsed.code });
+    const allowance = checkHistoryAllowance(req.user.id, parsed.buffer.length - (slate.history_bytes || 0));
+    if (!allowance.allowed) return res.status(413).json({ error: allowance.error, code: 'HISTORY_OVER' });
+    const fileId = await b2Storage.uploadRawSlate(`history-${slate.id}-${Date.now()}`, parsed.buffer);
+    applyHistoryRows(req.user.id, slate, fileId, parsed.buffer.length, parsed.count);
+    if (slate.history_b2_file_id && slate.history_b2_file_id !== fileId) {
+      try { await b2Storage.deleteSlate(slate.history_b2_file_id); } catch (err) { console.warn('Failed to delete old history file:', err); }
+    }
+    res.json({ success: true, count: parsed.count, bytes: parsed.buffer.length });
+  } catch (error) {
+    console.error('Put history error:', error);
+    if (error instanceof B2Error) return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({ error: error.message, code: error.code });
+    res.status(500).json({ error: 'Failed to save history' });
+  }
+});
+
 app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
   try {
     const slate = db.prepare('SELECT * FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -3423,6 +3529,8 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
     db.prepare('DELETE FROM collab_docs WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
     db.prepare('DELETE FROM collab_checkpoints WHERE slate_id = ?').run(slate.id);
+    if (slate.history_b2_file_id) collabFiles.add(slate.history_b2_file_id);
+    if (slate.history_bytes) db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) - ?) WHERE id = ?').run(slate.history_bytes, req.user.id);
     db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.id, req.user.id);
     if (slate.is_collab) collabHub.closeRoom(slate.id);
     for (const fileId of collabFiles) {
@@ -3693,7 +3801,7 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
     }
 
     // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(userId);
+    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId);
 
     // Delete slates from B2
     for (const slate of slates) {
@@ -3701,6 +3809,9 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
         await b2Storage.deleteSlate(slate.b2_file_id);
         if (slate.b2_public_file_id) {
           await b2Storage.deleteSlate(slate.b2_public_file_id);
+        }
+        if (slate.history_b2_file_id) {
+          await b2Storage.deleteSlate(slate.history_b2_file_id);
         }
       } catch (err) {
         console.error(`Failed to delete B2 file ${slate.b2_file_id}:`, err);
@@ -5572,13 +5683,14 @@ app.delete('/api/account/delete', authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id FROM slates WHERE user_id = ?').all(userId);
+    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId);
 
     // Delete slates from B2
     for (const slate of slates) {
       const fileIdsToDelete = new Set();
       if (slate.b2_file_id) fileIdsToDelete.add(slate.b2_file_id);
       if (slate.b2_public_file_id) fileIdsToDelete.add(slate.b2_public_file_id);
+      if (slate.history_b2_file_id) fileIdsToDelete.add(slate.history_b2_file_id);
 
       for (const fileId of fileIdsToDelete) {
         try {

@@ -22,6 +22,7 @@ import {
 } from './crypto';
 import { cacheSlate, getCachedSlate, queuePending, cacheList, getCachedList } from './offlineStore';
 import { isOnline } from './connectivity';
+import { rekeyHistory, commitHistory } from './history';
 
 export const MIN_SECRET_LENGTH = 4;
 const IDLE_MS = 5 * 60 * 1000;
@@ -325,6 +326,13 @@ export async function saveLockChange({ userId, slateNumber, content, masterKey, 
     lock,
   };
   if (baseUpdatedAt != null) body.baseUpdatedAt = baseUpdatedAt;
+  // The slate's history follows its content to the new key
+  let rekeyed = null;
+  try {
+    const fromKey = lockOn ? (docKey || masterKey) : (openKeys.get(String(slateNumber)) || masterKey);
+    rekeyed = await rekeyHistory({ userId, n: slateNumber, fromKey, toKey: key || masterKey });
+    if (rekeyed) body.history = rekeyed.history;
+  } catch (err) { console.warn('history: not re-keyed with the lock', err); }
   let data = {};
   if (isOnline()) {
     const response = await fetch(`${API_URL}/slates/${slateNumber}`, {
@@ -357,6 +365,7 @@ export async function saveLockChange({ userId, slateNumber, content, masterKey, 
     encryptedContent: body.encryptedContent, encrypted_title: body.encryptedTitle,
     ...lockFields, updated_at: data.updated_at ?? null,
   }).catch(() => {});
+  if (rekeyed) commitHistory(userId, slateNumber, rekeyed.entries, rekeyed.blob);
   if (lockOn) openKeys.set(String(slateNumber), key); else openKeys.delete(String(slateNumber));
   touchLock();
   emit({ type: lockOn ? 'locked' : 'unlocked', slateNumber, updatedAt: data.updated_at ?? null, encryptedContent: body.encryptedContent, lockFields });

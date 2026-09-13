@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import { API_URL } from '../config';
 import { VERSION } from '../version';
@@ -6,6 +6,7 @@ import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -1505,7 +1506,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
     // New slates carry their editor mode; existing slates persist it via metadata PATCH
     if (!currentSlate) body.editorMode = editorMode;
-    return { body, titleToSave, slateKey };
+    return { body, titleToSave, slateKey, contentKey };
   };
 
   // Offline, or the network fell over mid-save: the edit stays on this
@@ -1561,6 +1562,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       deletingRef.current = null;
     }
     deleteCachedSlate(userId, n).catch(() => {});
+    forgetHistory(userId, n);
     localStorage.removeItem('justtype-draft');
     lastSavedContentRef.current = '';
     loadedSlateRef.current = null;
@@ -1621,8 +1623,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (!quiet) setStatus('saving...');
 
     try {
-      const { body, titleToSave, slateKey } = await buildSavePayload();
+      const { body, titleToSave, slateKey, contentKey } = await buildSavePayload();
       const method = currentSlate ? 'PUT' : 'POST';
+      // A version of this text, when one is due, rides on the save
+      let checkpoint = null;
+      if (currentSlate && userId && contentKey && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) {
+        try {
+          checkpoint = await prepareCheckpoint({ userId, n: currentSlate.slate_number, text: content, key: contentKey, explicit });
+        } catch (err) { console.warn('history: no version taken', err); }
+        if (checkpoint) body.history = checkpoint.history;
+      }
       const url = currentSlate
         ? `${API_URL}/slates/${currentSlate.slate_number}`
         : `${API_URL}/slates`;
@@ -1669,6 +1679,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         response = await send(sentBody);
       }
 
+      // No room for the version: the text goes up without it
+      if (response.status === 413 && body.history) {
+        const over = await response.clone().json().catch(() => ({}));
+        if (over.code === 'HISTORY_OVER') {
+          delete body.history;
+          delete sentBody.history;
+          checkpoint = null;
+          response = await send(sentBody);
+        }
+      }
+
       // The server would not take it: the text is kept on this device and
       // the queued write retries when things are better
       if (!response.ok) {
@@ -1680,6 +1701,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       const data = await response.json();
 
+      if (checkpoint && currentSlate) commitHistory(userId, currentSlate.slate_number, checkpoint.entries, checkpoint.blob);
       if (currentSlate && sentBody.encryptedContent) {
         if (stillOpen()) loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: sentBody.encryptedContent };
         cacheSlate(userId, currentSlate.slate_number, { encryptedContent: sentBody.encryptedContent, encrypted_title: sentBody.encryptedTitle, updated_at: data.updated_at ?? null }).catch(() => {});
@@ -2509,6 +2531,42 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }), [isLocked, currentSlate, hasUnsavedChanges, content]);
 
+  // Version history of a private slate. The panel reads versions through
+  // this source; restoring puts the old text in the editor and saves it
+  // like any edit, after the text on screen became a version itself.
+  const historyKey = async () => lockDocKey || (userId ? await getSlateKey(userId) : null);
+  const historySource = useMemo(() => {
+    const n = currentSlate?.slate_number;
+    return {
+      list: async () => {
+        const entries = await loadHistory(userId, n, await historyKey());
+        if (!entries) throw new Error(strings.collab.history.unavailable);
+        return [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
+      },
+      text: async (cp) => (heldHistory(userId, n) || []).find(e => e.id === cp.id)?.text ?? '',
+      label: async (cp, name) => labelVersion({ userId, n, key: await historyKey(), id: cp.id, label: name }),
+      emptyText: strings.collab.history.emptySolo,
+    };
+  }, [userId, currentSlate?.slate_number, lockDocKey]);
+  const restoreAfterSetRef = useRef(false);
+  useEffect(() => {
+    if (!restoreAfterSetRef.current) return;
+    restoreAfterSetRef.current = false;
+    saveSlate({ explicit: true });
+  }, [content]);
+  const restoreVersion = async (text) => {
+    const n = currentSlate?.slate_number;
+    if (n == null || text === content) return;
+    try {
+      const before = await prepareCheckpoint({ userId, n, text: content, key: await historyKey(), force: true, reason: 'before restore' });
+      if (before) commitHistory(userId, n, before.entries, before.blob);
+    } catch (err) { console.warn('history: the text on screen was not kept', err); }
+    restoreAfterSetRef.current = true;
+    setContent(text);
+    setHasUnsavedChanges(true);
+  };
+  const canHistory = !!(token && currentSlate && !isShared && !isLocalSlateNumber(currentSlate.slate_number) && !lockGate && (!collabDocKey || collabSlateDbId));
+
   // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
     device: [
@@ -2523,7 +2581,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     ].filter(Boolean),
     actions: [
       token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => openCollab('people'), active: !!collabDocKey, pulse: highlightNew },
-      token && collabDocKey && collabSlateDbId && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
+      canHistory && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
       token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: (e) => { anchorPopover(e); setShowPublishMenu(!showPublishMenu); } },
     ].filter(Boolean),
   };
@@ -2636,13 +2694,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             tab={collabPanel}
             onTabChange={setCollabPanel}
             onClose={() => setCollabPanel(null)}
-            canHistory={!!(collabDocKey && collabSlateDbId)}
+            solo={!collabDocKey && !isShared}
+            historySource={!collabDocKey && !isShared ? historySource : null}
+            canHistory={canHistory}
             slateId={collabSlateDbId}
             docKey={collabDocKey}
             currentText={content}
             getDoc={() => collabApiRef.current?.getDoc?.()}
             onRestore={(text) => {
-              if (collabApiRef.current) collabApiRef.current.replaceText(text);
+              if (collabDocKey && collabApiRef.current) collabApiRef.current.replaceText(text);
+              else restoreVersion(text);
               setCollabPanel(null);
             }}
             onOpenAsNewSlate={(text) => {
@@ -3147,7 +3208,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                     onClick={() => { setShowMobileMenu(false); openCollab('people'); }}
                   />
                 )}
-                {token && collabDocKey && collabSlateDbId && (
+                {canHistory && (
                   <SheetRow
                     label={strings.collab.history.button}
                     onClick={() => { setShowMobileMenu(false); setCollabPanel('history'); }}

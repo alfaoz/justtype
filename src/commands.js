@@ -97,7 +97,7 @@ export const commands = {
     shortcut: null,
     context: ['writer'],
     requiresAuth: true,
-    requiresCollab: true,
+    requiresSlate: true,
     action: 'HISTORY',
     cli: 'justtype history'
   },
