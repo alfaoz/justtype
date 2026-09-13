@@ -31,6 +31,18 @@ export const commands = {
     requiresAuth: true,
     action: 'TODAY',
   },
+  scratch: {
+    id: 'scratch',
+    aliases: ['scratchpad', 'device'],
+    title: 'scratch',
+    description: 'the slate that stays on this device',
+    icon: '+',
+    category: 'navigation',
+    shortcut: null,
+    context: ['writer', 'slates', 'account'],
+    requiresAuth: true,
+    action: 'SCRATCH',
+  },
   slates: {
     id: 'slates',
     aliases: ['list', 'my slates', '='],

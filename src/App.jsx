@@ -33,6 +33,7 @@ import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
+import { scratchSlate, clearScratch } from './scratch';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -393,8 +394,9 @@ export default function App() {
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
-          // Slates created offline carry a local id until they sync
-          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
+          // Slates created offline carry a local id until they sync; the
+          // scratch slate has no number at all
+          setCurrentSlate(slateId === 'scratch' ? scratchSlate() : { slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
           setView('writer');
         }
       } else if (path === '/slates') {
@@ -942,6 +944,10 @@ export default function App() {
   // Command palette execute handler
   const handleCommandExecute = async (cmd) => {
     switch (cmd.action) {
+      case 'SCRATCH':
+        await handleSelectSlate(scratchSlate());
+        break;
+
       case 'TODAY': {
         // Today's slate, opened at its end, or a new one that starts with the date
         let found = null;
@@ -1371,6 +1377,7 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
+              onScratchToSlate={async (text) => { await handleOpenAsNewSlate(text); clearScratch(userId).catch(() => {}); }}
               currentSlateNumber={currentSlate?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);

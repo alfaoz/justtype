@@ -6,6 +6,7 @@ import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity
 import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
+import { scratchSlate, readScratch, clearScratch } from '../scratch';
 import { MarkGlyph } from './MarkGlyph';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
@@ -34,7 +35,9 @@ const formatDateShort = (dateString) =>
 // the rest of the app already speaks (blue = public, orange = was public,
 // accent = shared with me). Private is the default state, so it stays dim.
 const statusFor = (slate) =>
-  slate.deleted_at
+  slate.scratch
+    ? { label: strings.slates.scratch.status, cls: 'text-[var(--theme-text-dim)]' }
+  : slate.deleted_at
     ? { label: strings.slates.status.inTrash, cls: 'text-[var(--theme-text-dim)]' }
   : slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
@@ -146,7 +149,7 @@ const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
  * The three-dot menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice, onScratchClear, onScratchToSlate }) {
   const isPinned = Boolean(slate.pinned_at);
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
@@ -195,7 +198,18 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
 
       {isOpen && (
         <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
-          {slate.deleted_at ? (
+          {slate.scratch ? (
+            <>
+              <button onClick={onScratchToSlate} className={menuItemCls(false)}>
+                <CloudDownIcon className={menuIcon} />
+                {strings.slates.scratch.toSlate}
+              </button>
+              <button onClick={onScratchClear} className={menuItemCls(true)}>
+                <TrashIcon className={menuIcon} />
+                {strings.slates.scratch.clear}
+              </button>
+            </>
+          ) : slate.deleted_at ? (
             <>
               <button onClick={onRestore} className={menuItemCls(false)}>
                 <UnarchiveIcon className={menuIcon} />
@@ -217,6 +231,19 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onTags, onPublish, onLock, 
                 {isPinned ? <UnpinIcon className={menuIcon} /> : <PinIcon className={menuIcon} />}
                 {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
               </button>
+              {/* A pinned slate can change places with its pinned neighbours */}
+              {onMoveUp && (
+                <button onClick={onMoveUp} className={menuItemCls(false)}>
+                  <span className={`${menuIcon} text-center leading-none`}>↑</span>
+                  {strings.slates.pin.moveUp}
+                </button>
+              )}
+              {onMoveDown && (
+                <button onClick={onMoveDown} className={menuItemCls(false)}>
+                  <span className={`${menuIcon} text-center leading-none`}>↓</span>
+                  {strings.slates.pin.moveDown}
+                </button>
+              )}
               <button onClick={onTags} className={menuItemCls(false)}>
                 <TagIcon className={menuIcon} />
                 {strings.slates.menu.tags}
@@ -276,6 +303,14 @@ const DeviceMark = ({ slate, offline, onCopy, onKeep }) => {
   if (slate.shared) return null;
   const o = strings.slates.offline;
   const icon = 'w-[1em] h-[1em]';
+  if (slate.scratch) {
+    // Always here, never anywhere else
+    return (
+      <HoverNote plain note={strings.slates.scratch.note} className="device-mark p-1 -m-1 text-[var(--theme-text-dim)]">
+        <MarkGlyph kind="check" className={`${icon} opacity-70`} aria-label={strings.slates.scratch.note} role="img" />
+      </HoverNote>
+    );
+  }
   if (slate.syncing) {
     return (
       <HoverNote plain note={o.syncing} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
@@ -333,7 +368,7 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null }) {
   const isPinned = Boolean(slate.pinned_at);
   // The slate the writer has open (the one the writer button goes back to)
   // rests in its hover state: no word, just the row already lit
@@ -388,10 +423,19 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     );
   }
 
+  // Pinned rows can be dragged among the pinned rows
+  const dragProps = drag && isPinned ? {
+    draggable: true,
+    onDragStart: (e) => { e.dataTransfer.effectAllowed = 'move'; drag.start(slate); },
+    onDragOver: (e) => { if (drag.over(slate)) e.preventDefault(); },
+    onDrop: (e) => { e.preventDefault(); drag.drop(slate); },
+    onDragEnd: drag.end,
+  } : {};
   return (
     <div
       onClick={open}
-      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
+      {...dragProps}
+      className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} ${drag?.overId === slate.slate_number ? 'bg-[var(--theme-bg-tertiary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -420,7 +464,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   );
 }
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, currentSlateNumber = null }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, onScratchToSlate, currentSlateNumber = null }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
   const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
@@ -568,12 +612,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   }, []);
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
-  // Every tag across the library, most used first
-  const allTags = useMemo(() => {
+  // The scratch slate on this device: its text, for the row's counts
+  const [scratch, setScratch] = useState(null);
+  const [tagManager, setTagManager] = useState(false);
+  const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
+  const [tagBusy, setTagBusy] = useState(false);
+  const [dragOverId, setDragOverId] = useState(null);
+  const dragRef = useRef(null);
+  // Every tag across the library with its count, most used first
+  const tagCounts = useMemo(() => {
     const counts = new Map();
     for (const s of [...slates, ...sharedSlates]) { if (s.deleted_at) continue; for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1); }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [slates, sharedSlates]);
+  const allTags = useMemo(() => tagCounts.map(([t]) => t), [tagCounts]);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
   const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
@@ -722,6 +774,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       // Get slate key for decryption
       const slateKey = userId ? await getSlateKey(userId) : null;
+      readScratch(userId, slateKey).then(({ text, updatedAt }) => setScratch({
+        text, updatedAt, words: text.trim() ? text.trim().split(/\s+/).length : 0, chars: text.length,
+      })).catch(() => setScratch(null));
 
       if (slateKey) {
         // Decrypt encrypted titles (private) and tags (E2E-only). Collab
@@ -893,6 +948,109 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     else if (ev.type === 'failed') drop(ev.slateNumber);
     else if (ev.type === 'finished') { setSyncing(new Set()); refreshDeviceCopies(); }
   }), [userId]);
+
+  // The scratch slate's row: clear it, or move its text into a real slate
+  const scratchClear = async (e) => {
+    e?.stopPropagation?.(); e?.preventDefault?.();
+    setOpenMenuId(null);
+    await clearScratch(userId).catch(() => {});
+    setScratch(s => (s ? { ...s, text: '', words: 0, chars: 0, updatedAt: Date.now() } : s));
+    showToast(strings.slates.scratch.cleared);
+  };
+  const scratchToSlate = (e) => {
+    e?.stopPropagation?.(); e?.preventDefault?.();
+    setOpenMenuId(null);
+    if (!scratch?.text.trim() || !onScratchToSlate) return;
+    onScratchToSlate(scratch.text);
+    setScratch(s => (s ? { ...s, text: '', words: 0, chars: 0 } : s));
+  };
+
+  // Pinned order: pinned slates sort by pinned_at, newest first, so a new
+  // order is a new set of pinned_at values, largest at the top
+  const pinnedInOrder = () => slates.filter(s => s.pinned_at && !s.deleted_at && !s.archived_at).sort((a, b) => b.pinned_at - a.pinned_at);
+  const applyPinnedOrder = async (ordered) => {
+    if (!isOnline()) { showToast(strings.errors.pinFailed); return; }
+    const base = Date.now();
+    const next = ordered.map((s, i) => ({ n: s.slate_number, at: base - i * 1000 }));
+    setSlates(prev => prev.map(s => { const hit = next.find(x => x.n === s.slate_number); return hit ? { ...s, pinned_at: hit.at } : s; }));
+    for (const { n, at } of next) {
+      try {
+        await fetch(`${API_URL}/slates/${n}/metadata`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ pinnedAt: at }),
+        });
+      } catch (err) { console.error('pin order failed:', err); }
+    }
+  };
+  const movePinned = async (slate, dir, e) => {
+    e?.stopPropagation?.(); e?.preventDefault?.();
+    setOpenMenuId(null);
+    const list = pinnedInOrder();
+    const i = list.findIndex(s => s.slate_number === slate.slate_number);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    const ordered = [...list];
+    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+    await applyPinnedOrder(ordered);
+  };
+  const drag = {
+    overId: dragOverId,
+    start: (slate) => { dragRef.current = slate; },
+    over: (slate) => { const ok = !!dragRef.current && dragRef.current.slate_number !== slate.slate_number; if (ok && dragOverId !== slate.slate_number) setDragOverId(slate.slate_number); return ok; },
+    drop: (target) => {
+      const from = dragRef.current;
+      dragRef.current = null;
+      setDragOverId(null);
+      if (!from || from.slate_number === target.slate_number) return;
+      const list = pinnedInOrder().filter(s => s.slate_number !== from.slate_number);
+      const at = list.findIndex(s => s.slate_number === target.slate_number);
+      list.splice(at < 0 ? list.length : at, 0, from);
+      applyPinnedOrder(list);
+    },
+    end: () => { dragRef.current = null; setDragOverId(null); },
+  };
+
+  // Tag management: rename (a name already in use merges), or remove, across
+  // every slate that carries the tag. Tags are encrypted per slate, so each
+  // one is rewritten in the browser and sent on its own.
+  const retag = async (fn) => {
+    if (!isOnline()) { showToast(strings.slates.tags.needsNetwork); return 0; }
+    const master = await getSlateKey(userId);
+    if (!master) { showToast(strings.slates.tags.unlockRequired); return 0; }
+    let touched = 0;
+    for (const slate of slates) {
+      const tags = Array.isArray(slate.tags) ? slate.tags : [];
+      const next = [...new Set(fn(tags))];
+      if (next.length === tags.length && next.every((t, i) => t === tags[i])) continue;
+      let key = master;
+      if (slate.is_collab && slate.collab_wrapped_key) { try { key = await unwrapKey(slate.collab_wrapped_key, master); } catch { /* master */ } }
+      const encryptedTags = next.length ? await encryptTags(next, key) : null;
+      const r = await fetch(`${API_URL}/slates/${slate.slate_number}/metadata`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ encryptedTags }),
+      });
+      if (!r.ok) continue;
+      touched++;
+      setSlates(prev => prev.map(s => (s.slate_number === slate.slate_number ? { ...s, tags: next } : s)));
+    }
+    return touched;
+  };
+  const renameTag = async (from, toRaw) => {
+    const to = normalizeTag(toRaw);
+    if (!to || to === from) { setTagEdit(null); return; }
+    setTagBusy(true);
+    try {
+      const n = await retag(tags => tags.map(t => (t === from ? to : t)));
+      if (n) showToast(strings.slates.tags.renamed(from, to, n));
+      if (tagFilter === from) setTagFilter(to);
+    } finally { setTagBusy(false); setTagEdit(null); }
+  };
+  const removeTagEverywhere = async (tag) => {
+    setTagBusy(true);
+    try {
+      const n = await retag(tags => tags.filter(t => t !== tag));
+      if (n) showToast(strings.slates.tags.removed(tag, n));
+      if (tagFilter === tag) setTagFilter(null);
+    } finally { setTagBusy(false); }
+  };
 
   // Delete: to the trash, with a word to bring it straight back. Restore
   // and delete forever act on what is in the trash; empty trash clears it.
@@ -1529,6 +1687,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
                   onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
                 />
+                <button onClick={() => setTagManager(true)} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                  {strings.slates.tags.manage}
+                </button>
               </div>
             )}
           </div>
@@ -1557,9 +1718,26 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
           }`}
         >
+          {scratch && (visibilityFilter === 'all' || visibilityFilter === 'private') && !searchQuery.trim() && !tagFilter && !appFilter && !collabFilter && (
+            <SlateItem
+              key="scratch"
+              slate={{ ...scratchSlate(), title: strings.slates.scratch.title, word_count: scratch.words, char_count: scratch.chars, updated_at: scratch.updatedAt ? new Date(scratch.updatedAt).toISOString() : new Date().toISOString(), tags: [], available: true }}
+              layout={effectiveViewMode === 'list' ? 'row' : 'card'}
+              onOpen={() => onSelectSlate(scratchSlate())}
+              onTagFilter={setTagFilter}
+              editing={currentSlateNumber === 'scratch'}
+              menuProps={{
+                isOpen: openMenuId === 'scratch',
+                onToggle: (e) => toggleMenu('scratch', e),
+                onScratchClear: scratchClear,
+                onScratchToSlate: scratchToSlate,
+              }}
+            />
+          )}
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem
               key={slate.slate_number}
+              drag={effectiveViewMode === 'list' && !slate.shared && !slate.deleted_at ? drag : null}
               slate={{
                 ...slate,
                 kept: deviceCopies.kept.has(slate.slate_number),
@@ -1583,6 +1761,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 isOpen: openMenuId === slate.slate_number,
                 onToggle: (e) => toggleMenu(slate.slate_number, e),
                 onPin: (e) => togglePin(slate, e),
+                onMoveUp: slate.pinned_at && pinnedInOrder().findIndex(s => s.slate_number === slate.slate_number) > 0 ? (e) => movePinned(slate, -1, e) : null,
+                onMoveDown: slate.pinned_at && (() => { const l = pinnedInOrder(); const i = l.findIndex(s => s.slate_number === slate.slate_number); return i >= 0 && i < l.length - 1; })() ? (e) => movePinned(slate, 1, e) : null,
                 onTags: (e) => openTagsEditor(slate, e),
                 onOffload: (e) => offloadFromDevice(slate, e),
                 onCopyToDevice: (e) => copySlateNow(slate, e),
@@ -1621,6 +1801,53 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
 
       {/* Delete Confirmation Modal */}
+      {/* Tag management: every tag, renamed or removed across the library */}
+      {tagManager && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => !tagBusy && setTagManager(false)}>
+          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-5">{strings.slates.tags.manageTitle}</h2>
+            {tagCounts.length === 0 ? (
+              <p className="text-xs text-[var(--theme-text-dim)]">{strings.slates.tags.noTags}</p>
+            ) : (
+              <div className="flex flex-col divide-y divide-[var(--theme-border-light)] max-h-[50vh] overflow-y-auto">
+                {tagCounts.map(([tag, count]) => (
+                  <div key={tag} className="flex items-center gap-3 py-2.5 text-sm">
+                    {tagEdit?.tag === tag ? (
+                      <input
+                        autoFocus
+                        value={tagEdit.draft}
+                        onChange={(e) => setTagEdit({ tag, draft: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') renameTag(tag, tagEdit.draft);
+                          if (e.key === 'Escape') { e.stopPropagation(); setTagEdit(null); }
+                        }}
+                        placeholder={strings.slates.tags.renamePlaceholder}
+                        maxLength={MAX_TAG_LENGTH}
+                        disabled={tagBusy}
+                        className="flex-1 min-w-0 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-2 py-1 text-sm focus:outline-none focus:border-[var(--theme-text-dim)]"
+                      />
+                    ) : (
+                      <span className="flex-1 min-w-0 truncate text-[var(--theme-text)]">#{tag}</span>
+                    )}
+                    <span className="text-xs text-[var(--theme-text-dim)] w-6 text-right">{count}</span>
+                    {tagEdit?.tag === tag ? (
+                      <button onClick={() => renameTag(tag, tagEdit.draft)} disabled={tagBusy} className="text-xs text-[var(--theme-text)] hover:opacity-70 disabled:opacity-40">{strings.slates.tags.save}</button>
+                    ) : (
+                      <>
+                        <button onClick={() => setTagEdit({ tag, draft: tag })} disabled={tagBusy} className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">{strings.slates.tags.rename}</button>
+                        <button onClick={() => removeTagEverywhere(tag)} disabled={tagBusy} className="text-xs text-[var(--theme-red)] hover:opacity-70 transition-opacity disabled:opacity-40">{strings.slates.tags.remove}</button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end mt-5">
+              <button onClick={() => !tagBusy && setTagManager(false)} className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">{strings.slates.tags.cancel}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Tags Modal */}
       {tagsModal.show && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4">

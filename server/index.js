@@ -2820,6 +2820,14 @@ app.patch('/api/slates/:id/metadata', authenticateToken, (req, res) => {
     } else if (pinned !== undefined) {
       return res.status(400).json({ error: 'Invalid pinned value' });
     }
+    // An explicit place among the pinned slates (reordering)
+    if (req.body && req.body.pinnedAt !== undefined) {
+      const v = req.body.pinnedAt;
+      if (v !== null && !(Number.isInteger(v) && v > 0)) return res.status(400).json({ error: 'Invalid pinnedAt value' });
+      pinnedAt = v;
+      updates.push('pinned_at = ?');
+      params.push(v);
+    }
 
     let archivedAt = undefined;
     if (typeof archived === 'boolean') {
