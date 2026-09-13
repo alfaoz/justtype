@@ -2232,12 +2232,44 @@ app.post('/api/auth/forgot-password', verifyTurnstileToken, createRateLimitMiddl
 // Reset password
 // Reset password with recovery key (preserves slates)
 // Get recovery data for E2E client-side password reset
+// Lock-recovery keypairs: a JSON list on the user, newest first, of
+// { id, publicKey, wraps: [{ kind: 'password'|'pin'|'phrase', salt, wrappedPrivateKey }], createdAt }.
+// Older entries carry one phrase wrap in the flat fields salt + wrappedPrivateKey.
+// The server stores public keys and ciphertext only.
+const readLockRecoveryKeys = (raw) => {
+  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+};
+const LOCK_WRAP_KINDS = new Set(['password', 'pin', 'phrase']);
+const isLockBlob = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+const isLockSalt = (v) => /^[0-9a-f]{32,128}$/.test(v || '');
+// The entry as it will be stored, or null when it does not hold together
+const validLockEntry = (e) => {
+  if (!e || typeof e !== 'object' || !isLockBlob(e.id, 256) || !isLockBlob(e.publicKey, 2048)) return null;
+  const wraps = Array.isArray(e.wraps) ? e.wraps : [];
+  if (wraps.length > 4) return null;
+  for (const w of wraps) {
+    if (!w || !LOCK_WRAP_KINDS.has(w.kind) || !isLockSalt(w.salt) || !isLockBlob(w.wrappedPrivateKey, 8192)) return null;
+  }
+  const legacy = e.wrappedPrivateKey != null || e.salt != null;
+  if (legacy && (!isLockBlob(e.wrappedPrivateKey, 8192) || !isLockSalt(e.salt))) return null;
+  if (!wraps.length && !legacy) return null;
+  const out = { id: e.id, publicKey: e.publicKey, createdAt: Number.isFinite(e.createdAt) ? e.createdAt : Date.now() };
+  if (wraps.length) out.wraps = wraps.map(w => ({ kind: w.kind, salt: w.salt, wrappedPrivateKey: w.wrappedPrivateKey }));
+  if (legacy) { out.wrappedPrivateKey = e.wrappedPrivateKey; out.salt = e.salt; }
+  return out;
+};
+// Replace entries by id, newest first, capped
+const mergeLockEntries = (existing, incoming) => {
+  const ids = new Set(incoming.map(e => e.id));
+  return [...incoming, ...existing.filter(k => k && !ids.has(k.id))].slice(0, 20);
+};
+
 app.post('/api/auth/recovery-data', createRateLimitMiddleware('resetPassword'), (req, res) => {
   const { email, code } = req.body;
   if (!email || !code) {
     return res.status(400).json({ error: 'Email and code are required' });
   }
-  const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt, encryption_salt, e2e_migrated, reset_code_expires FROM users WHERE email = ? AND reset_token = ?')
+  const user = db.prepare('SELECT recovery_wrapped_key, recovery_salt, encryption_salt, e2e_migrated, reset_code_expires, lock_recovery_keys FROM users WHERE email = ? AND reset_token = ?')
     .get(email.toLowerCase(), code);
   if (!user) {
     return res.status(400).json({ error: 'Invalid reset code' });
@@ -2249,14 +2281,24 @@ app.post('/api/auth/recovery-data', createRateLimitMiddleware('resetPassword'), 
     recoveryWrappedKey: user.recovery_wrapped_key,
     recoverySalt: user.recovery_salt,
     encryptionSalt: user.encryption_salt,
-    e2e: !!user.e2e_migrated
+    e2e: !!user.e2e_migrated,
+    // Lock-recovery keypairs, so the reset can re-wrap their private keys
+    // to the new password and phrase (public keys and ciphertext only)
+    lockRecoveryKeys: readLockRecoveryKeys(user.lock_recovery_keys),
   });
 });
 
 app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('resetPassword'), async (req, res) => {
   const { email, code, newPassword, recoveryPhrase,
     newWrappedKey: clientNewWrappedKey, newRecoveryWrappedKey: clientNewRecoveryWrappedKey,
-    newRecoverySalt: clientNewRecoverySalt, newEncryptionSalt: clientNewEncryptionSalt } = req.body;
+    newRecoverySalt: clientNewRecoverySalt, newEncryptionSalt: clientNewEncryptionSalt,
+    lockRecoveryKeys: clientLockKeys } = req.body;
+  let lockEntries = null;
+  if (clientLockKeys !== undefined) {
+    if (!Array.isArray(clientLockKeys) || clientLockKeys.length > 20) return res.status(400).json({ error: 'Invalid lock recovery data' });
+    lockEntries = clientLockKeys.map(validLockEntry);
+    if (lockEntries.some(e => !e)) return res.status(400).json({ error: 'Invalid lock recovery data' });
+  }
 
   if (!email || !code || !newPassword) {
     return res.status(400).json({ error: 'Email, code, and new password are required' });
@@ -2293,6 +2335,10 @@ app.post('/api/auth/reset-password-with-recovery', createRateLimitMiddleware('re
       let sql = `UPDATE users SET password = ?, wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?`;
       sql += `, encryption_salt = ?`;
       updateFields.push(clientNewEncryptionSalt);
+      if (lockEntries && lockEntries.length) {
+        sql += `, lock_recovery_keys = ?`;
+        updateFields.push(JSON.stringify(mergeLockEntries(readLockRecoveryKeys(user.lock_recovery_keys), lockEntries)));
+      }
       sql += `, reset_token = NULL, reset_code_expires = NULL WHERE id = ?`;
       updateFields.push(user.id);
       db.prepare(sql).run(...updateFields);
@@ -4869,9 +4915,6 @@ app.get('/api/account/wrapped-key', authenticateToken, (req, res) => {
 // key the account's recovery phrase derives. The list keeps every keypair
 // ever made, newest first, so a slate locked under an older phrase still
 // opens with that phrase. The server holds ciphertext and public keys only.
-const readLockRecoveryKeys = (raw) => {
-  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
-};
 app.get('/api/account/lock-recovery', authenticateToken, (req, res) => {
   try {
     const user = db.prepare('SELECT lock_recovery_keys, recovery_wrapped_key, recovery_salt FROM users WHERE id = ?').get(req.user.id);
@@ -4888,9 +4931,8 @@ app.get('/api/account/lock-recovery', authenticateToken, (req, res) => {
 });
 
 app.put('/api/account/lock-recovery', authenticateToken, (req, res) => {
-  const { id, publicKey, wrappedPrivateKey, salt } = req.body || {};
-  const isBlob = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
-  if (!isBlob(id, 256) || !isBlob(publicKey, 2048) || !isBlob(wrappedPrivateKey, 8192) || !/^[0-9a-f]{32,128}$/.test(salt || '')) {
+  const entry = validLockEntry(req.body);
+  if (!entry) {
     return res.status(400).json({ error: 'Recovery keypair fields required', code: 'LOCK_INVALID' });
   }
   try {
@@ -4898,8 +4940,12 @@ app.put('/api/account/lock-recovery', authenticateToken, (req, res) => {
     if (!user || !user.e2e_migrated) {
       return res.status(409).json({ error: 'Locking needs end-to-end encryption', code: 'LOCK_REFUSED' });
     }
-    const keys = readLockRecoveryKeys(user.lock_recovery_keys).filter(k => k && k.id !== id);
-    keys.unshift({ id, publicKey, wrappedPrivateKey, salt, createdAt: Date.now() });
+    const existing = readLockRecoveryKeys(user.lock_recovery_keys);
+    // A re-wrap of a known entry keeps its place; a new one goes first
+    const known = existing.find(k => k && k.id === entry.id);
+    const keys = known
+      ? existing.map(k => (k && k.id === entry.id ? { ...entry, createdAt: known.createdAt || entry.createdAt } : k))
+      : mergeLockEntries(existing, [entry]);
     db.prepare('UPDATE users SET lock_recovery_keys = ? WHERE id = ?').run(JSON.stringify(keys.slice(0, 20)), req.user.id);
     res.json({ success: true });
   } catch (error) {

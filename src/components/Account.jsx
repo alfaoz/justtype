@@ -14,6 +14,7 @@ import { readableFont, lineFocus } from '../reading';
 import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { rewrapLockRecovery } from '../slateLock';
 import { wordlist } from '../bip39-wordlist';
 import { useToast } from './Toast';
 
@@ -653,6 +654,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         body.newRecoverySalt = newRecoverySalt;
       }
 
+      // Lock-recovery keypairs the password opens get the new phrase too
+      const followUp = () => (clientRecoveryPhrase ? rewrapLockRecovery({
+        via: { kind: 'password', secret: recoveryPassword },
+        add: [{ kind: 'phrase', secret: clientRecoveryPhrase, check: { recoverySalt: body.newRecoverySalt, recoveryWrappedKey: body.newRecoveryWrappedKey } }],
+      }).catch(() => {}) : null);
       const response = await fetch(`${API_URL}/account/regenerate-recovery-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -663,6 +669,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       const data = await response.json();
 
       if (response.ok) {
+        followUp();
         setRecoveryPhrase(clientRecoveryPhrase || data.recoveryPhrase);
         setRecoveryPassword('');
       } else {
@@ -717,6 +724,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       const recoveryPhraseToShow = body._recoveryPhrase;
       delete body._recoveryPhrase;
+      // Lock-recovery keypairs the old password opens get the new password
+      // and the new phrase
+      const followUp = () => (slateKey ? rewrapLockRecovery({
+        via: { kind: 'password', secret: currentPassword },
+        add: [
+          { kind: 'password', secret: newPassword },
+          { kind: 'phrase', secret: recoveryPhraseToShow, check: { recoverySalt: body.newRecoverySalt, recoveryWrappedKey: body.newRecoveryWrappedKey } },
+        ],
+      }).catch(() => {}) : null);
 
       const response = await fetch(`${API_URL}/account/change-password`, {
         method: 'POST',
@@ -728,6 +744,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       const data = await response.json();
 
       if (response.ok) {
+        followUp();
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
@@ -1001,6 +1018,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       const data = await response.json();
       if (response.ok) {
+        // Lock-recovery keypairs the pin opens get the password and the
+        // new phrase
+        rewrapLockRecovery({
+          via: { kind: 'pin', secret: setPasswordPin.join('') },
+          add: [
+            { kind: 'password', secret: setPasswordNew },
+            { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt, recoveryWrappedKey } },
+          ],
+        }).catch(() => {});
         setSetPasswordRecoveryPhrase(newRecoveryPhrase);
         setShowSetPasswordModal(false);
         setShowSetPasswordSuccess(true);

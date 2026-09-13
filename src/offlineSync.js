@@ -51,10 +51,19 @@ export async function mergeWithServer(userId, slateNumber, ourBody, baseEncrypte
   const theirs = await res.json();
   const cached = await getCachedSlate(userId, slateNumber);
   const key = await contentKeyFor(userId, cached || { data: theirs }, slateNumber);
+  // A lock change queued offline leaves the server's copy under the key the
+  // slate had before it, so each text is tried under the other keys too
+  const others = [await getSlateKey(userId), openDocKey(slateNumber)].filter(k => k && k !== key);
+  const open = async (blob) => {
+    try { return await decryptContent(blob, key); } catch (err) {
+      for (const k of others) { try { return await decryptContent(blob, k); } catch { /* next */ } }
+      throw err;
+    }
+  };
   const [baseText, ourText, theirText] = await Promise.all([
-    baseEncryptedContent ? decryptContent(baseEncryptedContent, key) : Promise.resolve(''),
-    decryptContent(ourBody.encryptedContent, key),
-    decryptContent(theirs.encryptedContent, key),
+    baseEncryptedContent ? open(baseEncryptedContent) : Promise.resolve(''),
+    open(ourBody.encryptedContent),
+    open(theirs.encryptedContent),
   ]);
   // Our text still holds unresolved conflict markers from an earlier merge:
   // merging it again would nest markers inside markers. It already carries

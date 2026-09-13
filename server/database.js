@@ -1039,13 +1039,19 @@ try {
     db.exec(`ALTER TABLE slates ADD COLUMN lock_wrapped_key TEXT;`);
     console.log('✓ Database migrated: Added is_locked and lock_wrapped_key columns to slates');
   }
-  const userColsLock = db.pragma('table_info(users)');
-  if (!userColsLock.some(col => col.name === 'lock_salt')) {
-    db.exec(`ALTER TABLE users ADD COLUMN lock_salt TEXT;`);
-    db.exec(`ALTER TABLE users ADD COLUMN lock_wrapped_key TEXT;`);
-    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_wrapped_key TEXT;`);
-    console.log('✓ Database migrated: Added lock key columns to users');
+  // The one-lock-key-per-account columns from the first cut of locks were
+  // never read again once every slate got its own secret: dropped
+  let userColsLock = db.pragma('table_info(users)');
+  for (const dead of ['lock_salt', 'lock_wrapped_key', 'lock_recovery_wrapped_key']) {
+    if (!userColsLock.some(col => col.name === dead)) continue;
+    try {
+      db.exec(`ALTER TABLE users DROP COLUMN ${dead};`);
+      console.log(`✓ Database migrated: Dropped unused users.${dead}`);
+    } catch (err) {
+      console.warn(`Could not drop users.${dead}:`, err.message);
+    }
   }
+  userColsLock = db.pragma('table_info(users)');
   // Each locked slate has its own secret: a salt per slate, the doc key
   // wrapped to the secret, and the doc key wrapped again to the account's
   // lock-recovery public key (RSA), whose private key is wrapped to the

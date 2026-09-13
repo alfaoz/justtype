@@ -23,7 +23,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -1351,6 +1351,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     },
     openHistory: () => setCollabPanel('history'),
     exportAs: (format) => {
+      // Behind its gate the slate's text is not here to export
+      if (lockGateRef.current) { announceStatus(strings.writer.lock.exportLocked, 2500); return; }
       switch (format) {
         case 'txt': exportToTxt(); break;
         case 'md': exportToMarkdown(); break;
@@ -2423,22 +2425,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
   const toggleLock = async () => {
     if (!canLock || lockGate) return;
-    if (!isOnline()) { announceStatus(strings.writer.lock.needsNetwork, 2500); return; }
     if (!isLocked) {
-      // Choosing a secret: the panel also collects the recovery phrase once
-      // when the account has no lock-recovery keypair for its current phrase
+      // Choosing a secret: the panel also asks for the login secret once
+      // when the account has no lock-recovery keypair the login opens yet
       let info = null;
-      try { info = await fetchLockRecovery(); } catch { announceStatus(strings.writer.lock.failed, 2500); return; }
+      try { info = await fetchLockRecovery(userId); } catch { announceStatus(strings.writer.lock.failed, 2500); return; }
       const recoveryKey = currentRecoveryKey(info);
-      setLockPrompt({ info, recoveryKey, needsRecoveryKey: !recoveryKey });
+      const needsLogin = !recoveryKey || !loginKindsOf(recoveryKey).length;
+      if (needsLogin && !isOnline()) { announceStatus(strings.writer.lock.needsNetwork, 2500); return; }
+      setLockPrompt({ info, recoveryKey, needsLogin });
       return;
     }
     try { await onSaveChain(() => rekeyForLock(false)); }
     catch (err) { console.error('lock toggle failed:', err); announceStatus(strings.writer.lock.failed, 2500); }
   };
-  const handleLockPromptSubmit = async ({ secret, phrase }) => {
+  const handleLockPromptSubmit = async ({ secret, login }) => {
     let recoveryKey = lockPrompt?.recoveryKey || null;
-    if (!recoveryKey) recoveryKey = await registerRecoveryKey(phrase, lockPrompt?.info || null);
+    if (login) recoveryKey = await ensureLockRecovery({ login, info: lockPrompt?.info || null });
     setLockPrompt(null);
     await onSaveChain(() => rekeyForLock(true, { secret, recoveryKey }));
   };
@@ -2451,19 +2454,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setLockGate(null);
     await loadSlate(gate.id);
   };
-  // Forgot it: the recovery phrase opens the doc key, a new secret wraps it
-  const handleLockGateRecover = async ({ phrase, secret }) => {
+  // Forgot it: the login secret or the phrase opens the doc key, a new
+  // secret wraps it
+  const handleLockGateRecover = async ({ via, secret }) => {
     const gate = lockGateRef.current;
     if (!gate) return;
-    const info = await fetchLockRecovery();
-    const docKey = await recoverSlate(gate.id, phrase, gate.slate, info);
+    const info = await fetchLockRecovery(userId);
+    const docKey = await recoverSlate(gate.id, via, gate.slate, info);
     const slateKey = await getSlateKey(userId);
     const text = gate.slate.encryptedContent ? await decryptContent(gate.slate.encryptedContent, docKey) : '';
-    let recoveryKey = currentRecoveryKey(info);
-    if (!recoveryKey) {
-      try { recoveryKey = await registerRecoveryKey(phrase, info); }
-      catch { recoveryKey = (info.keys || []).find(k => k && k.id === gate.slate.lock_recovery_key_id) || null; }
-    }
+    const recoveryKey = currentRecoveryKey(info) || (info.keys || []).find(k => k && k.id === gate.slate.lock_recovery_key_id) || null;
     await saveLockChange({ userId, slateNumber: gate.id, content: text, masterKey: slateKey, lockOn: true, secret, recoveryKey, docKey, baseUpdatedAt: gate.slate.updated_at ?? null });
     lockGateRef.current = null;
     setLockGate(null);
@@ -2545,7 +2545,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             key={lockGate ? `gate-${lockGate.id}` : 'setup'}
             className="w-full max-w-3xl"
             mode={lockGate ? 'gate' : 'setup'}
-            needsRecoveryKey={!lockGate && lockPrompt.needsRecoveryKey}
+            needsLogin={!lockGate && lockPrompt.needsLogin}
+            loginKind={loginKind()}
+            ways={!lockGate && lockPrompt.recoveryKey ? waysOf(lockPrompt.recoveryKey) : null}
+            onWays={lockGate ? async () => recoveryWaysFor(lockGate.slate, await fetchLockRecovery(userId)) : undefined}
             onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
             onRecover={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockGateRecover : undefined}
             onCancel={lockGate ? undefined : () => setLockPrompt(null)}

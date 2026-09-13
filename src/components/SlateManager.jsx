@@ -3,7 +3,7 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
-import { cacheList, getCachedList, getCachedSlates, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
+import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { MarkGlyph } from './MarkGlyph';
@@ -16,7 +16,7 @@ import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
 import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
-import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, registerRecoveryKey, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
@@ -444,24 +444,31 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [, setLockTick] = useState(0);
   useEffect(() => onLockChange(() => setLockTick(t => t + 1)), []);
   // The panel asked for before a lock change from the list:
-  // { mode: 'setup' | 'gate', slate, info, recoveryKey, needsRecoveryKey }
+  // { mode: 'setup' | 'gate', slate, info, recoveryKey, needsLogin }
   const [lockAsk, setLockAsk] = useState(null);
 
+  // The slate as the server holds it, or the device copy when offline
   const fetchSlateForLock = async (slate) => {
-    const res = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
-    if (!res.ok) throw new Error('load failed');
-    return res.json();
+    try {
+      const res = await fetch(`${API_URL}/slates/${slate.slate_number}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('load failed');
+      return await res.json();
+    } catch (err) {
+      const cached = isOnline() ? null : await getCachedSlate(userId, slate.slate_number).catch(() => null);
+      if (cached?.data?.encryptedContent) return { ...slate, ...cached.data };
+      throw err;
+    }
   };
   const noteLockChange = (slateNumber, lockFields, updatedAt) => {
     setSlates(prev => prev.map(s => s.slate_number === slateNumber ? { ...s, ...lockFields, updated_at: updatedAt ?? s.updated_at } : s));
   };
   // Lock a slate from its menu: fetch it, decrypt under the master key, save
   // it re-keyed to the chosen secret
-  const lockFromList = async (slate, { secret, phrase }, ask) => {
+  const lockFromList = async (slate, { secret, login }, ask) => {
     const master = await getSlateKey(userId);
     if (!master) throw new Error('no key');
     let recoveryKey = ask.recoveryKey;
-    if (!recoveryKey) recoveryKey = await registerRecoveryKey(phrase, ask.info);
+    if (login) recoveryKey = await ensureLockRecovery({ login, info: ask.info });
     const d = await fetchSlateForLock(slate);
     if (d.is_locked) return;
     const content = d.encryptedContent ? await decryptContent(d.encryptedContent, master) : (d.content || '');
@@ -481,12 +488,13 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
-    if (!isOnline()) { showToast(strings.writer.lock.needsNetwork); return; }
     try {
       if (!slate.is_locked) {
-        const info = await fetchLockRecovery();
+        const info = await fetchLockRecovery(userId);
         const recoveryKey = currentRecoveryKey(info);
-        setLockAsk({ mode: 'setup', slate, info, recoveryKey, needsRecoveryKey: !recoveryKey });
+        const needsLogin = !recoveryKey || !loginKindsOf(recoveryKey).length;
+        if (needsLogin && !isOnline()) { showToast(strings.writer.lock.needsNetwork); return; }
+        setLockAsk({ mode: 'setup', slate, info, recoveryKey, needsLogin });
         return;
       }
       const open = openDocKey(slate.slate_number);
@@ -508,9 +516,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
     setLockAsk(null);
   };
-  const handleLockAskRecover = async ({ phrase }) => {
+  const handleLockAskRecover = async ({ via }) => {
     const ask = lockAsk;
-    const docKey = await recoverSlate(ask.slate.slate_number, phrase, ask.slate);
+    const docKey = await recoverSlate(ask.slate.slate_number, via, ask.slate, await fetchLockRecovery(userId));
     await removeLockFromList(ask.slate, docKey);
     setLockAsk(null);
   };
@@ -1636,7 +1644,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <LockPanel
               mode={lockAsk.mode}
-              needsRecoveryKey={!!lockAsk.needsRecoveryKey}
+              needsLogin={!!lockAsk.needsLogin}
+              loginKind={loginKind()}
+              ways={lockAsk.recoveryKey ? waysOf(lockAsk.recoveryKey) : null}
+              onWays={lockAsk.mode === 'gate' ? async () => recoveryWaysFor(lockAsk.slate, await fetchLockRecovery(userId)) : undefined}
               onSubmit={handleLockAskSubmit}
               onRecover={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskRecover : undefined}
               onCancel={() => setLockAsk(null)}

@@ -184,9 +184,15 @@ export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(uid(
 export async function queuePending(userId, slateNumber, record) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('pending', 'readonly', s => s.get(key));
+  // A lock change waiting in the queue rides along under later saves of
+  // the same slate: their content is already under the key it switched to
+  const carriedLock = record.body && record.body.lock === undefined && prev?.body?.lock !== undefined
+    ? { body: { ...record.body, lock: prev.body.lock } }
+    : {};
   const rec = {
     key, userId: uid(userId), slateNumber,
     ...record,
+    ...carriedLock,
     // A slate that has not been created on the server yet stays a POST no
     // matter how many times it is saved again offline
     op: prev?.op === 'post' ? 'post' : record.op,

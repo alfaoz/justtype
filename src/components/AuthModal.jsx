@@ -5,6 +5,7 @@ import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { VERSION } from '../version';
 import { generateSlateKey, generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, encryptContent, decryptContent } from '../crypto';
 import { saveSlateKey, getSlateKey } from '../keyStore';
+import { ensureLockRecovery, rewrapLockRecovery } from '../slateLock';
 import { wordlist } from '../bip39-wordlist';
 import { deviceDefaultTheme } from '../themes';
 import { VerifyBadge } from './VerifyBadge';
@@ -256,6 +257,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
         setPendingRecoveryPhrase(recoveryPhrase);
         // Store slate key temporarily to save to IndexedDB after we get the user ID
         window.__pendingSlateKey = slateKey;
+        window.__pendingRecoveryPhrase = recoveryPhrase;
 
         body = {
           username, password, email, termsAccepted,
@@ -305,6 +307,10 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           // Registration: save the slate key we just generated
           await saveSlateKey(data.user.id, window.__pendingSlateKey);
           delete window.__pendingSlateKey;
+          // The keypair that opens forgotten slate locks, wrapped to the
+          // password and the phrase while both are in hand
+          ensureLockRecovery({ login: { kind: 'password', secret: password }, phrase: window.__pendingRecoveryPhrase || null }).catch(() => {});
+          delete window.__pendingRecoveryPhrase;
         } else if (isLogin && data.migrationSlateKey) {
           // Migration: server gave us the slate key (one-time)
           const keyBytes = Uint8Array.from(atob(data.migrationSlateKey), c => c.charCodeAt(0));
@@ -331,6 +337,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             const passwordDerivedKey = await deriveKey(password, data.encryptionSalt);
             const slateKey = await unwrapKey(data.wrappedKey, passwordDerivedKey);
             await saveSlateKey(data.user.id, slateKey);
+            // A lock-recovery keypair the password opens, made once
+            ensureLockRecovery({ login: { kind: 'password', secret: password } }).catch(() => {});
           } catch (unwrapErr) {
             console.error('E2E unwrap failed:', unwrapErr);
             throw new Error('failed to unlock your slates. please try again.');
@@ -627,6 +635,21 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
           const newRecoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
 
+          // Lock-recovery keypairs the old phrase opens follow along, wrapped
+          // to the new password and the new phrase
+          let lockRecoveryKeys;
+          try {
+            lockRecoveryKeys = await rewrapLockRecovery({
+              via: { kind: 'phrase', secret: recoveryPhrase },
+              add: [
+                { kind: 'password', secret: newPassword },
+                { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt: newRecoverySalt, recoveryWrappedKey: newRecoveryWrappedKey } },
+              ],
+              info: { keys: recoveryData.lockRecoveryKeys || [], recoverySalt: recoveryData.recoverySalt, recoveryWrappedKey: recoveryData.recoveryWrappedKey },
+              save: false,
+            });
+          } catch { lockRecoveryKeys = undefined; }
+
           const response = await fetch(`${API_URL}/auth/reset-password-with-recovery`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -638,6 +661,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               newRecoveryWrappedKey,
               newRecoverySalt,
               newEncryptionSalt,
+              ...(lockRecoveryKeys && lockRecoveryKeys.length ? { lockRecoveryKeys } : {}),
             }),
           });
 

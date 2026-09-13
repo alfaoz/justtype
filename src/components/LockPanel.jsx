@@ -9,50 +9,72 @@ import { Fade, AutoHeight, EASE } from './Reveal';
  *
  * The panel grows and shrinks in place instead of swapping screens. Enter on
  * a row of stars settles it and fades the next thing in right below: the
- * second row to type the secret again, the recovery phrase when the account
- * has no lock-recovery key yet (it leaves once entered), then the one line
- * that says a forgotten secret only opens with the recovery key. Enter, or
- * "lock it" in the bottom row, locks.
+ * second row to type the secret again, the login secret once when the
+ * account has no lock-recovery key it opens yet, then the one line that says
+ * what opens a forgotten secret. Enter, or "lock it" in the bottom row, locks.
  *
- * `setup`  choose a secret for this slate. Calls onSubmit({ secret, phrase }).
+ * `setup`  choose a secret for this slate. Calls onSubmit({ secret, login })
+ *          where login is { kind, secret } when `needsLogin` asked for it.
  * `gate`   the slate is locked: its secret opens it (onSubmit({ secret })),
- *          or "forgot it?" trades the row for the recovery phrase and a new
- *          secret (onRecover({ phrase, secret })).
+ *          or "forgot it?" trades the row for the login secret, or the
+ *          recovery phrase, and a new secret (onRecover({ via, secret })).
+ *          `onWays()` answers what the slate's keypair opens with.
  *
  * The words stay still; the stars are the motion. A mistake gets its own
  * line under the explanation and clears the row it happened on.
  */
-const SETUP_ORDER = ['secret', 'confirm', 'phrase', 'sure'];
-const GATE_ORDER = ['secret', 'phrase', 'newSecret', 'newConfirm'];
+const SETUP_ORDER = ['secret', 'confirm', 'login', 'sure'];
+const GATE_ORDER = ['secret', 'via', 'newSecret', 'newConfirm'];
 
-export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover, onCancel, className = '' }) {
+// "password", "pin", or "password or pin" for a list of login kinds
+const loginWord = (kinds) => {
+  const s = strings.writer.lock;
+  const list = [...new Set(kinds)];
+  return list.length > 1 ? s.loginWords.both : s.loginWords[list[0] || 'password'];
+};
+// What opens a forgotten secret, as one phrase
+export const waysWord = ({ logins = [], phrase = false } = {}) => {
+  const words = [];
+  if (logins.length) words.push(loginWord(logins));
+  if (phrase) words.push(strings.writer.lock.loginWords.phrase);
+  return words.join(strings.writer.lock.loginWords.or);
+};
+
+export function LockPanel({ mode, needsLogin = false, loginKind = 'password', ways: initialWays = null, onWays, onSubmit, onRecover, onCancel, className = '' }) {
   const s = strings.writer.lock;
   const [stage, setStage] = useState('secret');
   const [secret, setSecret] = useState('');
   const [again, setAgain] = useState('');
+  const [login, setLogin] = useState('');
   const [phrase, setPhrase] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Gate: what the slate's keypair opens with, and which of them is on screen
+  const [ways, setWays] = useState(initialWays);
+  const [viaKind, setViaKind] = useState('login');
   const panelRef = useRef(null);
 
-  const order = (mode === 'setup' ? SETUP_ORDER : GATE_ORDER).filter(st => st !== 'phrase' || mode === 'gate' || needsRecoveryKey);
+  const order = (mode === 'setup' ? SETUP_ORDER : GATE_ORDER).filter(st => st !== 'login' || needsLogin);
   const at = order.indexOf(stage);
   const reached = (st) => order.indexOf(st) !== -1 && order.indexOf(st) <= at;
   const advance = () => { setError(''); setStage(order[at + 1]); };
 
+  const setupWays = { logins: [loginKind], phrase: false };
+  const gateLoginWord = loginWord(ways?.logins?.length ? ways.logins : [loginKind]);
   const title = mode === 'setup' ? s.setupTitle : s.gateTitle;
   const hint = {
     secret: mode === 'setup' ? s.setupHint : s.gateHint,
     confirm: s.confirmHint,
-    phrase: mode === 'setup' ? s.phraseHintSetup : s.phraseHintRecover,
-    sure: s.sureBody,
+    login: s.loginHintSetup(loginWord([loginKind])),
+    via: viaKind === 'phrase' ? s.phraseHintRecover : s.loginHintRecover(gateLoginWord),
+    sure: s.sureBody(waysWord(needsLogin ? setupWays : initialWays || setupWays)),
     newSecret: s.setupHint,
     newConfirm: s.confirmHint,
   }[stage];
 
   const fail = (err) => {
     const m = err?.message;
-    setError(m === 'wrong' ? s.wrong : m === 'wrong phrase' ? s.wrongPhrase : s.failed);
+    setError(m === 'wrong' ? s.wrong : m === 'wrong phrase' ? s.wrongPhrase : m === 'wrong login' ? s.wrongLogin(gateLoginWord) : s.failed);
   };
   const run = async (fn) => {
     if (busy) return;
@@ -76,11 +98,24 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
     if (normalizeSecret(again) !== normalizeSecret(secret)) { setError(s.mismatch); setAgain(''); return; }
     advance();
   };
-  const submitPhrase = () => {
-    if (normalizePhrase(phrase).split(' ').length !== 12) { setError(s.phraseInvalid); return; }
+  const submitLogin = () => {
+    if (!login) { setError(s.loginEmpty(loginWord([loginKind]))); return; }
     advance();
   };
-  const submitSure = () => run(() => onSubmit({ secret: normalizeSecret(secret), phrase: needsRecoveryKey ? normalizePhrase(phrase) : null }));
+  const submitSure = () => run(() => onSubmit({
+    secret: normalizeSecret(secret),
+    login: needsLogin ? { kind: loginKind, secret: login } : null,
+  }));
+  // The way in without the secret: the login secret, or the phrase
+  const via = () => (viaKind === 'phrase'
+    ? { kind: 'phrase', secret: normalizePhrase(phrase) }
+    : { kinds: ways?.logins?.length ? ways.logins : [loginKind], secret: login });
+  const submitVia = () => {
+    if (viaKind === 'phrase') {
+      if (normalizePhrase(phrase).split(' ').length !== 12) { setError(s.phraseInvalid); return; }
+    } else if (!login) { setError(s.loginEmpty(gateLoginWord)); return; }
+    advance();
+  };
   const submitNewSecret = () => {
     if (normalizeSecret(secret).length < MIN_SECRET_LENGTH) { setError(s.tooShort); return; }
     advance();
@@ -89,15 +124,25 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
     if (normalizeSecret(again) !== normalizeSecret(secret)) { setError(s.mismatch); setAgain(''); return; }
     run(async () => {
       try {
-        await onRecover({ phrase: normalizePhrase(phrase), secret: normalizeSecret(secret) });
+        await onRecover({ via: via(), secret: normalizeSecret(secret) });
       } catch (err) {
-        setStage('phrase'); setSecret(''); setAgain('');
+        setStage('via'); setSecret(''); setAgain('');
+        if (err?.message === 'wrong phrase') setPhrase('');
+        if (err?.message === 'wrong login') setLogin('');
         throw err;
       }
     });
   };
-  // Forgot it: the secret row leaves, the recovery phrase takes its place
-  const forgot = () => { setError(''); setSecret(''); setStage('phrase'); };
+  // Forgot it: the secret row leaves; the login secret (or the phrase, for
+  // a slate whose keypair only the phrase opens) takes its place
+  const forgot = () => run(async () => {
+    const w = ways || (onWays ? await onWays() : null) || { logins: [loginKind], phrase: false };
+    setWays(w);
+    setViaKind(w.logins.length ? 'login' : 'phrase');
+    setSecret('');
+    setStage('via');
+  });
+  const otherWay = () => { setError(''); setViaKind(viaKind === 'phrase' ? 'login' : 'phrase'); };
 
   // With nothing left to type, the panel itself takes the enter key
   useEffect(() => {
@@ -111,13 +156,14 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
 
   // A row of stars. `show` keeps it on screen; once entered it stays a
   // shade quieter and no longer takes keys
-  const row = (st, value, setValue, submit, show = reached(st)) => (
+  const row = (st, value, setValue, submit, show = reached(st), extra = {}) => (
     <Fade key={st} show={show} className="mb-4">
       <div className={`transition-opacity duration-300 ${stage === st ? '' : 'opacity-50 pointer-events-none'}`}>
-        <SecretField value={value} onChange={(v) => { setValue(v); setError(''); }} grow autoFocus={stage === st} onSubmit={submit} />
+        <SecretField value={value} onChange={(v) => { setValue(v); setError(''); }} grow autoFocus={stage === st} onSubmit={submit} {...extra} />
       </div>
     </Fade>
   );
+  const pinOnly = (kinds) => kinds.length === 1 && kinds[0] === 'pin';
 
   return (
     <div
@@ -131,19 +177,21 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
 
         {row('secret', secret, setSecret, submitSecret, mode === 'setup' || stage === 'secret')}
         {row('confirm', again, setAgain, submitConfirm)}
+        {row('login', login, setLogin, submitLogin, reached('login'), { numeric: pinOnly([loginKind]) })}
 
-        {/* The recovery phrase: a box while it is typed; once it is in, the
-            box folds down to one quiet line saying so */}
-        <Fade show={reached('phrase')} className="w-full max-w-sm mb-4">
+        {/* The way in without the secret. The login secret is a row of
+            stars; the phrase is a box while it is typed, then one quiet line */}
+        {row('via', login, setLogin, submitVia, reached('via') && viaKind !== 'phrase', { numeric: pinOnly(ways?.logins || []) })}
+        <Fade show={reached('via') && viaKind === 'phrase'} className="w-full max-w-sm mb-4">
           <div
             className="relative w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded overflow-hidden focus-within:border-[var(--theme-text-dim)] transition-colors"
-            style={{ height: stage === 'phrase' ? 96 : 34, transition: `height 320ms ${EASE}, border-color 300ms ${EASE}` }}
+            style={{ height: stage === 'via' ? 96 : 34, transition: `height 320ms ${EASE}, border-color 300ms ${EASE}` }}
           >
-            <Fade show={stage === 'phrase'} className="absolute inset-0">
+            <Fade show={stage === 'via'} className="absolute inset-0">
               <textarea
                 value={phrase}
                 onChange={(e) => { setPhrase(e.target.value); setError(''); }}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPhrase(); } }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitVia(); } }}
                 placeholder={s.phrasePlaceholder}
                 autoFocus
                 spellCheck={false}
@@ -152,7 +200,7 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
                 className="w-full h-full bg-transparent p-3 text-[var(--theme-text)] text-sm font-mono resize-none focus:outline-none"
               />
             </Fade>
-            <Fade show={stage !== 'phrase'} className="absolute inset-0 flex items-center justify-center text-xs text-[var(--theme-text-dim)]">
+            <Fade show={stage !== 'via'} className="absolute inset-0 flex items-center justify-center text-xs text-[var(--theme-text-dim)]">
               {s.phraseEntered}
             </Fade>
           </div>
@@ -173,10 +221,15 @@ export function LockPanel({ mode, needsRecoveryKey = false, onSubmit, onRecover,
             <button onClick={onCancel} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">{s.cancel}</button>
           )}
           {mode === 'gate' && stage === 'secret' && onRecover && (
-            <button onClick={forgot} className="hover:text-[var(--theme-text)] transition-colors">{s.forgot}</button>
+            <button onClick={forgot} disabled={busy} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">{s.forgot}</button>
           )}
-          {stage === 'phrase' && (
-            <button onClick={submitPhrase} className="hover:text-[var(--theme-text)] transition-colors">{s.next}</button>
+          {stage === 'via' && ways?.phrase && ways?.logins?.length > 0 && (
+            <button onClick={otherWay} className="hover:text-[var(--theme-text)] transition-colors">
+              {viaKind === 'phrase' ? s.useLogin(gateLoginWord) : s.usePhrase}
+            </button>
+          )}
+          {(stage === 'via' || stage === 'login') && (
+            <button onClick={stage === 'via' ? submitVia : submitLogin} className="hover:text-[var(--theme-text)] transition-colors">{s.next}</button>
           )}
           {stage === 'sure' && (
             <button onClick={submitSure} disabled={busy} className="text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40">{s.lockIt}</button>

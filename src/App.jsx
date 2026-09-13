@@ -31,7 +31,7 @@ import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
-import { relock } from './slateLock';
+import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -1667,6 +1667,7 @@ export default function App() {
               body: JSON.stringify({ wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt }),
             });
             if (!response.ok) throw new Error('failed to save pin');
+            ensureLockRecovery({ login: { kind: 'pin', secret: pin }, phrase: recoveryPhrase }).catch(() => {});
             setShowPinSetup(false);
             setPendingMigrationKey(null);
             setPendingRecoveryPhrase(recoveryPhrase);
@@ -1685,6 +1686,8 @@ export default function App() {
             const pinDerivedKey = await deriveKey(pin, keyData.encryptionSalt, { pin: true });
             const slateKey = await unwrapKey(keyData.wrappedKey, pinDerivedKey);
             await saveSlateKey(userId, slateKey);
+            // A lock-recovery keypair the pin opens, made once
+            ensureLockRecovery({ login: { kind: 'pin', secret: pin } }).catch(() => {});
             setShowPinSetup(false);
           }}
           onRecover={async (recoveryPhrase, newPin) => {
@@ -1726,6 +1729,15 @@ export default function App() {
               body: JSON.stringify({ newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt })
             });
             if (!resetResponse.ok) throw new Error('failed to save new pin');
+            // Lock-recovery keypairs the old phrase opens get the new pin
+            // and the new phrase
+            rewrapLockRecovery({
+              via: { kind: 'phrase', secret: recoveryPhrase },
+              add: [
+                { kind: 'pin', secret: newPin },
+                { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt: newRecoverySalt, recoveryWrappedKey: newRecoveryWrappedKey } },
+              ],
+            }).catch(() => {});
 
             // Save slate key locally
             await saveSlateKey(userId, slateKey);
