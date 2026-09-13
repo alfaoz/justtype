@@ -23,6 +23,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
+import { LockRecoverModal } from './LockRecoverModal';
 import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
@@ -2454,20 +2455,30 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setLockGate(null);
     await loadSlate(gate.id);
   };
-  // Forgot it: the login secret or the phrase opens the doc key, a new
-  // secret wraps it
-  const handleLockGateRecover = async ({ via, secret }) => {
+  // Forgot it: a small modal takes the password (or the pin, or the phrase);
+  // what it opens is the doc key, and the lock comes off the slate
+  const [lockRecover, setLockRecover] = useState(null); // { ways, info }
+  const handleLockForgot = async () => {
     const gate = lockGateRef.current;
     if (!gate) return;
-    const info = await fetchLockRecovery(userId);
+    try {
+      const info = await fetchLockRecovery(userId);
+      setLockRecover({ ways: recoveryWaysFor(gate.slate, info), info });
+    } catch { announceStatus(strings.writer.lock.failed, 2500); }
+  };
+  const handleLockGateRecover = async ({ via }) => {
+    const gate = lockGateRef.current;
+    if (!gate) return;
+    const info = lockRecover?.info || await fetchLockRecovery(userId);
     const docKey = await recoverSlate(gate.id, via, gate.slate, info);
     const slateKey = await getSlateKey(userId);
     const text = gate.slate.encryptedContent ? await decryptContent(gate.slate.encryptedContent, docKey) : '';
-    const recoveryKey = currentRecoveryKey(info) || (info.keys || []).find(k => k && k.id === gate.slate.lock_recovery_key_id) || null;
-    await saveLockChange({ userId, slateNumber: gate.id, content: text, masterKey: slateKey, lockOn: true, secret, recoveryKey, docKey, baseUpdatedAt: gate.slate.updated_at ?? null });
+    await saveLockChange({ userId, slateNumber: gate.id, content: text, masterKey: slateKey, lockOn: false, baseUpdatedAt: gate.slate.updated_at ?? null });
+    setLockRecover(null);
     lockGateRef.current = null;
     setLockGate(null);
     await loadSlate(gate.id);
+    announceStatus(strings.writer.lock.recovered, 2500);
   };
   // Lock events for the open slate: the lock shut on its own (idle, logout)
   // hides the content behind the gate again; a change made from the list
@@ -2548,10 +2559,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             needsLogin={!lockGate && lockPrompt.needsLogin}
             loginKind={loginKind()}
             ways={!lockGate && lockPrompt.recoveryKey ? waysOf(lockPrompt.recoveryKey) : null}
-            onWays={lockGate ? async () => recoveryWaysFor(lockGate.slate, await fetchLockRecovery(userId)) : undefined}
-            onVerify={lockGate ? async (via) => verifyRecoveryWay(lockGate.slate, via, await fetchLockRecovery(userId)) : verifyLogin}
+            onVerify={lockGate ? undefined : verifyLogin}
             onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
-            onRecover={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockGateRecover : undefined}
+            onForgot={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockForgot : undefined}
             onCancel={lockGate ? undefined : () => setLockPrompt(null)}
           />
         ) : collabDocKey && collabSlateDbId ? (
@@ -2608,6 +2618,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           )}
         </div>,
         document.body
+      )}
+
+      {lockRecover && lockGate && (
+        <LockRecoverModal
+          ways={lockRecover.ways}
+          loginKind={loginKind()}
+          onVerify={(via) => verifyRecoveryWay(lockGate.slate, via, lockRecover.info)}
+          onRecover={handleLockGateRecover}
+          onClose={() => setLockRecover(null)}
+        />
       )}
 
       {collabPanel && (currentSlate || isShared) && (

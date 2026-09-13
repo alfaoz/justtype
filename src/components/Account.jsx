@@ -48,17 +48,26 @@ function InfoRow({ label, children }) {
   );
 }
 
-/** The header of an expandable row inside a Section. */
+/** The header of an expandable row inside a Section. While the row is open,
+ * the hover tint leaks down into the box below it and fades out. */
 function DisclosureHeader({ label, open, onToggle, tone }) {
+  const tint = tone === 'danger' ? 'rgba(127, 29, 29, 0.1)' : 'var(--theme-bg-secondary)';
   return (
     <button
       onClick={onToggle}
-      className={`w-full flex items-center justify-between gap-4 px-4 py-3.5 text-sm transition-colors ${
+      className={`group relative w-full flex items-center justify-between gap-4 px-4 py-3.5 text-sm transition-colors ${
         tone === 'danger'
           ? 'text-red-400 hover:bg-red-900/10'
           : 'hover:bg-[var(--theme-bg-secondary)]'
       }`}
     >
+      {open && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-full h-28 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+          style={{ background: `linear-gradient(to bottom, ${tint}, transparent)` }}
+        />
+      )}
       <span className="text-left">{label}</span>
       <span
         className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-45' : ''} ${

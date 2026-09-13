@@ -18,6 +18,7 @@ import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, Ey
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
+import { LockRecoverModal } from './LockRecoverModal';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
@@ -516,11 +517,19 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
     setLockAsk(null);
   };
+  const handleLockAskForgot = async () => {
+    const ask = lockAsk;
+    try {
+      const info = await fetchLockRecovery(userId);
+      setLockAsk({ ...ask, mode: 'recover', ways: recoveryWaysFor(ask.slate, info), info });
+    } catch { showToast(strings.writer.lock.failed); }
+  };
   const handleLockAskRecover = async ({ via }) => {
     const ask = lockAsk;
-    const docKey = await recoverSlate(ask.slate.slate_number, via, ask.slate, await fetchLockRecovery(userId));
+    const docKey = await recoverSlate(ask.slate.slate_number, via, ask.slate, ask.info);
     await removeLockFromList(ask.slate, docKey);
     setLockAsk(null);
+    showToast(strings.writer.lock.recovered);
   };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
@@ -1639,7 +1648,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
       </div>
       {toastNode}
-      {lockAsk && (
+      {lockAsk && lockAsk.mode === 'recover' && (
+        <LockRecoverModal
+          ways={lockAsk.ways}
+          loginKind={loginKind()}
+          onVerify={(via) => verifyRecoveryWay(lockAsk.slate, via, lockAsk.info)}
+          onRecover={handleLockAskRecover}
+          onClose={() => setLockAsk(null)}
+        />
+      )}
+      {lockAsk && lockAsk.mode !== 'recover' && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay z-[60] flex items-center justify-center p-4" onClick={() => setLockAsk(null)}>
           <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content py-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <LockPanel
@@ -1647,10 +1665,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               needsLogin={!!lockAsk.needsLogin}
               loginKind={loginKind()}
               ways={lockAsk.recoveryKey ? waysOf(lockAsk.recoveryKey) : null}
-              onWays={lockAsk.mode === 'gate' ? async () => recoveryWaysFor(lockAsk.slate, await fetchLockRecovery(userId)) : undefined}
-              onVerify={lockAsk.mode === 'gate' ? async (via) => verifyRecoveryWay(lockAsk.slate, via, await fetchLockRecovery(userId)) : verifyLogin}
+              onVerify={lockAsk.mode === 'gate' ? undefined : verifyLogin}
               onSubmit={handleLockAskSubmit}
-              onRecover={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskRecover : undefined}
+              onForgot={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskForgot : undefined}
               onCancel={() => setLockAsk(null)}
             />
           </div>
