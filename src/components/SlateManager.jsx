@@ -7,6 +7,10 @@ import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, 
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { scratchSlate, readScratch, clearScratch } from '../scratch';
+import { combined, downloadText } from '../exporter';
+import { openDocKey as openLockKey } from '../slateLock';
+import { createPortal } from 'react-dom';
+const MarkdownViewLazy = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
 import { MarkGlyph } from './MarkGlyph';
 import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
@@ -368,7 +372,7 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false }) {
   const isPinned = Boolean(slate.pinned_at);
   // The slate the writer has open (the one the writer button goes back to)
   // rests in its hover state: no word, just the row already lit
@@ -402,6 +406,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
             three stray lines. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0 flex-1">
+            {selecting && <span className={`text-xs mt-1 w-3 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
             <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words">{title}</h3>
             <span className="mt-1"><TagWords slate={slate} onTagFilter={onTagFilter} /></span>
@@ -439,6 +444,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
+          {selecting && <span className={`text-xs w-3 text-center ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
           <TagWords slate={slate} onTagFilter={onTagFilter} />
@@ -619,6 +625,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [tagBusy, setTagBusy] = useState(false);
   const [dragOverId, setDragOverId] = useState(null);
   const dragRef = useRef(null);
+  // Select mode: rows toggle instead of opening; the chosen ones export as one file
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [exporting, setExporting] = useState(false);
+  const [printItems, setPrintItems] = useState(null);
   // Every tag across the library with its count, most used first
   const tagCounts = useMemo(() => {
     const counts = new Map();
@@ -1051,6 +1062,65 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       if (tagFilter === tag) setTagFilter(null);
     } finally { setTagBusy(false); }
   };
+
+  // Export the selected slates as one file. Each is fetched and decrypted
+  // here; a locked slate whose lock is shut is left out and counted.
+  const toggleSelected = (n) => setSelected(prev => { const next = new Set(prev); if (next.has(n)) next.delete(n); else next.add(n); return next; });
+  const endSelecting = () => { setSelecting(false); setSelected(new Set()); };
+  const gatherSelected = async () => {
+    const master = await getSlateKey(userId);
+    if (!master) throw new Error('locked');
+    const rows = filteredAndSortedSlates.filter(s => selected.has(s.slate_number) && !s.shared);
+    const items = [];
+    let skipped = 0;
+    for (const row of rows) {
+      let key = master;
+      if (row.is_locked) { key = openLockKey(row.slate_number); if (!key) { skipped++; continue; } }
+      else if (row.is_collab && row.collab_wrapped_key) { try { key = await unwrapKey(row.collab_wrapped_key, master); } catch { skipped++; continue; } }
+      try {
+        const res = await fetch(`${API_URL}/slates/${row.slate_number}`, { credentials: 'include' });
+        if (!res.ok) throw new Error('fetch failed');
+        const data = await res.json();
+        const text = data.encryptedContent ? await decryptContent(data.encryptedContent, key) : (data.content || '');
+        items.push({ title: row.title || strings.slates.untitled, text, created: data.created_at, updated: data.updated_at, tags: Array.isArray(row.tags) ? row.tags : [], rich: data.editor_mode === 'wysiwyg' });
+      } catch (err) { console.error('export: slate skipped', row.slate_number, err); skipped++; }
+    }
+    return { items, skipped };
+  };
+  const exportSelected = async (format) => {
+    if (!selected.size || exporting) return;
+    setExporting(true);
+    try {
+      const { items, skipped } = await gatherSelected();
+      if (skipped) showToast(strings.slates.select.skippedLocked(skipped));
+      if (!items.length) { if (!skipped) showToast(strings.slates.select.nothing); return; }
+      const stamp = new Date().toISOString().split('T')[0];
+      if (format === 'pdf') { setPrintItems(items); return; }
+      downloadText(combined(items, format), `justtype-${stamp}.${format}`, format === 'md' ? 'text/markdown' : 'text/plain');
+      endSelecting();
+    } catch (err) {
+      showToast(err?.message === 'locked' ? strings.slates.tags.unlockRequired : strings.errors.loadFailed);
+    } finally { setExporting(false); }
+  };
+  // Print the gathered slates: a page each, the rendered view for rich ones
+  useEffect(() => {
+    if (!printItems) return;
+    let cancelled = false;
+    document.body.dataset.printing = '';
+    const done = () => { setPrintItems(null); endSelecting(); };
+    window.addEventListener('afterprint', done, { once: true });
+    (async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const root = document.querySelector('.print-root');
+        if (root && !root.querySelector('.print-fallback, .cm-lp-math-pending')) break;
+        await new Promise(r => setTimeout(r, 50));
+      }
+      await document.fonts?.ready;
+      if (!cancelled) window.print();
+    })();
+    return () => { cancelled = true; delete document.body.dataset.printing; window.removeEventListener('afterprint', done); };
+  }, [printItems]);
 
   // Delete: to the trash, with a word to bring it straight back. Restore
   // and delete forever act on what is in the trash; empty trash clears it.
@@ -1599,6 +1669,13 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 className="flex-1 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
               />
 
+              <button
+                onClick={() => (selecting ? endSelecting() : setSelecting(true))}
+                className={`h-10 px-3 text-xs md:text-sm rounded border transition-colors flex-shrink-0 ${selecting ? 'border-[var(--theme-text-dim)] text-[var(--theme-text)]' : 'border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+              >
+                {selecting ? strings.slates.select.done : strings.slates.select.start}
+              </button>
+
               {/* View Mode Toggle (desktop only: both layouts are one column
                   on a phone, so the control had nothing to switch) */}
               <div className="hidden md:flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
@@ -1692,6 +1769,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 </button>
               </div>
             )}
+            {selecting && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
+                <span className="text-[var(--theme-text-dim)]">{strings.slates.select.count(selected.size)}</span>
+                {['txt', 'md', 'pdf'].map(f => (
+                  <button key={f} onClick={() => exportSelected(f)} disabled={!selected.size || exporting} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors disabled:opacity-40 disabled:hover:text-[var(--theme-text-dim)]">
+                    {strings.slates.select[f]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1755,7 +1842,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               onCopy={(e) => copySlateNow(slate, e)}
               onKeep={(e) => toggleKeepOffline(slate, e)}
               layout={effectiveViewMode === 'list' ? 'row' : 'card'}
-              onOpen={() => slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate)}
+              selecting={selecting && !slate.shared}
+              selected={selected.has(slate.slate_number)}
+              onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}
               onTagFilter={setTagFilter}
               menuProps={{
                 isOpen: openMenuId === slate.slate_number,
@@ -1801,6 +1890,21 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
 
       {/* Delete Confirmation Modal */}
+      {printItems && createPortal(
+        <div className="print-root">
+          {printItems.map((it, i) => (
+            <div key={i} className={i < printItems.length - 1 ? 'print-break' : ''}>
+              <h1 className="print-title">{it.title}</h1>
+              {it.rich ? (
+                <React.Suspense fallback={<pre className="print-fallback">{it.text}</pre>}>
+                  <MarkdownViewLazy content={it.text} />
+                </React.Suspense>
+              ) : <pre>{it.text}</pre>}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
       {/* Tag management: every tag, renamed or removed across the library */}
       {tagManager && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => !tagBusy && setTagManager(false)}>

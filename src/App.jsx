@@ -34,6 +34,8 @@ import { reportNetworkFailure } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
 import { scratchSlate, clearScratch } from './scratch';
+import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
+import { useToast } from './components/Toast';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -58,6 +60,36 @@ export default function App() {
   const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
   // Bumped whenever app-created drops are adopted, to refresh the slate list.
   const [dropRefreshKey, setDropRefreshKey] = useState(0);
+  // Import: a file picker from the palette, or files dropped anywhere
+  const importInputRef = useRef(null);
+  const [dropping, setDropping] = useState(false);
+  const dragDepthRef = useRef(0);
+  const [showToast, toastNode] = useToast();
+  const runImport = async (files) => {
+    if (!token || !files?.length) return;
+    let items = [];
+    try { items = await itemsFromFiles(files); } catch { items = []; }
+    if (!items.length) { showToast(strings.slates.importer.nothing); return; }
+    try {
+      const { created } = await importItems(userId, items, (a, b) => { if (b > 1) showToast(strings.slates.importer.working(a, b), { hold: 60000 }); });
+      showToast(strings.slates.importer.done(created));
+      setDropRefreshKey(k => k + 1);
+      if (view !== 'slates') { setView('slates'); window.history.pushState({}, '', '/slates'); }
+    } catch (err) {
+      showToast(err?.message === 'locked' ? strings.slates.importer.locked : strings.slates.importer.failed);
+    }
+  };
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  const onDragEnter = (e) => { if (!token || !hasFiles(e)) return; e.preventDefault(); dragDepthRef.current++; setDropping(true); };
+  const onDragOver = (e) => { if (!token || !hasFiles(e)) return; e.preventDefault(); };
+  const onDragLeave = (e) => { if (!token || !hasFiles(e)) return; dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (!dragDepthRef.current) setDropping(false); };
+  const onDrop = async (e) => {
+    if (!token || !hasFiles(e)) return;
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setDropping(false);
+    runImport(await filesFromDataTransfer(e.dataTransfer));
+  };
   // Collab slate opened from the "shared with you" list (slates.id, not slate_number)
   const [sharedSlateId, setSharedSlateId] = useState(null);
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
@@ -948,6 +980,10 @@ export default function App() {
         await handleSelectSlate(scratchSlate());
         break;
 
+      case 'IMPORT':
+        importInputRef.current?.click();
+        break;
+
       case 'TODAY': {
         // Today's slate, opened at its end, or a new one that starts with the date
         let found = null;
@@ -1143,7 +1179,17 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
+    <div
+      className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden"
+      onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+    >
+      <input ref={importInputRef} type="file" multiple accept=".txt,.md,.markdown,.text,.zip,text/plain,text/markdown,application/zip" className="hidden" onChange={(e) => { runImport([...e.target.files]); e.target.value = ''; }} />
+      {dropping && (
+        <div className="fixed inset-0 z-[80] bg-black/30 backdrop-blur-md flex items-center justify-center pointer-events-none animate-modal-overlay">
+          <div className="text-sm text-[var(--theme-text)]">{strings.slates.importer.drop}</div>
+        </div>
+      )}
+      {toastNode}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');

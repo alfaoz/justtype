@@ -4,9 +4,10 @@ import { API_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
-import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
+import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, decryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { SCROLL_MODES, useScroll, setScroll, nextScroll, centerTextareaCaret } from '../typewriter';
 import { isScratchNumber, readScratch, writeScratch } from '../scratch';
+import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
 import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
@@ -242,6 +243,9 @@ async function pullAppEdits(slateNumber, masterKey) {
   }
 }
 
+// Tags of a loaded slate sit under its doc key when it is collaborative
+const collabDocKeyRefForTags = (data, slateKey) => (data.is_collab && data.collab_wrapped_key ? unwrapKey(data.collab_wrapped_key, slateKey) : slateKey);
+
 export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null, onOpenAsNewSlate }, ref) => {
   const [content, setContent] = useState('');
   // Mirrors `content` for effects that must see the value as of *now* rather
@@ -259,6 +263,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const caretSlateRef = useRef(null);     // the slate whose caret is being tracked
   const pendingTagsRef = useRef(null);    // tags for a slate about to be created
   const scrollMode = useScroll();
+  const frontMatter = useFrontMatter();
+  const slateFactsRef = useRef({}); // created_at, updated_at, tags of the open slate, for exports
   const [loadingFadeOut, setLoadingFadeOut] = useState(false);
   const [contentFadeKey, setContentFadeKey] = useState(0);
   const [showPublishMenu, setShowPublishMenu] = useState(false);
@@ -1312,6 +1318,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       setTitle(slateTitle);
+      slateFactsRef.current = { created_at: data.created_at, updated_at: data.updated_at, tags: [] };
+      if (data.encrypted_tags && slateKey) {
+        decryptTags(data.encrypted_tags, collabDocKeyRefForTags(data, slateKey)).then(t => { slateFactsRef.current.tags = Array.isArray(t) ? t : []; }).catch(() => {});
+      }
       if (!caretRestoreRef.current?.end) caretRestoreRef.current = cached?.data?.caret || null;
       if (caretRestoreRef.current && !caretRestoreRef.current.end) richEditorRef.current?.setNextSelection?.(caretRestoreRef.current);
       else if (caretRestoreRef.current?.end) richEditorRef.current?.setNextSelection?.({ anchor: slateContent.length });
@@ -2072,7 +2082,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
 
   const exportToMarkdown = () => {
-    const blob = new Blob([content], { type: 'text/markdown' });
+    const f = slateFactsRef.current || {};
+    const blob = new Blob([markdownOf({ title, text: content, created: f.created_at, updated: f.updated_at, tags: f.tags || [] }, frontMatter)], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -3585,12 +3596,27 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               </button>
               <button
                 onClick={() => {
+                  exportToMarkdown();
+                  setShowExportMenu(false);
+                }}
+                className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
+              >
+                {strings.writer.buttons.exportMd}
+              </button>
+              <button
+                onClick={() => {
                   exportToPdf();
                   setShowExportMenu(false);
                 }}
                 className="w-full p-4 bg-[var(--theme-bg-tertiary)] rounded-lg hover:bg-[var(--theme-bg-tertiary)] transition-colors text-left"
               >
                 {strings.writer.buttons.exportPdf}
+              </button>
+              <button
+                onClick={() => setFrontMatter(nextFrontMatter(frontMatter))}
+                className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors text-left px-1"
+              >
+                {strings.writer.buttons.frontMatter}: {frontMatter}
               </button>
             </div>
             <button

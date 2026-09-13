@@ -12,7 +12,7 @@ import { useMotion, setMotion } from '../motion';
 import { SCALES, useScale, setScale } from '../scale';
 import { readableFont, lineFocus } from '../reading';
 import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
-import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
+import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { rewrapLockRecovery } from '../slateLock';
 import { wordlist } from '../bip39-wordlist';
@@ -522,7 +522,12 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
           const createdAt = formatExportDate(data.created_at);
           const updatedAt = formatExportDate(data.updated_at);
-          const header = `Title: ${exportTitle || 'Untitled'}\nCreated: ${createdAt}\nLast Updated: ${updatedAt}\n\n`;
+          let tagLine = '';
+          const encTags = data.encrypted_tags || slateMeta.encrypted_tags;
+          if (encTags && slateKey) {
+            try { const tags = await decryptTags(encTags, slateKey); if (Array.isArray(tags) && tags.length) tagLine = `Tags: ${tags.join(', ')}\n`; } catch { /* tags stay out */ }
+          }
+          const header = `Title: ${exportTitle || 'Untitled'}\nCreated: ${createdAt}\nLast Updated: ${updatedAt}\n${tagLine}\n`;
 
           zip.file(filename, `${header}${content}`);
           exported++;

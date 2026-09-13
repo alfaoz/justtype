@@ -3076,6 +3076,65 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 });
 
 // Update slate
+// Import: up to a hundred slates in one call, ciphertext only, checked and
+// counted against storage as a whole before any of them is uploaded.
+// Dates from the files they came from are kept when given.
+app.post('/api/slates/batch', authenticateToken, requireEncryptionKey, createRateLimitMiddleware('importSlates'), async (req, res) => {
+  if (!req.e2e) return res.status(409).json({ error: 'Import needs end-to-end encryption', code: 'IMPORT_REFUSED' });
+  const items = Array.isArray(req.body && req.body.slates) ? req.body.slates : null;
+  if (!items || !items.length || items.length > 100) return res.status(400).json({ error: 'Send 1 to 100 slates' });
+  const maxSize = 5 * 1024 * 1024;
+  const isoOrNull = (v) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString().replace('T', ' ').replace(/\.\d+Z$/, '') : null);
+  const decoded = [];
+  let total = 0;
+  for (const it of items) {
+    if (!it || typeof it.encryptedContent !== 'string' || typeof it.encryptedTitle !== 'string' || !it.encryptedTitle.trim()) {
+      return res.status(400).json({ error: 'Encrypted content and title required for every slate', code: 'E2E_PLAINTEXT_REJECTED' });
+    }
+    let buffer;
+    try { buffer = decodeBase64Strict(it.encryptedContent, { maxBytes: maxSize }); }
+    catch (err) { return res.status(err && err.code === 'BASE64_TOO_LARGE' ? 413 : 400).json({ error: 'A slate is too large or not valid' }); }
+    if (it.encryptedTags != null && (typeof it.encryptedTags !== 'string' || it.encryptedTags.length > 8192)) return res.status(400).json({ error: 'Invalid tags' });
+    total += buffer.length;
+    decoded.push({
+      buffer, encryptedTitle: it.encryptedTitle,
+      encryptedTags: it.encryptedTags || null,
+      wordCount: Number.isInteger(it.wordCount) ? it.wordCount : 0,
+      charCount: Number.isInteger(it.charCount) ? it.charCount : 0,
+      editorMode: it.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain',
+      createdAt: isoOrNull(it.createdAt), updatedAt: isoOrNull(it.updatedAt),
+    });
+  }
+  const storageCheck = checkStorageLimit(req.user.id, total);
+  if (!storageCheck.allowed) return res.status(413).json({ error: storageCheck.error });
+  const created = [];
+  let failed = 0;
+  try {
+    for (const d of decoded) {
+      try {
+        const b2FileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}-${created.length}`, d.buffer);
+        const row = db.transaction(() => {
+          const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+          db.prepare(`
+            INSERT INTO slates (user_id, slate_number, title, encrypted_title, encrypted_tags, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode, created_at, updated_at)
+            VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, 1, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, ?, CURRENT_TIMESTAMP))
+          `).run(req.user.id, nextNumber, d.encryptedTitle, d.encryptedTags, b2FileId, d.wordCount, d.charCount, d.buffer.length, d.editorMode, d.createdAt, d.updatedAt, d.createdAt);
+          return db.prepare('SELECT slate_number, updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(nextNumber, req.user.id);
+        })();
+        created.push(row);
+      } catch (err) {
+        console.error('Import slate error:', err);
+        failed++;
+      }
+    }
+    updateUserStorage(req.user.id);
+    res.status(201).json({ created, failed });
+  } catch (error) {
+    console.error('Import error:', error);
+    res.status(500).json({ error: 'Import failed', created, failed });
+  }
+});
+
 app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateSlate'), async (req, res) => {
   const {
     title, encryptedTitle, content, encryptedContent,

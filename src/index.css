@@ -1178,4 +1178,5 @@ body.custom-theme ::-webkit-scrollbar-track {
   .print-root pre { font: inherit; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .print-root .cm-content { min-height: 0; }
   .print-root .cm-lp-copy { display: none; }
+  .print-root .print-break { break-after: page; page-break-after: always; }
 }

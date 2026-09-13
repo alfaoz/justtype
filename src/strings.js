@@ -141,7 +141,9 @@ const strings = {
       save: 'save',
       export: 'export',
       exportTxt: 'export as txt',
-      exportPdf: 'export as pdf'
+      exportPdf: 'export as pdf',
+      exportMd: 'export as markdown',
+      frontMatter: 'front matter'
     },
     menu: {
       unpublishSlate: 'unpublish slate',
@@ -271,6 +273,8 @@ const strings = {
     // The empty list under a filter, when nothing was searched for
     noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived', trash: 'the trash is empty' },
     trash: { moved: 'moved to trash', undo: 'undo', restored: 'restored', empty: 'empty trash', emptied: 'trash emptied', gone: 'deleted' },
+    select: { start: 'select', done: 'done', count: (n) => `${n} selected`, txt: 'txt', md: 'md', pdf: 'pdf', skippedLocked: (n) => `${n} locked slate${n === 1 ? '' : 's'} left out`, nothing: 'nothing to export' },
+    importer: { drop: 'drop to import', working: (a, b) => `importing ${a} of ${b}`, done: (n) => `imported ${n} slate${n === 1 ? '' : 's'}`, nothing: 'nothing to import in that', failed: 'import failed', locked: 'unlock your slates first' },
     // Content search: what is on this device is searched as you type; the
     // line under the results offers the rest
     search: {

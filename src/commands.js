@@ -31,6 +31,18 @@ export const commands = {
     requiresAuth: true,
     action: 'TODAY',
   },
+  import: {
+    id: 'import',
+    aliases: ['import files', 'upload'],
+    title: 'import',
+    description: 'text and markdown files become slates',
+    icon: '+',
+    category: 'actions',
+    shortcut: null,
+    context: ['writer', 'slates', 'account'],
+    requiresAuth: true,
+    action: 'IMPORT',
+  },
   scratch: {
     id: 'scratch',
     aliases: ['scratchpad', 'device'],
