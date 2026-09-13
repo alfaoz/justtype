@@ -556,6 +556,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   }, []);
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
+  // Every tag across the library, most used first
+  const allTags = useMemo(() => {
+    const counts = new Map();
+    for (const s of [...slates, ...sharedSlates]) for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
+  }, [slates, sharedSlates]);
   const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
   const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
@@ -1332,12 +1338,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
   const hasAnySlates = slates.length > 0 || sharedSlates.length > 0;
   const hasCollabSlates = slates.some(s => s.is_collab) || sharedSlates.length > 0;
-  // Every tag across the library, most used first
-  const allTags = useMemo(() => {
-    const counts = new Map();
-    for (const s of [...slates, ...sharedSlates]) for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
-  }, [slates, sharedSlates]);
 
   return (
     <div className="h-full overflow-y-auto">
