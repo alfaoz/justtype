@@ -80,7 +80,7 @@ export function LockRecoverModal({ ways, loginKind = 'password', onVerify, onRec
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
             placeholder={s.loginPlaceholder(word)}
             autoFocus
-            autoComplete="current-password"
+            autoComplete="new-password"
             className={`${boxCls} h-10 px-3 mb-4`}
           />
         )}
@@ -92,7 +92,7 @@ export function LockRecoverModal({ ways, loginKind = 'password', onVerify, onRec
           <div className="text-xs mt-2 leading-relaxed text-[var(--theme-red)]">{error}</div>
         </Fade>
 
-        <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-5 text-xs text-[var(--theme-text-dim)] whitespace-nowrap">
           <button onClick={onClose} disabled={busy} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity disabled:opacity-40">{s.cancel}</button>
           {ways?.phrase && kinds.length > 0 && (
             <button onClick={otherWay} disabled={busy} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">

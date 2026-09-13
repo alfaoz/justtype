@@ -175,7 +175,7 @@ export function LockPanel({ mode, needsLogin = false, loginKind = 'password', wa
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitLogin(); } }}
                   placeholder={s.loginPlaceholder(word)}
                   autoFocus
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   className="w-full h-full bg-transparent px-3 text-[var(--theme-text)] text-sm font-mono focus:outline-none"
                 />
               </Fade>
