@@ -42,6 +42,7 @@ export function LockRecoverModal({ ways, loginKind = 'password', onVerify, onRec
       await onRecover(via());
     } catch (err) {
       const m = err?.message;
+      if (m !== 'wrong phrase' && m !== 'wrong login') console.error('lock recovery failed:', err);
       setError(m === 'wrong phrase' ? s.wrongPhrase : m === 'wrong login' ? s.wrongLogin(word) : s.failed);
       setValue('');
       setBusy(false);
