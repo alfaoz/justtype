@@ -3753,7 +3753,10 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
     }
 
     // Generate ETag from slate updated_at timestamp and share_id
-    const etag = `"${slate.share_id}-${new Date(slate.updated_at).getTime()}-${slate.share_private ? 'p' : 'o'}"`;
+    // The tag changes with the text and with how the link opens, so a
+    // reader never gets a stale copy after a passphrase or expiry change
+    const shareStamp = crypto.createHash('sha256').update(`${slate.share_private ? 'p' : 'o'}|${slate.share_pass_wrapped_key || ''}|${slate.share_expires_at || ''}|${slate.b2_public_file_id || ''}`).digest('hex').slice(0, 12);
+    const etag = `"${slate.share_id}-${new Date(slate.updated_at).getTime()}-${shareStamp}"`;
 
     // Check if client has cached version
     if (req.headers['if-none-match'] === etag) {
