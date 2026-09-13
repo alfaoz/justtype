@@ -23,7 +23,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { LockPanel } from './LockPanel';
-import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 
 // Colour of the status word in the strip and the mobile sheet: failures
 // red, private-draft states orange, everything else green
@@ -2549,6 +2549,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             loginKind={loginKind()}
             ways={!lockGate && lockPrompt.recoveryKey ? waysOf(lockPrompt.recoveryKey) : null}
             onWays={lockGate ? async () => recoveryWaysFor(lockGate.slate, await fetchLockRecovery(userId)) : undefined}
+            onVerify={lockGate ? async (via) => verifyRecoveryWay(lockGate.slate, via, await fetchLockRecovery(userId)) : verifyLogin}
             onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
             onRecover={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockGateRecover : undefined}
             onCancel={lockGate ? undefined : () => setLockPrompt(null)}

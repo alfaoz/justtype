@@ -16,7 +16,7 @@ import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
 import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
-import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
+import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
 
 const TAG_REGEX = /^[a-z0-9]+$/;
@@ -1648,6 +1648,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               loginKind={loginKind()}
               ways={lockAsk.recoveryKey ? waysOf(lockAsk.recoveryKey) : null}
               onWays={lockAsk.mode === 'gate' ? async () => recoveryWaysFor(lockAsk.slate, await fetchLockRecovery(userId)) : undefined}
+              onVerify={lockAsk.mode === 'gate' ? async (via) => verifyRecoveryWay(lockAsk.slate, via, await fetchLockRecovery(userId)) : verifyLogin}
               onSubmit={handleLockAskSubmit}
               onRecover={lockAsk.mode === 'gate' && lockAsk.slate.lock_recovery_wrapped_key ? handleLockAskRecover : undefined}
               onCancel={() => setLockAsk(null)}

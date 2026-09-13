@@ -218,6 +218,28 @@ async function phraseWrap(pkcs8, phrase, info) {
   return makeWrap(pkcs8, { kind: 'phrase', secret: p, salt: info.recoverySalt });
 }
 
+// The login secret, checked against the account's own wrapped master key
+// before it wraps anything. Throws 'wrong login'.
+export async function verifyLogin({ kind, secret }) {
+  const res = await fetch(`${API_URL}/account/wrapped-key?kind=${kind}`, { credentials: 'include' });
+  if (!res.ok) throw new Error('no key');
+  const d = await res.json();
+  try {
+    await unwrapKey(d.wrappedKey, await deriveKey(secret, d.encryptionSalt, { pin: kind === 'pin' }));
+  } catch {
+    throw new Error('wrong login');
+  }
+}
+
+// Does `via` open the keypair a locked slate was wrapped to? Throws the
+// same way recoverSlate does, without opening the slate.
+export async function verifyRecoveryWay(slate, via, info = null) {
+  const d = info || await fetchLockRecovery();
+  const entry = (d.keys || []).find(k => k && k.id === slate.lock_recovery_key_id);
+  if (!entry) throw new Error('no recovery');
+  await openEntry(entry, via);
+}
+
 // Make sure a keypair exists that `login` { kind, secret } opens. Called
 // with the secret in hand (sign-in, pin unlock, registration, or the first
 // lock of a session that predates login wraps), so the lock panel never
@@ -226,6 +248,7 @@ export async function ensureLockRecovery({ login, phrase = null, info = null }) 
   const d = info || await fetchLockRecovery();
   const have = (d.keys || []).find(k => k && loginKindsOf(k).includes(login.kind));
   if (have) return have;
+  if (login.verify) await verifyLogin(login);
   const kp = await generateUserKeypair();
   const wraps = [await makeWrap(kp.privateKeyPkcs8, login)];
   const pw = await phraseWrap(kp.privateKeyPkcs8, phrase, d);

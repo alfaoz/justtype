@@ -4897,9 +4897,11 @@ app.get('/api/account/wrapped-key', authenticateToken, (req, res) => {
     if (!user || !user.e2e_migrated) {
       return res.status(404).json({ error: 'No wrapped key found' });
     }
-    // Prefer PIN-wrapped key (for Google/PIN unlock), fall back to wrapped_key
-    const key = user.pin_wrapped_key || user.wrapped_key;
-    const salt = user.pin_wrapped_key ? user.pin_salt : user.encryption_salt;
+    // Prefer PIN-wrapped key (for Google/PIN unlock), fall back to wrapped_key;
+    // ?kind=password asks for the password wrap of an account that has both
+    const wantPassword = req.query.kind === 'password' && user.wrapped_key && user.encryption_salt;
+    const key = wantPassword ? user.wrapped_key : (user.pin_wrapped_key || user.wrapped_key);
+    const salt = wantPassword ? user.encryption_salt : (user.pin_wrapped_key ? user.pin_salt : user.encryption_salt);
     if (!key || !salt) {
       return res.status(404).json({ error: 'No wrapped key found' });
     }
