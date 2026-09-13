@@ -81,9 +81,9 @@ const strings = {
       // What opens a forgotten secret, by name
       loginWords: { password: 'password', pin: 'pin', both: 'password or pin', phrase: 'recovery key', or: ' or your ' },
       loginHintSetup: (word) => `type your ${word} once. it opens this slate if you forget the secret.`,
-      recoverTitle: 'this slate is locked',
-      recoverHintLogin: (word) => `your ${word} opens it and takes the lock off.`,
-      recoverHintPhrase: 'the 12 words of your account open it and take the lock off.',
+      recoverTitle: 'forgot slate passphrase',
+      recoverHintLogin: (word) => `enter your ${word} to remove the lock`,
+      recoverHintPhrase: 'enter your recovery key to remove the lock',
       recoverGo: 'open it',
       recovering: 'opening...',
       recovered: 'lock removed',
@@ -322,7 +322,8 @@ const strings = {
       unpin: 'unpin',
     },
     tags: {
-      filterLabel: (tag) => `tag: ${tag}`,
+      rowLabel: 'tags:',
+      all: 'all',
       addPlaceholder: 'add tag...',
       addButton: 'add',
       saving: 'saving...',

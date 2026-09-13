@@ -160,7 +160,7 @@ export function LockPanel({ mode, needsLogin = false, loginKind = 'password', wa
 
         {/* The login secret, once: the pin as a row of stars, the password
             in its box, which folds to one line once it is accepted */}
-        {pinLogin ? row('login', login, setLogin, submitLogin, reached('login'), { numeric: true }) : (
+        {pinLogin ? row('login', login, setLogin, submitLogin, reached('login'), { numeric: true, grow: false }) : (
           <Fade show={reached('login')} className="w-full max-w-sm mb-4">
             <div
               className={`relative w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded overflow-hidden focus-within:border-[var(--theme-text-dim)] transition-colors ${stage === 'login' ? '' : 'cursor-pointer'}`}

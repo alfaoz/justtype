@@ -99,7 +99,7 @@ export function LockRecoverModal({ ways, loginKind = 'password', onVerify, onRec
               {viaKind === 'phrase' ? s.useLogin(word) : s.usePhrase}
             </button>
           )}
-          <button onClick={submit} disabled={busy} className="text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40">
+          <button onClick={submit} disabled={busy || !value} className="text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40 disabled:hover:opacity-40">
             {busy ? s.recovering : s.recoverGo}
           </button>
         </div>

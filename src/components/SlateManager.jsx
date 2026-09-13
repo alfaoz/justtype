@@ -25,6 +25,7 @@ const MAX_TAG_LENGTH = 24;
 const MAX_TAGS_PER_SLATE = 20;
 
 const ALL_APPS = '__all__';
+const ALL_TAGS = '__all__';
 
 const formatDateShort = (dateString) =>
   new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -64,10 +65,7 @@ const SORT_OPTIONS = [
  * # so they stay recognisable (and pressable) without a box around them.
  * The parent supplies flex, gap and text size.
  */
-function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy, onKeep, markLast = false }) {
-  const tags = Array.isArray(slate.tags) ? slate.tags : [];
-  const visibleTags = tags.slice(0, maxTags);
-  const remaining = tags.length - visibleTags.length;
+function SlateBadges({ slate, offline = false, onCopy, onKeep, markLast = false }) {
   const status = statusFor(slate);
   // Whether a copy of this slate is on this device. The mark hides until
   // hovered, so on a card it goes last, after collab and the tags, where its
@@ -104,23 +102,33 @@ function SlateBadges({ slate, onTagFilter, maxTags = 3, offline = false, onCopy,
           {strings.slates.status.fromApp.replace('{app}', slate.source_app_name)}
         </span>
       )}
-      {visibleTags.map(tag => (
+      {markLast && mark}
+    </>
+  );
+}
+
+/**
+ * A slate's tags, as quiet words after its title. Each one filters the list.
+ */
+function TagWords({ slate, onTagFilter, maxTags = 3 }) {
+  const tags = Array.isArray(slate.tags) ? slate.tags : [];
+  if (!tags.length) return null;
+  const visible = tags.slice(0, maxTags);
+  const remaining = tags.length - visible.length;
+  return (
+    <span className="flex items-center gap-2 text-xs min-w-0 shrink">
+      {visible.map(tag => (
         <button
           key={tag}
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            onTagFilter(tag);
-          }}
-          className="text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] transition-colors max-w-[8rem] truncate"
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onTagFilter(tag); }}
+          className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors max-w-[8rem] truncate"
           title={tag}
         >
           #{tag}
         </button>
       ))}
       {remaining > 0 && <span className="text-[var(--theme-text-dim)]">+{remaining}</span>}
-      {markLast && mark}
-    </>
+    </span>
   );
 }
 
@@ -347,7 +355,8 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0 flex-1">
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
-            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words flex-1">{title}</h3>
+            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words">{title}</h3>
+            <span className="mt-1"><TagWords slate={slate} onTagFilter={onTagFilter} /></span>
           </div>
           <SlateMenu slate={slate} {...menuProps} />
         </div>
@@ -355,7 +364,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
 
         <div className="mt-auto pt-4 flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} markLast />
+            <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} markLast />
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
@@ -375,19 +384,20 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="flex items-center gap-2">
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
+          <TagWords slate={slate} onTagFilter={onTagFilter} />
         </div>
         {snippet}
         {/* On a phone the meta wraps under the title; on desktop it sits as a
             right-aligned column so dates line up down the page. */}
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
-          <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
+          <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           {stats}
           <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
-        <SlateBadges slate={slate} onTagFilter={onTagFilter} offline={offline} onCopy={onCopy} onKeep={onKeep} />
+        <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
         {stats}
         <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
@@ -1322,6 +1332,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
   const hasAnySlates = slates.length > 0 || sharedSlates.length > 0;
   const hasCollabSlates = slates.some(s => s.is_collab) || sharedSlates.length > 0;
+  // Every tag across the library, most used first
+  const allTags = useMemo(() => {
+    const counts = new Map();
+    for (const s of [...slates, ...sharedSlates]) for (const t of (Array.isArray(s.tags) ? s.tags : [])) counts.set(t, (counts.get(t) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
+  }, [slates, sharedSlates]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -1450,16 +1466,21 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   onChange={(id) => setAppFilter(id === ALL_APPS ? null : id)}
                 />
               )}
-              {tagFilter && (
-                <button
-                  onClick={() => setTagFilter(null)}
-                  className="text-[var(--theme-accent)] hover:text-[var(--theme-text)] transition-colors"
-                  title={strings.slates.tags.filterLabel(tagFilter)}
-                >
-                  {strings.slates.tags.filterLabel(tagFilter)} <span className="text-[var(--theme-text-dim)]">x</span>
-                </button>
-              )}
             </div>
+            {/* Every tag in the library, a row of its own under sort and show */}
+            {allTags.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
+                <ChoiceRow
+                  label={strings.slates.tags.rowLabel}
+                  options={[
+                    { id: ALL_TAGS, label: strings.slates.tags.all },
+                    ...allTags.map(tag => ({ id: tag, label: `#${tag}`, title: tag })),
+                  ]}
+                  value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
+                  onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
+                />
+              </div>
+            )}
           </div>
         )}
 
