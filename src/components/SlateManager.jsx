@@ -1676,59 +1676,17 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         )}
 
-        {/* Search on one line, every list control on one quiet line below it */}
+        {/* Search on its own line; sort and show under it, with the verbs and
+            the two layouts at the right edge; tags on a line of their own */}
         {hasAnySlates && (
           <div className="flex flex-col gap-3 mb-6">
-            <div className="flex gap-3 items-center">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={strings.slates.searchPlaceholder}
-                className="flex-1 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
-              />
-
-              {/* Two quiet words beside the search: select rows, or bring files in */}
-              <button
-                onClick={() => (selecting ? endSelecting() : setSelecting(true))}
-                className={`px-1 text-xs md:text-sm transition-colors flex-shrink-0 ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
-              >
-                <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
-              </button>
-              {onImport && !selecting && (
-                <button onClick={onImport} className="px-1 text-xs md:text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors flex-shrink-0">
-                  {strings.slates.importer.start}
-                </button>
-              )}
-
-              {/* View Mode Toggle (desktop only: both layouts are one column
-                  on a phone, so the control had nothing to switch) */}
-              <div className="hidden md:flex items-center border border-[var(--theme-border)] rounded overflow-hidden h-10 flex-shrink-0">
-                <button
-                  onClick={() => withViewTransition(() => setViewMode('list'))}
-                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'list' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
-                  title={strings.slates.viewToggle.list}
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                    <rect x="1" y="2" width="14" height="2" rx="0.5"/>
-                    <rect x="1" y="7" width="14" height="2" rx="0.5"/>
-                    <rect x="1" y="12" width="14" height="2" rx="0.5"/>
-                  </svg>
-                </button>
-                <button
-                  onClick={() => withViewTransition(() => setViewMode('grid'))}
-                  className={`h-10 w-10 flex items-center justify-center transition-colors ${viewMode === 'grid' ? 'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)]'}`}
-                  title={strings.slates.viewToggle.grid}
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
-                    <rect x="1" y="1" width="6" height="6" rx="1"/>
-                    <rect x="9" y="1" width="6" height="6" rx="1"/>
-                    <rect x="1" y="9" width="6" height="6" rx="1"/>
-                    <rect x="9" y="9" width="6" height="6" rx="1"/>
-                  </svg>
-                </button>
-              </div>
-            </div>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={strings.slates.searchPlaceholder}
+              className="w-full h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
+            />
 
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
               <ChoiceRow
@@ -1771,56 +1729,95 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   onChange={(id) => setAppFilter(id === ALL_APPS ? null : id)}
                 />
               )}
+              <div className="ml-auto flex items-center gap-x-3">
+                <button
+                  onClick={() => (selecting ? endSelecting() : setSelecting(true))}
+                  className={`transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                >
+                  <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
+                </button>
+                {onImport && !selecting && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                      {strings.slates.importer.start}
+                    </button>
+                  </>
+                )}
+                {/* The two layouts (desktop only: both are one column on a
+                    phone, so there was nothing to switch) */}
+                <span className="hidden md:inline-flex items-center gap-x-2 ml-2">
+                  {[
+                    ['list', strings.slates.viewToggle.list, <><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></>],
+                    ['grid', strings.slates.viewToggle.grid, <><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></>],
+                  ].map(([mode, title, shape]) => (
+                    <button
+                      key={mode}
+                      onClick={() => withViewTransition(() => setViewMode(mode))}
+                      aria-label={title}
+                      className={`p-1 transition-colors ${viewMode === mode ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">{shape}</svg>
+                    </button>
+                  ))}
+                </span>
+              </div>
             </div>
             {/* Every tag in the library, a row of its own under sort and show.
-                While editing, each tag has a menu of its own (rename in place,
-                or remove from every slate) instead of filtering. */}
+                Editing adds a small menu after each tag (rename in place, or
+                remove from every slate); the menus grow in beside the words,
+                which stay where they are. */}
             {allTags.length > 0 && (
-              <div key={tagEditing ? 'edit' : 'filter'} className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm animate-[rowIn_0.25s_ease-out]">
-                {tagEditing ? (
-                  <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${tagBusy ? 'opacity-60 pointer-events-none' : ''}`}>
-                    <span className="text-[var(--theme-text-dim)] select-none">{strings.slates.tags.rowLabel}</span>
-                    {allTags.map(tag => (
-                      <span key={tag} className="flex items-center gap-1">
-                        {tagEdit?.tag === tag ? (
-                          <input
-                            autoFocus
-                            value={tagEdit.draft}
-                            onChange={(e) => setTagEdit({ tag, draft: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') renameTag(tag, tagEdit.draft);
-                              if (e.key === 'Escape') { e.stopPropagation(); setTagEdit(null); }
-                            }}
-                            onBlur={() => setTagEdit(null)}
-                            maxLength={MAX_TAG_LENGTH}
-                            size={Math.max(4, tagEdit.draft.length + 1)}
-                            className="bg-transparent border-b border-[var(--theme-text-dim)] text-[var(--theme-text)] focus:outline-none"
-                          />
-                        ) : (
-                          <span className="text-[var(--theme-text)]">#{tag}</span>
-                        )}
-                        <DotMenu small isOpen={openMenuId === `tag:${tag}`} onToggle={(e) => toggleMenu(`tag:${tag}`, e)}>
-                          <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag, draft: tag }); }} className={menuItemCls(false)}>
-                            {strings.slates.tags.rename}
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); removeTagEverywhere(tag); }} className={menuItemCls(true)}>
-                            {strings.slates.tags.remove}
-                          </button>
-                        </DotMenu>
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <ChoiceRow
-                    label={strings.slates.tags.rowLabel}
-                    options={[
-                      { id: ALL_TAGS, label: strings.slates.tags.all },
-                      ...allTags.map(tag => ({ id: tag, label: `#${tag}`, title: tag })),
-                    ]}
-                    value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
-                    onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
-                  />
-                )}
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
+                <ChoiceRow
+                  label={strings.slates.tags.rowLabel}
+                  className={tagBusy ? 'opacity-60 pointer-events-none' : ''}
+                  options={[
+                    { id: ALL_TAGS, label: strings.slates.tags.all },
+                    ...allTags.map(tag => (tagEdit?.tag === tag ? {
+                      id: tag,
+                      node: (
+                        <input
+                          autoFocus
+                          value={tagEdit.draft}
+                          onChange={(e) => setTagEdit({ tag, draft: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') renameTag(tag, tagEdit.draft);
+                            if (e.key === 'Escape') { e.stopPropagation(); setTagEdit(null); }
+                          }}
+                          onBlur={() => setTagEdit(null)}
+                          maxLength={MAX_TAG_LENGTH}
+                          size={Math.max(4, tagEdit.draft.length + 1)}
+                          className="bg-transparent border-b border-[var(--theme-text-dim)] text-[var(--theme-text)] focus:outline-none"
+                        />
+                      ),
+                    } : { id: tag, label: `#${tag}`, title: tag })),
+                  ]}
+                  value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
+                  onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
+                  after={(o) => o.id !== ALL_TAGS && (
+                    <span
+                      className="inline-flex items-center"
+                      aria-hidden={!tagEditing}
+                      style={{
+                        width: tagEditing ? '1rem' : 0,
+                        marginLeft: tagEditing ? '-0.5rem' : '-0.75rem',
+                        opacity: tagEditing ? 1 : 0,
+                        overflow: tagEditing ? 'visible' : 'hidden',
+                        transition: 'width 250ms ease-out, margin-left 250ms ease-out, opacity 250ms ease-out',
+                      }}
+                    >
+                      <DotMenu small isOpen={openMenuId === `tag:${o.id}`} onToggle={(e) => toggleMenu(`tag:${o.id}`, e)}>
+                        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag: o.id, draft: o.id }); }} className={menuItemCls(false)}>
+                          {strings.slates.tags.rename}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); removeTagEverywhere(o.id); }} className={menuItemCls(true)}>
+                          {strings.slates.tags.remove}
+                        </button>
+                      </DotMenu>
+                    </span>
+                  )}
+                />
                 <span className="opacity-30">·</span>
                 <button onClick={() => { setTagEditing(!tagEditing); setTagEdit(null); }} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
                   {tagEditing ? strings.slates.tags.done : strings.slates.tags.edit}

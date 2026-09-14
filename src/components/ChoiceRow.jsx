@@ -4,9 +4,11 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
  * A row of words to pick one from (`sort: recent oldest ...`), with one
  * accent underline for the row that glides to whichever word is chosen
  * instead of blinking from one to the next. `label` is optional: inside an
- * account row the label is already on the left.
+ * account row the label is already on the left. An option may bring its own
+ * `node` in place of the word (a tag being renamed), and `after(option)`
+ * renders something right after each word (a tag's menu).
  */
-export function ChoiceRow({ label, options, value, onChange, className = '' }) {
+export function ChoiceRow({ label, options, value, onChange, className = '', after }) {
   const wrapRef = useRef(null);
   const [bar, setBar] = useState(null);
   useLayoutEffect(() => {
@@ -24,17 +26,21 @@ export function ChoiceRow({ label, options, value, onChange, className = '' }) {
     <div ref={wrapRef} className={`relative flex items-center flex-wrap gap-x-3 gap-y-1 ${className}`}>
       {label && <span className="text-[var(--theme-text-dim)] select-none">{label}</span>}
       {options.map(option => (
-        <button
-          key={option.id}
-          data-choice={option.id}
-          onClick={() => onChange(option.id)}
-          title={option.title}
-          className={`transition-colors duration-300 max-w-[12rem] truncate ${
-            value === option.id ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
-          }`}
-        >
-          {option.label}
-        </button>
+        <React.Fragment key={option.id}>
+          {option.node || (
+            <button
+              data-choice={option.id}
+              onClick={() => onChange(option.id)}
+              title={option.title}
+              className={`transition-colors duration-300 max-w-[12rem] truncate ${
+                value === option.id ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
+              }`}
+            >
+              {option.label}
+            </button>
+          )}
+          {after?.(option)}
+        </React.Fragment>
       ))}
       {bar && (
         <span
