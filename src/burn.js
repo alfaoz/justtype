@@ -6,8 +6,8 @@
 // them burn as separate blocks at the same time. Returns the moment the
 // rows are gone and a way to put them back if the server said no.
 import { motionOff } from './motion';
+import { settle, fold, layerOver, clearRow } from './rowMotion';
 
-const settle = (anim) => new Promise((resolve) => { anim.onfinish = resolve; anim.oncancel = resolve; });
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const red = () => cssVar('--theme-red') || '#b33000';
 // Fire is light on a dark page and shadow on a light one
@@ -18,22 +18,8 @@ const blend = () => {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 128 ? 'multiply' : 'screen';
 };
 
-// A row's box closing: height, padding and borders to nothing so the rows
-// below glide up, while what is on it does `keyframes`
-const fold = (el, keyframes, opts) => {
-  const style = getComputedStyle(el);
-  const open = { height: `${el.getBoundingClientRect().height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
-  const shut = { height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' };
-  el.style.overflow = 'hidden';
-  el.style.pointerEvents = 'none';
-  return el.animate(keyframes.map((k, i) => ({ ...k, ...(i === keyframes.length - 1 ? shut : open) })), { fill: 'forwards', ...opts });
-};
-const clearRow = (el) => { el.style.overflow = ''; el.style.pointerEvents = ''; };
-
 const burnBlock = ({ items, top, bottom, left, right }) => {
-  const box = document.createElement('div');
-  Object.assign(box.style, { position: 'fixed', left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px`, pointerEvents: 'none', zIndex: 60 });
-  document.body.appendChild(box);
+  const box = layerOver({ left, top, right, bottom });
   const c = red();
   const rows = items.length;
   const DRAW = Math.min(620 + (rows - 1) * 150, 1700);

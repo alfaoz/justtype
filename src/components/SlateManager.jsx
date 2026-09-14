@@ -21,6 +21,7 @@ import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
 import { ScrollRow } from './ScrollRow';
 import { burnAway } from '../burn';
+import { fileAway } from '../archiveMotion';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -1337,6 +1338,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e?.preventDefault();
     setOpenMenuId(null);
     const archived = !slate.archived_at;
+    const fx = fileAway(rowEl(slate), { away: archived });
     try {
       const response = await fetch(`${API_URL}/slates/${slate.slate_number}/metadata`, {
         method: 'PATCH',
@@ -1345,9 +1347,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         body: JSON.stringify({ archived }),
       });
       const data = await response.json();
-      if (!response.ok) { showToast(data.error || strings.errors.archiveFailed); return; }
+      if (!response.ok) { fx.cancel(); showToast(data.error || strings.errors.archiveFailed); return; }
+      await fx.done;
       setSlates(prev => prev.map(s => s.slate_number === slate.slate_number ? { ...s, archived_at: data.archived_at } : s));
     } catch (err) {
+      fx.cancel();
       console.error('Failed to toggle archive:', err);
       showToast(strings.errors.archiveFailed);
     }
