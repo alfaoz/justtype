@@ -153,7 +153,7 @@ const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
  * Three dots that open a small menu: the slate rows have one, and in edit
  * mode every tag does.
  */
-function DotMenu({ isOpen, onToggle, children }) {
+function DotMenu({ isOpen, onToggle, children, small = false }) {
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
   const wrapRef = useRef(null);
@@ -169,7 +169,7 @@ function DotMenu({ isOpen, onToggle, children }) {
     <div ref={wrapRef} className="relative flex items-center flex-shrink-0">
       <button
         onClick={onToggle}
-        className="p-1 rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors"
+        className={`${small ? 'p-0.5' : 'p-1'} rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors`}
         title={strings.slates.menu.more}
       >
         {/* Three dots that run together into one line while the menu is open,
@@ -177,7 +177,7 @@ function DotMenu({ isOpen, onToggle, children }) {
             and the line grows from the middle. Splitting is not: the line
             fades where it is and the dots fade back in at their own places
             (the line's geometry snaps only after its fade is done). */}
-        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+        <svg className={small ? 'w-3 h-3' : 'w-4 h-4'} fill="currentColor" viewBox="0 0 16 16">
           {[2, 8, 14].map((cy) => (
             <circle
               key={cy}
@@ -1776,9 +1776,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 While editing, each tag has a menu of its own (rename in place,
                 or remove from every slate) instead of filtering. */}
             {allTags.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
+              <div key={tagEditing ? 'edit' : 'filter'} className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm animate-[rowIn_0.25s_ease-out]">
                 {tagEditing ? (
-                  <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${tagBusy ? 'opacity-60 pointer-events-none' : ''}`}>
+                  <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${tagBusy ? 'opacity-60 pointer-events-none' : ''}`}>
                     <span className="text-[var(--theme-text-dim)] select-none">{strings.slates.tags.rowLabel}</span>
                     {allTags.map(tag => (
                       <span key={tag} className="flex items-center gap-1">
@@ -1799,7 +1799,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                         ) : (
                           <span className="text-[var(--theme-text)]">#{tag}</span>
                         )}
-                        <DotMenu isOpen={openMenuId === `tag:${tag}`} onToggle={(e) => toggleMenu(`tag:${tag}`, e)}>
+                        <DotMenu small isOpen={openMenuId === `tag:${tag}`} onToggle={(e) => toggleMenu(`tag:${tag}`, e)}>
                           <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag, draft: tag }); }} className={menuItemCls(false)}>
                             {strings.slates.tags.rename}
                           </button>
@@ -1821,8 +1821,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
                   />
                 )}
+                <span className="opacity-30">·</span>
                 <button onClick={() => { setTagEditing(!tagEditing); setTagEdit(null); }} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
-                  <TextMorph>{tagEditing ? strings.slates.tags.done : strings.slates.tags.edit}</TextMorph>
+                  {tagEditing ? strings.slates.tags.done : strings.slates.tags.edit}
                 </button>
               </div>
             )}

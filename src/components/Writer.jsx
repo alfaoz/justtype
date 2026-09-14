@@ -9,7 +9,7 @@ import { useScroll, centerTextareaCaret } from '../typewriter';
 import { isScratchNumber, readScratch, writeScratch } from '../scratch';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
-import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, seedHistory } from '../history';
+import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -1929,8 +1929,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (loud) holdAnnouncement(2000);
       } else if (creating && data.slate_number != null) {
         announceStatus(strings.writer.status.savedAs(data.slate_number));
-        // The slate's first version is the text it was created with
-        if (userId && contentKey && !collabDocKey) seedHistory({ userId, n: data.slate_number, key: contentKey, text: content }).catch(() => {});
       } else if (explicit) {
         announceStatus('saved', 2000);
       } else if (!quiet) {
@@ -2688,21 +2686,27 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   }), [isLocked, currentSlate, hasUnsavedChanges, content]);
 
-  // Version history of a private slate. The panel reads versions through
-  // this source; restoring puts the old text in the editor and saves it
-  // like any edit, after the text on screen became a version itself.
+  // Version history of a private slate, on or off per slate. The panel
+  // reads versions through this source and turns them on (the text now is
+  // the first version) or off (every version goes); restoring puts the old
+  // text in the editor and saves it like any edit, after the text on screen
+  // became a version itself.
   const historyKey = async () => lockDocKey || (userId ? await getSlateKey(userId) : null);
   const historySource = useMemo(() => {
     const n = currentSlate?.slate_number;
+    const rows = (entries) => [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
     return {
       list: async () => {
-        const key = await historyKey();
-        let entries = await loadHistory(userId, n, key);
+        const entries = await loadHistory(userId, n, await historyKey());
         if (!entries) throw new Error(strings.collab.history.unavailable);
-        // A slate from before there were versions starts with the text it has now
-        if (!entries.length && !isLocalSlateNumber(n)) entries = (await seedHistory({ userId, n, key, text: contentRef.current }).catch(() => null)) || entries;
-        return [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
+        return rows(entries);
       },
+      turnOn: async () => {
+        const entries = await enableHistory({ userId, n, key: await historyKey(), text: contentRef.current });
+        if (!entries) throw new Error(strings.collab.history.unavailable);
+        return rows(entries);
+      },
+      turnOff: async () => rows(await disableHistory({ userId, n })),
       text: async (cp) => (heldHistory(userId, n) || []).find(e => e.id === cp.id)?.text ?? '',
       label: async (cp, name) => labelVersion({ userId, n, key: await historyKey(), id: cp.id, label: name }),
       emptyText: strings.collab.history.emptySolo,

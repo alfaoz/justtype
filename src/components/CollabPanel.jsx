@@ -5,6 +5,7 @@ import { strings } from '../strings';
 import { fetchCheckpoints, fetchCheckpointState, labelCheckpoint } from '../collab';
 import { CollabShareModal } from './CollabShareModal';
 import { NearbyTab } from './NearbyTab';
+import { ChoiceRow, wordOptions } from './ChoiceRow';
 
 // One home for everything collaborative on a slate: who is in it (people) and
 // where it has been (history). It is a side panel rather than a modal on
@@ -86,8 +87,46 @@ function HistoryTab({ source, currentText, onRestore, onOpenAsNewSlate }) {
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
   const restoreTimerRef = useRef(null);
+  // Versions per slate: on when there is at least one. Off asks first,
+  // since every version goes with it.
+  const [switching, setSwitching] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const offTimerRef = useRef(null);
 
-  useEffect(() => () => clearTimeout(restoreTimerRef.current), []);
+  useEffect(() => () => { clearTimeout(restoreTimerRef.current); clearTimeout(offTimerRef.current); }, []);
+
+  const switchVersions = async (v) => {
+    const on = checkpoints && checkpoints.length > 0;
+    if (switching || (v === 'on') === on) return;
+    if (v === 'off' && !confirmOff) {
+      setConfirmOff(true);
+      offTimerRef.current = setTimeout(() => setConfirmOff(false), 3000);
+      return;
+    }
+    clearTimeout(offTimerRef.current);
+    setConfirmOff(false);
+    setSwitching(true);
+    setError('');
+    try {
+      const list = await (v === 'on' ? source.turnOn() : source.turnOff());
+      setCheckpoints(list || []);
+      setSelected(list && list.length ? CURRENT_ID : null);
+      setTexts({});
+      if (list && list.length) ensureText(list[0]);
+    } catch (e) {
+      setError(String(e.message || '').toLowerCase());
+    } finally {
+      setSwitching(false);
+    }
+  };
+  const versionsRow = source.turnOn && checkpoints !== null && (
+    <div className={`flex items-center gap-4 px-4 pt-3 pb-1 text-sm ${switching ? 'opacity-60 pointer-events-none' : ''}`}>
+      <ChoiceRow label={s.versions} options={wordOptions(['off', 'on'])} value={checkpoints.length ? 'on' : 'off'} onChange={switchVersions} />
+      {confirmOff && (
+        <button onClick={() => switchVersions('off')} className="hover:opacity-70 transition-opacity" style={{ color: 'var(--theme-red)' }}>{s.offConfirm}</button>
+      )}
+    </div>
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -175,10 +214,13 @@ function HistoryTab({ source, currentText, onRestore, onOpenAsNewSlate }) {
   }
   if (checkpoints.length === 0) {
     return (
-      <div className="p-4">
-        <p className="text-sm text-[var(--theme-text-muted)]">{source.emptyText || s.empty}</p>
-        {error && <p className="text-sm mt-3" style={{ color: 'var(--theme-red)' }}>{error}</p>}
-      </div>
+      <>
+        {versionsRow}
+        <div className="p-4">
+          {!source.turnOn && <p className="text-sm text-[var(--theme-text-muted)]">{source.emptyText || s.empty}</p>}
+          {error && <p className="text-sm" style={{ color: 'var(--theme-red)' }}>{error}</p>}
+        </div>
+      </>
     );
   }
 
@@ -213,6 +255,7 @@ function HistoryTab({ source, currentText, onRestore, onOpenAsNewSlate }) {
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
+      {versionsRow}
       <div className="overflow-y-auto flex-shrink-0 px-4 pt-3 pb-2" style={{ maxHeight: '36%' }}>
         <button onClick={() => select(null)} className="w-full text-left flex gap-3 group">
           <span className="relative flex flex-col items-center flex-shrink-0 w-3">

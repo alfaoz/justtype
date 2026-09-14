@@ -441,6 +441,8 @@ const strings = {
       loading: 'loading checkpoints...',
       empty: 'no checkpoints yet. they build up as you write together.',
       emptySolo: 'no versions yet.',
+      versions: 'versions:',
+      offConfirm: 'sure?',
       unavailable: 'history is not available right now',
       pick: 'pick a checkpoint to preview it.',
       loadingPreview: 'opening...',

@@ -6,9 +6,12 @@
 // the server writes content and history in one update; the server holds
 // ciphertext and never a version count it could read anything from.
 //
-// A version is taken when the text changed since the last one and ten
-// minutes passed, or the save was explicit, or a merge or restore is about
-// to happen. Identical text is skipped. Retention thins by age: everything
+// Versions are off until turned on for the slate: turning them on writes
+// the text as the first version, and a slate with a bundle is one with
+// versions on. Turning them off drops the bundle. While on, a version is
+// taken when the text changed since the last one and ten minutes passed, or
+// the save was explicit, or a merge or restore is about to happen.
+// Identical text is skipped. Retention thins by age: everything
 // from the last hour, one an hour for a day, one a day for a month, one a
 // week beyond, and labelled versions always. The bundle stays under a byte
 // cap by dropping the oldest unlabelled versions.
@@ -149,7 +152,7 @@ const due = (entries, text, explicit, now) => {
 export async function prepareCheckpoint({ userId, n, text, key, explicit = false, force = false, reason = null }) {
   if (!userId || n == null || !key) return null;
   const entries = await loadHistory(userId, n, key);
-  if (!entries) return null;
+  if (!entries || !entries.length) return null; // versions are off for this slate
   const now = Date.now();
   if (!force && !due(entries, text, explicit, now)) return null;
   if (force && entries.length && entries[entries.length - 1].text === text) return null;
@@ -174,16 +177,22 @@ async function putBundle(userId, n, entries, key) {
   return out.entries;
 }
 
-// The first version: the text as it is, so a slate has a history from the
-// moment it exists. Right after a slate is created, and for slates from
-// before there were versions, when their history is first looked at. A
-// slate with versions already is left alone.
-export async function seedHistory({ userId, n, key, text }) {
-  if (!userId || n == null || !key || !text.trim()) return null;
+// Versions on: the text as it is becomes the first version. A slate with
+// versions already is left alone.
+export async function enableHistory({ userId, n, key, text }) {
+  if (!userId || n == null || !key) return null;
   const entries = await loadHistory(userId, n, key);
   if (!entries) return null;
   if (entries.length) return entries;
   return putBundle(userId, n, [{ id: newId(), at: Date.now(), text }], key);
+}
+
+// Versions off: every version of the slate goes
+export async function disableHistory({ userId, n }) {
+  const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}/history`, { method: 'DELETE', credentials: 'include' });
+  if (!res.ok) throw new Error('history save failed');
+  commitHistory(userId, n, [], null);
+  return [];
 }
 
 // Name a version (or clear its name) and save the bundle on its own

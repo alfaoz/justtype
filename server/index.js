@@ -3595,6 +3595,22 @@ app.put('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware(
   }
 });
 
+// Versions off for a slate: the bundle goes, and the account's total follows
+app.delete('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware('slateHistory'), async (req, res) => {
+  try {
+    const slate = db.prepare('SELECT id, history_b2_file_id, history_bytes FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+    if (!slate) return res.status(404).json({ error: 'Slate not found' });
+    if (slate.history_b2_file_id) {
+      applyHistoryRows(req.user.id, slate, null, 0, 0);
+      try { await b2Storage.deleteSlate(slate.history_b2_file_id); } catch (err) { console.warn('Failed to delete history file:', err); }
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete history error:', error);
+    res.status(500).json({ error: 'Failed to remove history' });
+  }
+});
+
 // Remove a slate for good: its files, its collab state, its history, its row
 const destroySlate = async (slate, userId) => {
   try {
