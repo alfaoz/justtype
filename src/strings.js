@@ -289,7 +289,7 @@ const strings = {
     noMatches: (query) => `no slates match "${query}"`,
     // The empty list under a filter, when nothing was searched for
     noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived yet', trash: 'nothing in the trash yet' },
-    trash: { moved: 'moved to trash', undo: 'undo', restored: 'restored', empty: 'empty trash', emptyConfirm: 'sure?', emptied: 'trash emptied', gone: 'deleted' },
+    trash: { restored: 'restored', empty: 'empty trash', emptyConfirm: 'sure?', emptied: 'trash emptied', gone: 'deleted' },
     select: { start: 'select', done: 'done', count: (n) => `${n} selected`, exportAs: 'export as:', txt: 'txt', md: 'md', pdf: 'pdf', skippedLocked: (n) => `${n} locked slate${n === 1 ? '' : 's'} left out`, nothing: 'nothing to export' },
     importer: { start: 'import', drop: 'drop to import', working: (a, b) => `importing ${a} of ${b}`, done: (n) => `imported ${n} slate${n === 1 ? '' : 's'}`, nothing: 'nothing to import in that', failed: 'import failed', locked: 'unlock your slates first' },
     // Content search: what is on this device is searched as you type; the
@@ -741,6 +741,7 @@ const strings = {
       haptics: 'haptics',
       scroll: 'scroll',
       swipe: 'swipe',
+      icons: 'icons',
       note: 'for this device.',
     },
     info: {

@@ -1,18 +1,21 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { readSwipe } from '../swipe';
+import { Ico } from './icons';
 
 /**
  * A row of words to pick one from (`sort: recent oldest ...`), with one
  * accent underline for the row that glides to whichever word is chosen
  * instead of blinking from one to the next. `label` is optional: inside an
  * account row the label is already on the left. An option may bring its own
- * `node` in place of the word (a tag being renamed), and `after(option)`
- * renders something right after each word (a tag's menu). With `swipe`, a
+ * `node` in place of the word (a tag being renamed), a `tone` of `danger`
+ * colours the word red, `after(option)` renders something right after each
+ * word (a tag's menu), and `icon` is the label's glyph when the device
+ * wants icons. With `swipe`, a
  * two-finger swipe across the row moves the choice a word at a time: every
  * eighty pixels of travel is one step, a long swipe keeps stepping, and the
  * ends stop. Which way is the device's `swipe` setting.
  */
-export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false }) {
+export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false, icon = null }) {
   const wrapRef = useRef(null);
   const [bar, setBar] = useState(null);
   const live = useRef({ value, options, onChange });
@@ -59,7 +62,12 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
   }, [value, options.length]);
   return (
     <div ref={wrapRef} className={`relative flex items-center flex-wrap gap-x-3 gap-y-1 ${className}`}>
-      {label && <span className="text-[var(--theme-text-dim)] select-none">{label}</span>}
+      {label && (
+        <span className="inline-flex items-center gap-1.5 text-[var(--theme-text-dim)] select-none">
+          {icon && <Ico of={icon} className="w-3.5 h-3.5" />}
+          {label}
+        </span>
+      )}
       {options.map(option => (
         <React.Fragment key={option.id}>
           {option.node || (
@@ -68,7 +76,9 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
               onClick={() => onChange(option.id)}
               title={option.title}
               className={`transition-colors duration-300 max-w-[12rem] truncate ${
-                value === option.id ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'
+                option.tone === 'danger'
+                  ? (value === option.id ? 'text-[var(--theme-red)]' : 'text-[var(--theme-red)] opacity-60 hover:opacity-100')
+                  : (value === option.id ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]')
               }`}
             >
               {option.label}

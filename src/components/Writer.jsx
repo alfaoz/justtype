@@ -25,6 +25,7 @@ import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePend
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
+import { SunIcon, SizeIcon, EyeIcon, HashIcon, PenIcon, PeopleIcon, ClockIcon, LinkIcon } from './icons';
 import { LockPanel } from './LockPanel';
 import { LockRecoverModal } from './LockRecoverModal';
 import { SharePanel } from './SharePanel';
@@ -2697,18 +2698,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
     device: [
-      { id: 'theme', label: 'theme', kind: 'menu', value: theme, options: getThemeIds(), onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
-      { id: 'size', label: 'size', kind: 'cycle', value: punto, options: PUNTO_SIZES, onCycle: cyclePunto, onSet: setPunto },
-      { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
-      { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
+      { id: 'theme', icon: SunIcon, label: 'theme', kind: 'menu', value: theme, options: getThemeIds(), onSet: selectTheme, onOpen: (e) => { anchorPopover(e); toggleTheme(); } },
+      { id: 'size', icon: SizeIcon, label: 'size', kind: 'cycle', value: punto, options: PUNTO_SIZES, onCycle: cyclePunto, onSet: setPunto },
+      { id: 'focus', icon: EyeIcon, label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
+      { id: 'counter', icon: HashIcon, label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
     ],
     slate: [
-      { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
+      { id: 'editor', icon: PenIcon, label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
     ].filter(Boolean),
     actions: [
-      token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
-      canHistory && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
-      token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
+      token && { id: 'collab', icon: PeopleIcon, label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
+      canHistory && { id: 'history', icon: ClockIcon, label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
+      token && !isShared && { id: 'share', icon: LinkIcon, label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
     ].filter(Boolean),
   };
 

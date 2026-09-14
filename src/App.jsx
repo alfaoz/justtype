@@ -34,6 +34,8 @@ import { reportNetworkFailure } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
 import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
+import { Ico, PenIcon, ArchiveIcon, UserIcon } from './components/icons';
+import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
 
 // Carries the release it announces, so a future version announces itself by
@@ -56,6 +58,7 @@ export default function App() {
   // We check if user might be logged in based on stored username
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
+  const icons = useIcons();
   const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
   // Bumped whenever app-created drops are adopted, to refresh the slate list.
   const [dropRefreshKey, setDropRefreshKey] = useState(0);
@@ -1307,15 +1310,15 @@ export default function App() {
               {/* Toggle button for writer/slates */}
               <button
                 onClick={handleToggleView}
-                className="relative h-5 w-[68px] md:w-24 overflow-hidden hover:text-white transition-colors flex-shrink-0"
+                className={`relative h-5 w-[68px] ${icons === 'on' ? 'md:w-28' : 'md:w-24'} overflow-hidden hover:text-white transition-colors flex-shrink-0`}
               >
                 <div
                   className={`absolute inset-0 flex flex-col transition-transform duration-150 ease-out ${
                     view === 'writer' || view === 'shared' ? '-translate-y-5' : 'translate-y-0'
                   }`}
                 >
-                  <span className="h-5 flex items-center justify-center whitespace-nowrap px-1 leading-5">{strings.app.tabs.writer}</span>
-                  <span className="h-5 flex items-center justify-center whitespace-nowrap px-1 leading-5">{strings.app.tabs.slates}</span>
+                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={PenIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.writer}</span>
+                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={ArchiveIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
                 </div>
               </button>
               <button
@@ -1363,7 +1366,7 @@ export default function App() {
                 }}
                 className={`hover:text-white transition-colors ${view === 'account' ? 'text-white' : ''}`}
               >
-                {strings.app.tabs.account}
+                <Ico of={UserIcon} className="w-3.5 h-3.5 hidden md:inline-block mr-1.5 align-[-2px]" />{strings.app.tabs.account}
               </button>
             </>
           ) : (

@@ -15,10 +15,11 @@ import { getSlateKey } from '../keyStore';
 import { fetchInvites, acceptInvite, declineInvite, fetchSharedSlates, leaveSharedSlate } from '../collab';
 import { useToast } from './Toast';
 import { withViewTransition } from '../viewTransition';
+import { motionOff } from '../motion';
 import { useEscape } from '../useEscape';
 import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
-import { PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon } from './icons';
+import { Ico, PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, EyeIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon, ArrowUpIcon, ArrowDownIcon, ImportIcon, SelectIcon, SortIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
 import { LockPanel } from './LockPanel';
@@ -216,40 +217,40 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTag
           {slate.deleted_at ? (
             <>
               <button onClick={onRestore} className={menuItemCls(false)}>
-                <UnarchiveIcon className={menuIcon} />
+                <Ico of={UnarchiveIcon} className={menuIcon} />
                 {strings.slates.menu.restore}
               </button>
               <button onClick={onDeleteForever} className={menuItemCls(true)}>
-                <TrashIcon className={menuIcon} />
+                <Ico of={TrashIcon} className={menuIcon} />
                 {strings.slates.menu.deleteForever}
               </button>
             </>
           ) : slate.shared ? (
             <button onClick={onLeave} className={menuItemCls(true)}>
-              <LeaveIcon className={menuIcon} />
+              <Ico of={LeaveIcon} className={menuIcon} />
               {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
             </button>
           ) : (
             <>
               <button onClick={onPin} className={menuItemCls(false)}>
-                {isPinned ? <UnpinIcon className={menuIcon} /> : <PinIcon className={menuIcon} />}
+                {isPinned ? <Ico of={UnpinIcon} className={menuIcon} /> : <Ico of={PinIcon} className={menuIcon} />}
                 {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
               </button>
               {/* A pinned slate can change places with its pinned neighbours */}
               {onMoveUp && (
                 <button onClick={onMoveUp} className={menuItemCls(false)}>
-                  <span className={`${menuIcon} text-center leading-none`}>↑</span>
+                  <Ico of={ArrowUpIcon} className={menuIcon} />
                   {strings.slates.pin.moveUp}
                 </button>
               )}
               {onMoveDown && (
                 <button onClick={onMoveDown} className={menuItemCls(false)}>
-                  <span className={`${menuIcon} text-center leading-none`}>↓</span>
+                  <Ico of={ArrowDownIcon} className={menuIcon} />
                   {strings.slates.pin.moveDown}
                 </button>
               )}
               <button onClick={onTags} className={menuItemCls(false)}>
-                <TagIcon className={menuIcon} />
+                <Ico of={TagIcon} className={menuIcon} />
                 {strings.slates.menu.tags}
               </button>
               {/* This device's copy: let it go, or get it. Keeping it past
@@ -257,31 +258,31 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTag
                   still on its way stays put. */}
               {!slate.local && !slate.pending && (
                 <button onClick={slate.available ? onOffload : onCopyToDevice} className={menuItemCls(false)}>
-                  {slate.available ? <CloudOffIcon className={menuIcon} /> : <CloudDownIcon className={menuIcon} />}
+                  {slate.available ? <Ico of={CloudOffIcon} className={menuIcon} /> : <Ico of={CloudDownIcon} className={menuIcon} />}
                   {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
                 </button>
               )}
               {!slate.is_locked && (
                 <button onClick={onPublish} className={menuItemCls(false)}>
-                  {slate.is_published ? <EyeOffIcon className={menuIcon} /> : <GlobeIcon className={menuIcon} />}
+                  {slate.is_published ? <Ico of={EyeOffIcon} className={menuIcon} /> : <Ico of={GlobeIcon} className={menuIcon} />}
                   {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
                 </button>
               )}
               {/* A private, non-collab slate can lock; a locked one unlocks */}
               {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
                 <button onClick={onLock} className={menuItemCls(false)}>
-                  {slate.is_locked ? <UnlockIcon className={menuIcon} /> : <LockIcon className={menuIcon} />}
+                  {slate.is_locked ? <Ico of={UnlockIcon} className={menuIcon} /> : <Ico of={LockIcon} className={menuIcon} />}
                   {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
                 </button>
               )}
               {!slate.local && (
                 <button onClick={onArchive} className={menuItemCls(false)}>
-                  {slate.archived_at ? <UnarchiveIcon className={menuIcon} /> : <ArchiveIcon className={menuIcon} />}
+                  {slate.archived_at ? <Ico of={UnarchiveIcon} className={menuIcon} /> : <Ico of={ArchiveIcon} className={menuIcon} />}
                   {slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive}
                 </button>
               )}
               <button onClick={onDelete} className={menuItemCls(true)}>
-                <TrashIcon className={menuIcon} />
+                <Ico of={TrashIcon} className={menuIcon} />
                 {strings.slates.menu.delete}
               </button>
             </>
@@ -388,6 +389,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     return (
       <div
         onClick={open}
+        data-slate={slate.slate_number}
         className={`slate-item ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
         {/* The title is the card: let it wrap to two lines instead of
@@ -430,6 +432,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     <div
       onClick={open}
       {...dragProps}
+      data-slate={slate.slate_number}
       className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} ${drag?.overId === slate.slate_number ? 'bg-[var(--theme-bg-tertiary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
     >
       <div className="min-w-0 flex-1">
@@ -1111,18 +1114,61 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       showToast(strings.errors.deleteSlate);
     }
   };
+  // A slate leaving for the trash: a copy of its row lifts, shrinks and
+  // flies to the word `trash`, which gives a small nod when it lands, while
+  // the row itself folds shut so the rows beneath glide up. Returns the
+  // moment the row is gone from view, and a way to put it back if the
+  // server said no.
+  const flyToTrash = (n) => {
+    const el = document.querySelector(`[data-slate="${n}"]`);
+    const target = document.querySelector('[data-choice="trash"]');
+    if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
+    const from = el.getBoundingClientRect();
+    const to = target ? target.getBoundingClientRect() : { left: from.left + from.width / 2, top: 0, width: 0, height: 0 };
+    const ghost = el.cloneNode(true);
+    Object.assign(ghost.style, {
+      position: 'fixed', left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`,
+      margin: 0, zIndex: 60, pointerEvents: 'none', boxSizing: 'border-box', transformOrigin: 'center',
+      background: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', borderRadius: '8px',
+      boxShadow: '0 16px 40px rgba(0, 0, 0, 0.35)',
+    });
+    document.body.appendChild(ghost);
+    const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
+    const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
+    const flight = ghost.animate([
+      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+      { transform: 'translate(0, -6px) scale(1.02)', opacity: 1, offset: 0.2 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.04)`, opacity: 0.3 },
+    ], { duration: 640, easing: 'cubic-bezier(0.5, 0, 0.1, 1)', fill: 'forwards' });
+    const style = getComputedStyle(el);
+    el.style.pointerEvents = 'none';
+    el.style.overflow = 'hidden';
+    const fold = el.animate([
+      { opacity: 0, height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
+      { opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
+    ], { duration: 360, delay: 160, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    flight.onfinish = () => {
+      ghost.remove();
+      target?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.2)' }, { transform: 'scale(1)' }], { duration: 280, easing: 'ease-out' });
+    };
+    const done = new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
+    const cancel = () => { flight.cancel(); fold.cancel(); ghost.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    return { done, cancel };
+  };
   const trashSlate = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
+    const flight = flyToTrash(slate.slate_number);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}`, { method: 'DELETE', credentials: 'include' });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { showToast(data.error || strings.errors.deleteSlate); return; }
+      if (!r.ok) { flight.cancel(); showToast(data.error || strings.errors.deleteSlate); return; }
+      await flight.done;
       markDeleted(slate.slate_number, data.deleted_at || Math.floor(Date.now() / 1000));
       onTrashed?.(slate.slate_number);
-      showToast(strings.slates.trash.moved, { action: { label: strings.slates.trash.undo, onClick: () => restoreSlate(slate) } });
     } catch (err) {
+      flight.cancel();
       console.error('Failed to delete slate:', err);
       showToast(strings.errors.deleteSlate);
     }
@@ -1649,7 +1695,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               <div className="flex items-center gap-x-3 flex-shrink-0 text-xs md:text-sm">
                 {onImport && (
                   <>
-                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                    <button onClick={onImport} className="inline-flex items-center gap-1.5 text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                      <Ico of={ImportIcon} className="w-3.5 h-3.5" />
                       {strings.slates.importer.start}
                     </button>
                     <span className="opacity-30">·</span>
@@ -1657,8 +1704,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 )}
                 <button
                   onClick={() => (selecting ? endSelecting() : setSelecting(true))}
-                  className={`transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                  className={`inline-flex items-center gap-1.5 transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
                 >
+                  <Ico of={SelectIcon} className="w-3.5 h-3.5" />
                   <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
                 </button>
                 {/* The two layouts (desktop only: both are one column on a
@@ -1684,6 +1732,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
               <ChoiceRow
                 swipe
+                icon={SortIcon}
                 label={strings.slates.sortLabel}
                 options={SORT_OPTIONS}
                 value={sortBy}
@@ -1691,13 +1740,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               />
               <ChoiceRow
                 swipe
+                icon={EyeIcon}
                 label={strings.slates.filterVisibility}
                 options={[
                   { id: 'all', label: strings.slates.filterVisibilityAll },
                   { id: 'public', label: strings.slates.filterVisibilityPublic },
                   { id: 'private', label: strings.slates.filterVisibilityPrivate },
                   { id: 'archived', label: strings.slates.filterVisibilityArchived },
-                  { id: 'trash', label: strings.slates.filterVisibilityTrash },
+                  { id: 'trash', label: strings.slates.filterVisibilityTrash, tone: 'danger' },
                 ]}
                 value={visibilityFilter}
                 onChange={setVisibilityFilter}
@@ -1735,6 +1785,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
                 <ChoiceRow
                   swipe
+                  icon={TagIcon}
                   label={strings.slates.tags.rowLabel}
                   className={tagBusy ? 'opacity-60 pointer-events-none' : ''}
                   options={[
@@ -1878,7 +1929,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       {visibilityFilter === 'trash' && filteredAndSortedSlates.length > 0 && (
         <div className="flex justify-end mt-4 text-xs md:text-sm">
           <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
-            <TextMorph>{confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}</TextMorph>
+            {confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}
           </button>
         </div>
       )}
