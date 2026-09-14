@@ -1114,93 +1114,49 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       showToast(strings.errors.deleteSlate);
     }
   };
-  // A slate leaving for the trash: a copy of its row crumples into a ball
-  // of paper, gets tossed in an arc to the word `trash`, and drops in; the
-  // word gives a nod as it lands. Underneath, the row folds shut so the rows
-  // beneath glide up. Returns the moment the row is gone from view, and a
-  // way to put it back if the server said no.
+  // A slate leaving for the trash: the row draws back a touch, then is
+  // flicked off the right edge, tilting as it goes, the way a row is swept
+  // away on a phone; the rows beneath close the gap as it leaves and the
+  // word `trash` gives a nod. The same move in both layouts. Returns the
+  // moment the row is gone from view, and a way to put it back if the
+  // server said no.
   const flyToTrash = (n) => {
     const el = document.querySelector(`[data-slate="${n}"]`);
     const target = document.querySelector('[data-choice="trash"]');
     if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
     const from = el.getBoundingClientRect();
-    const to = target ? target.getBoundingClientRect() : { left: from.left + from.width / 2, top: 0, width: 0, height: 0 };
-    const cx = from.left + from.width / 2;
-    const cy = from.top + from.height / 2;
-    const BALL = 26;
-    const CRUMPLE = 420;
-    const TOSS = 720;
-    const total = CRUMPLE + TOSS;
-    const c = CRUMPLE / total;
-
-    // The paper: a box that shrinks to a ball, holding a copy of the row
-    const paper = document.createElement('div');
-    Object.assign(paper.style, { position: 'fixed', left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`, zIndex: 60, pointerEvents: 'none', willChange: 'transform' });
-    const sheet = el.cloneNode(true);
-    sheet.querySelectorAll('[data-dropdown]').forEach((m) => m.remove()); // the menu that was just used stays behind
-    Object.assign(sheet.style, {
-      width: '100%', height: '100%', margin: 0, boxSizing: 'border-box', overflow: 'hidden',
-      background: 'var(--theme-bg-tertiary)', border: '1px solid var(--theme-border)', borderRadius: '8px',
-      boxShadow: '0 14px 36px rgba(0, 0, 0, 0.4)', transformOrigin: 'center',
+    const ghost = el.cloneNode(true);
+    ghost.querySelectorAll('[data-dropdown]').forEach((m) => m.remove()); // the menu that was just used stays behind
+    Object.assign(ghost.style, {
+      position: 'fixed', left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`,
+      margin: 0, zIndex: 60, pointerEvents: 'none', boxSizing: 'border-box', transformOrigin: 'left center',
+      background: 'var(--theme-bg-secondary)', border: '1px solid var(--theme-border)', borderRadius: '8px',
+      boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)', willChange: 'transform',
     });
-    paper.appendChild(sheet);
-    document.body.appendChild(paper);
+    document.body.appendChild(ghost);
+    const off = window.innerWidth - from.left + 60;
+    const flight = ghost.animate([
+      { transform: 'translateX(0) rotate(0deg)', opacity: 1 },
+      { transform: 'translateX(-14px) rotate(-0.5deg)', opacity: 1, offset: 0.22 },
+      { transform: `translateX(${off * 0.5}px) rotate(1.5deg)`, opacity: 0.9, offset: 0.7 },
+      { transform: `translateX(${off}px) rotate(2.5deg)`, opacity: 0 },
+    ], { duration: 520, easing: 'cubic-bezier(0.45, 0, 0.8, 0.35)', fill: 'forwards' });
 
-    // Crumple: the box wrings itself down to a ball at the row's centre
-    const ball = { left: `${cx - BALL / 2}px`, top: `${cy - BALL / 2}px`, width: `${BALL}px`, height: `${BALL}px` };
-    paper.animate([
-      { left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`, offset: 0 },
-      { ...ball, offset: c },
-      { ...ball, offset: 1 },
-    ], { duration: total, easing: 'linear', fill: 'forwards' });
-    sheet.animate([
-      { transform: 'rotate(0deg)', borderRadius: '8px', filter: 'blur(0px)', offset: 0 },
-      { transform: 'rotate(-3deg) scale(1.03)', borderRadius: '10px', filter: 'blur(0px)', offset: c * 0.2 },
-      { transform: 'rotate(5deg) scale(0.98)', borderRadius: '14px', filter: 'blur(1px)', offset: c * 0.45 },
-      { transform: 'rotate(-7deg) scale(1.02)', borderRadius: '40%', filter: 'blur(2px)', offset: c * 0.7 },
-      { transform: 'rotate(3deg)', borderRadius: '50%', filter: 'blur(2px)', offset: c },
-      { transform: 'rotate(620deg)', borderRadius: '50%', filter: 'blur(2px)', offset: 1 },
-    ], { duration: total, easing: 'linear', fill: 'forwards' });
-
-    // Toss: an arc from the ball's resting place to the word, thrown a
-    // little higher than a straight line, then a drop in
-    const dx = (to.left + to.width / 2) - cx;
-    const dy = (to.top + to.height / 2) - cy;
-    const lift = Math.max(90, Math.abs(dy) * 0.4);
-    const arc = [];
-    const STEPS = 16;
-    for (let i = 0; i <= STEPS; i++) {
-      const t = i / STEPS;
-      const x = dx * t;
-      const y = dy * t - lift * 4 * t * (1 - t);
-      arc.push({ transform: `translate(${x}px, ${y}px) scale(${i === STEPS ? 0.25 : 1})`, opacity: i === STEPS ? 0 : 1, offset: c + (1 - c) * t });
-    }
-    const flight = paper.animate([
-      { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: 0 },
-      { transform: 'translate(0, 0) scale(1)', opacity: 1, offset: c },
-      ...arc,
-    ], { duration: total, easing: 'linear', fill: 'forwards' });
-
-    // The row itself folds shut once the crumple is under way
+    // The row itself folds shut as the copy leaves
     const style = getComputedStyle(el);
     el.style.pointerEvents = 'none';
     el.style.overflow = 'hidden';
     const fold = el.animate([
       { opacity: 0, height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
       { opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-    ], { duration: 360, delay: 200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    ], { duration: 320, delay: 180, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
 
     flight.onfinish = () => {
-      paper.remove();
-      target?.animate([
-        { transform: 'scale(1, 1)' },
-        { transform: 'scale(1.25, 0.8)', offset: 0.35 },
-        { transform: 'scale(0.95, 1.1)', offset: 0.7 },
-        { transform: 'scale(1, 1)' },
-      ], { duration: 340, easing: 'ease-out' });
+      ghost.remove();
+      target?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)', offset: 0.4 }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
     };
     const done = new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
-    const cancel = () => { flight.cancel(); fold.cancel(); paper.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    const cancel = () => { flight.cancel(); fold.cancel(); ghost.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
     return { done, cancel };
   };
   const trashSlate = async (slate, e) => {
