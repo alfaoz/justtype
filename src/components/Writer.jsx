@@ -1955,7 +1955,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (!key && shareInfo?.wrappedKey) { try { key = await unwrapKey(shareInfo.wrappedKey, master); } catch { key = null; } }
           if (!key) key = await makeShareKey();
           shareKeyRef.current = key;
-          body.publicContent = await encryptShare({ title: firstLine, text: content }, key);
+          body.publicContent = await encryptShare({ title: firstLine, text: content, author: localStorage.getItem('justtype-username'), updatedAt: new Date().toISOString(), editorMode }, key);
           body.encryptedTitle = await encryptTitle(firstLine, titleKey);
           body.share.wrappedKey = await wrapKey(key, master);
           if (next.openWith === 'passphrase') {

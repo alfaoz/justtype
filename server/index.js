@@ -3800,23 +3800,14 @@ app.get('/api/public/slates/:shareId', createRateLimitMiddleware('viewPublicSlat
     // A private link: the copy is ciphertext under a key the server never
     // had; the reader's browser opens it with the key in the address, or a
     // passphrase against the wrap kept here
+    // Nothing else about it: the byline, dates and counts travel inside
+    // the ciphertext, so an address without its key learns nothing
     if (slate.share_private) {
       const data = await b2Storage.downloadRawFile(fileIdToFetch);
       return res.json({
         encrypted: true,
         blob: data.toString('base64'),
         pass: slate.share_pass_wrapped_key ? { salt: slate.share_pass_salt, wrappedKey: slate.share_pass_wrapped_key } : null,
-        title: null,
-        author: displayUsername,
-        supporter_tier: slate.supporter_tier,
-        supporter_badge_visible: slate.supporter_badge_visible === 1,
-        word_count: slate.word_count,
-        char_count: slate.char_count,
-        view_count: slate.view_count + 1,
-        created_at: slate.created_at,
-        updated_at: slate.updated_at,
-        expires_at: slate.share_expires_at || null,
-        editor_mode: slate.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain'
       });
     }
 

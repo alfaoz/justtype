@@ -24,11 +24,12 @@ export function keyFromFragment(hash = window.location.hash) {
   try { const k = fromUrl(m[1]); return k.length === 32 ? k : null; } catch { return null; }
 }
 
-// The shared copy: title and text as one encrypted payload
-export const encryptShare = ({ title, text }, key) => encryptContent(JSON.stringify({ title, text }), key);
+// The shared copy: title, text and the byline as one encrypted payload,
+// so the server holds nothing readable about a private link at all
+export const encryptShare = ({ title, text, author, updatedAt, editorMode }, key) => encryptContent(JSON.stringify({ title, text, author, updatedAt, editorMode }), key);
 export async function decryptShare(blob, key) {
   const parsed = JSON.parse(await decryptContent(blob, key));
-  return { title: parsed.title || '', text: parsed.text || '' };
+  return { title: parsed.title || '', text: parsed.text || '', author: parsed.author || null, updatedAt: parsed.updatedAt || null, editorMode: parsed.editorMode || null };
 }
 
 export async function wrapForPassphrase(key, phrase) {

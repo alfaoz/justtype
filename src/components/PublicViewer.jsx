@@ -27,9 +27,15 @@ export function PublicViewer() {
   const [sealed, setSealed] = useState(null); // { blob, pass, meta }
   const [phrase, setPhrase] = useState('');
   const [phraseError, setPhraseError] = useState('');
+  // Everything the page shows about a private link comes out of the
+  // ciphertext; the counts are made here, there is no view count
   const openSealed = async (blobAndMeta, key) => {
-    const { title, text } = await decryptShare(blobAndMeta.blob, key);
-    setSlate({ ...blobAndMeta.meta, title: title || 'untitled slate', content: text });
+    const { title, text, author, updatedAt, editorMode } = await decryptShare(blobAndMeta.blob, key);
+    setSlate({
+      ...blobAndMeta.meta,
+      title: title || 'untitled slate', content: text, author, updated_at: updatedAt, editor_mode: editorMode,
+      word_count: text.trim() ? text.trim().split(/\s+/).length : 0, char_count: text.length, view_count: null,
+    });
     setSealed(null);
   };
   const submitPhrase = async () => {
@@ -59,7 +65,7 @@ export function PublicViewer() {
         ? `${slate.title.substring(0, maxOgTitleLength)}...`
         : slate.title;
 
-      const description = `slate by ${slate.author}`;
+      const description = slate.author ? `slate by ${slate.author}` : pages.brand;
       const pageTitle = `${ogTitle} · ${pages.brand}`;
       const url = window.location.href;
 
@@ -248,22 +254,26 @@ export function PublicViewer() {
 
           {/* Byline first, on its own line: it is the one fact a reader
               actually looks for. The rest is provenance, kept quieter. */}
-          <div className="text-sm text-[var(--theme-text-muted)] mb-3">
+          {slate.author && <div className="text-sm text-[var(--theme-text-muted)] mb-3">
             {strings.public.byAuthor(slate.author)}
             {slate.supporter_badge_visible && slate.supporter_tier && (
               <span className="text-purple-400 font-medium ml-1.5">
                 [{slate.supporter_tier === 'quarterly' ? 'supporter +' : 'supporter'}]
               </span>
             )}
-          </div>
+          </div>}
 
           <div className="text-xs text-[var(--theme-text-dim)] flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
-            <span className="opacity-40">·</span>
+            {slate.updated_at && <>
+              <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
+              <span className="opacity-40">·</span>
+            </>}
             <span>{strings.public.stats.words(slate.word_count)}</span>
             <span className="opacity-40">·</span>
-            <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
-            <span className="opacity-40">·</span>
+            {slate.view_count != null && <>
+              <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
+              <span className="opacity-40">·</span>
+            </>}
             <a
               href={`mailto:hi@alfaoz.dev?subject=Report slate: ${encodeURIComponent(slate.title)}&body=Share ID: ${window.location.pathname.split('/s/')[1]}%0A%0AReason for report:%0A`}
               className="hover:text-[var(--theme-accent)] transition-colors"
