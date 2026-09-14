@@ -1110,11 +1110,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       if (!r.ok) throw new Error('restore failed');
       await back.done;
       markDeleted(slate.slate_number, null);
-      showToast(strings.slates.trash.restored);
     } catch (err) {
       back.cancel();
       console.error('Failed to restore slate:', err);
-      showToast(strings.errors.deleteSlate);
     }
   };
   // A slate coming back from the trash: the red line through its row is
@@ -1155,14 +1153,16 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   };
   // A slate leaving for the trash: a red line is drawn through the row the
   // way a pencil draws, slow off the mark, quick through the middle, easing
-  // to a stop; a beat later the row is squished flat from the top, fast, so
-  // the rows below glide up, and the word `trash` gives a small bounce as
-  // that happens. The same in both layouts. Returns the moment the row is
-  // gone from view, and a way to put it back if the server said no.
+  // to a stop; once the server has agreed and the line is drawn, the row is
+  // squished flat from the top, fast, so the rows below glide up, and the
+  // word `trash` gives one small bounce. The same in both layouts. Returns
+  // the strike, the squish to call when the server says yes, and a way to
+  // put the row back if it says no.
   const flyToTrash = (n) => {
     const el = document.querySelector(`[data-slate="${n}"]`);
     const target = document.querySelector('[data-choice="trash"]');
-    if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
+    const still = { struck: Promise.resolve(), squish: async () => {}, cancel: () => {} };
+    if (!el || !el.animate || motionOff()) return still;
     const from = el.getBoundingClientRect();
     const title = el.querySelector('h3');
     const t = title ? title.getBoundingClientRect() : from;
@@ -1176,49 +1176,51 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       background: 'var(--theme-red)', transformOrigin: 'left center', transform: 'scaleX(0)', zIndex: 60, pointerEvents: 'none',
     });
     document.body.appendChild(line);
-    const strike = line.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: DRAW, easing: PENCIL, fill: 'forwards' });
-    const lineOut = line.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SQUISH, delay: DRAW + HOLD, easing: 'ease-in', fill: 'forwards' });
-
-    // The squish: the row's box folds and its contents flatten toward the top
-    const style = getComputedStyle(el);
     el.style.pointerEvents = 'none';
-    el.style.overflow = 'hidden';
-    el.style.transformOrigin = 'center top';
-    const fold = el.animate([
-      { transform: 'scaleY(1)', height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
-      { transform: 'scaleY(0)', height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-    ], { duration: SQUISH, delay: DRAW + HOLD, easing: 'cubic-bezier(0.7, 0, 0.85, 0.25)', fill: 'forwards' });
-
-    // The word bounces as the row goes
-    target?.animate([
-      { transform: 'translateY(0)' },
-      { transform: 'translateY(-5px)', offset: 0.3 },
-      { transform: 'translateY(0)', offset: 0.6 },
-      { transform: 'translateY(-2px)', offset: 0.8 },
-      { transform: 'translateY(0)' },
-    ], { duration: 460, delay: DRAW + HOLD + 60, easing: 'ease-out' });
-
-    lineOut.onfinish = () => line.remove();
-    const done = new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
-    const cancel = () => { strike.cancel(); lineOut.cancel(); fold.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; el.style.transformOrigin = ''; };
-    return { done, cancel };
+    const strike = line.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: DRAW, easing: PENCIL, fill: 'forwards' });
+    const struck = new Promise((resolve) => { strike.onfinish = resolve; strike.oncancel = resolve; });
+    let fold = null;
+    let lineOut = null;
+    const squish = () => {
+      const style = getComputedStyle(el);
+      el.style.overflow = 'hidden';
+      el.style.transformOrigin = 'center top';
+      lineOut = line.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SQUISH, delay: HOLD, easing: 'ease-in', fill: 'forwards' });
+      lineOut.onfinish = () => line.remove();
+      fold = el.animate([
+        { transform: 'scaleY(1)', height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
+        { transform: 'scaleY(0)', height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
+      ], { duration: SQUISH, delay: HOLD, easing: 'cubic-bezier(0.7, 0, 0.85, 0.25)', fill: 'forwards' });
+      // One bounce: up quickly and slowing, down under gravity
+      target?.animate([
+        { transform: 'translateY(0)', easing: 'cubic-bezier(0.2, 0.7, 0.4, 1)' },
+        { transform: 'translateY(-6px)', offset: 0.42, easing: 'cubic-bezier(0.55, 0, 0.8, 0.4)' },
+        { transform: 'translateY(0)' },
+      ], { duration: 360, delay: HOLD + 40 });
+      return new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
+    };
+    const cancel = () => {
+      strike.cancel(); lineOut?.cancel(); fold?.cancel(); line.remove();
+      el.style.pointerEvents = ''; el.style.overflow = ''; el.style.transformOrigin = '';
+    };
+    return { struck, squish, cancel };
   };
   const trashSlate = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
-    const flight = flyToTrash(slate.slate_number);
+    const fx = flyToTrash(slate.slate_number);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}`, { method: 'DELETE', credentials: 'include' });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { flight.cancel(); showToast(data.error || strings.errors.deleteSlate); return; }
-      await flight.done;
+      if (!r.ok) { fx.cancel(); return; }
+      await fx.struck;
+      await fx.squish();
       markDeleted(slate.slate_number, data.deleted_at || Math.floor(Date.now() / 1000));
       onTrashed?.(slate.slate_number);
     } catch (err) {
-      flight.cancel();
+      fx.cancel();
       console.error('Failed to delete slate:', err);
-      showToast(strings.errors.deleteSlate);
     }
   };
   const deleteForever = async (slate, e) => {
@@ -1227,12 +1229,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setOpenMenuId(null);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}?forever=1`, { method: 'DELETE', credentials: 'include' });
-      if (!r.ok) { const data = await r.json().catch(() => ({})); showToast(data.error || strings.errors.deleteSlate); return; }
+      if (!r.ok) return;
       setSlates(prev => prev.filter(s => s.slate_number !== slate.slate_number));
-      showToast(strings.slates.trash.gone);
     } catch (err) {
       console.error('Failed to delete slate:', err);
-      showToast(strings.errors.deleteSlate);
     }
   };
   const emptyTrash = async () => {
@@ -1242,10 +1242,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) throw new Error('empty failed');
       setSlates(prev => prev.filter(s => !s.deleted_at));
-      showToast(strings.slates.trash.emptied);
     } catch (err) {
       console.error('Failed to empty the trash:', err);
-      showToast(strings.errors.deleteSlate);
     }
   };
 
