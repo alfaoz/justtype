@@ -34,12 +34,17 @@ export function caretTop(ta) {
   return mark.offsetTop;
 }
 
-// Scroll `scroller` so the textarea's caret line sits in the middle
+// Scroll so the textarea's caret line sits in the middle. The textarea
+// stretches to the page's height and scrolls itself; only when it does not
+// overflow is the page around it the thing to scroll.
 export function centerTextareaCaret(scroller, ta) {
-  if (!scroller || !ta) return;
+  if (!ta) return;
   const line = parseFloat(getComputedStyle(ta).lineHeight) || 24;
-  const top = ta.offsetTop + caretTop(ta) + line / 2;
-  const target = Math.max(0, top - scroller.clientHeight / 2);
-  if (Math.abs(scroller.scrollTop - target) < 2) return;
-  scroller.scrollTo({ top: target, behavior: 'smooth' });
+  const caret = caretTop(ta) + line / 2;
+  const inner = ta.scrollHeight > ta.clientHeight + 1;
+  const el = inner ? ta : scroller;
+  if (!el) return;
+  const target = Math.max(0, (inner ? caret : ta.offsetTop + caret) - el.clientHeight / 2);
+  if (Math.abs(el.scrollTop - target) < 2) return;
+  el.scrollTo({ top: target, behavior: 'smooth' });
 }

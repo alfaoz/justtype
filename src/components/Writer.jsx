@@ -2750,6 +2750,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               autofocus={!currentSlate}
               puntoClass={`punto-${punto}`}
               centerCaret={scrollMode === 'centered'}
+              className={scrollMode === 'centered' ? 'pb-[50vh]' : ''} // room to centre the last line
               initialSelection={caretRestoreRef.current && !caretRestoreRef.current.end ? caretRestoreRef.current : null}
             />
           </React.Suspense>
@@ -2765,7 +2766,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             onBlur={saveCaret}
             placeholder={strings.writer.contentPlaceholder}
             spellCheck={false}
-            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}`}
+            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}${scrollMode === 'centered' ? ' pb-[50vh]' : ''}`}
           />
         )}
       </main>

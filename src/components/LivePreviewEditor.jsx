@@ -46,7 +46,7 @@ const clampSel = (sel, len) => (sel && Number.isFinite(sel.anchor)
   ? { anchor: Math.min(Math.max(0, sel.anchor), len), head: Math.min(Math.max(0, sel.head ?? sel.anchor), len) }
   : { anchor: len });
 
-const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false, centerCaret = false, initialSelection = null, readOnly = false }, ref) {
+const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false, centerCaret = false, initialSelection = null, readOnly = false, className = '' }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
   const nextSelRef = useRef(initialSelection);
@@ -135,7 +135,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
   return (
     <div
       ref={containerRef}
-      className={`wysiwyg-editor w-full max-w-3xl p-8 ${puntoClass}`}
+      className={`wysiwyg-editor w-full max-w-3xl p-8 ${puntoClass} ${className}`}
     />
   );
 });
