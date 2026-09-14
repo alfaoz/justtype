@@ -1104,15 +1104,54 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e?.stopPropagation?.();
     e?.preventDefault?.();
     setOpenMenuId(null);
+    const back = unstrike(slate.slate_number);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}/restore`, { method: 'POST', credentials: 'include' });
       if (!r.ok) throw new Error('restore failed');
+      await back.done;
       markDeleted(slate.slate_number, null);
       showToast(strings.slates.trash.restored);
     } catch (err) {
+      back.cancel();
       console.error('Failed to restore slate:', err);
       showToast(strings.errors.deleteSlate);
     }
+  };
+  // A slate coming back from the trash: the red line through its row is
+  // rubbed out from left to right, the way an eraser goes, and the row lifts
+  // away upward to rejoin the list, the rows below closing the gap. Returns
+  // the moment the row is gone from the trash, and a way to keep it there
+  // if the server said no.
+  const unstrike = (n) => {
+    const el = document.querySelector(`[data-slate="${n}"]`);
+    if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
+    const from = el.getBoundingClientRect();
+    const title = el.querySelector('h3');
+    const t = title ? title.getBoundingClientRect() : from;
+    const ERASE = 560;
+    const LIFT = 240;
+    const line = document.createElement('div');
+    Object.assign(line.style, {
+      position: 'fixed', left: `${t.left}px`, top: `${t.top + t.height / 2}px`, width: `${from.right - t.left - 8}px`, height: '1.5px',
+      background: 'var(--theme-red)', transformOrigin: 'right center', zIndex: 60, pointerEvents: 'none',
+    });
+    document.body.appendChild(line);
+    const erase = line.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ERASE, easing: 'cubic-bezier(0.55, 0.05, 0.25, 1)', fill: 'forwards' });
+    erase.onfinish = () => line.remove();
+
+    const style = getComputedStyle(el);
+    el.style.pointerEvents = 'none';
+    el.style.overflow = 'hidden';
+    const open = { height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
+    const lift = el.animate([
+      { transform: 'translateY(0)', opacity: 1, ...open },
+      { transform: 'translateY(-10px)', opacity: 0, ...open, offset: 0.6 },
+      { transform: 'translateY(-10px)', opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
+    ], { duration: LIFT + 160, delay: ERASE + 80, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+
+    const done = new Promise((resolve) => { lift.onfinish = resolve; lift.oncancel = resolve; });
+    const cancel = () => { erase.cancel(); lift.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    return { done, cancel };
   };
   // A slate leaving for the trash: a red line is drawn through the row the
   // way a pencil draws, slow off the mark, quick through the middle, easing
