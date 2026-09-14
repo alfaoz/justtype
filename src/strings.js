@@ -1242,13 +1242,13 @@ take care!
 
   // build verification
   verify: {
-    title: 'verify build integrity',
-    description: 'every page load is verified before it runs. independent checks live off justtype\'s servers.',
-    loaderVerified: (v, n) => `this page load was verified: the browser checked the signature on the v${v} manifest against the pinned release key, then pinned all ${n} files with subresource integrity before running anything.`,
-    loaderBeta: (v, n) => `beta build v${v}: all ${n} files pinned against the server manifest. releases on justtype.io are additionally signature-verified.`,
-    loaderDev: 'dev build: the verified loader only runs on built releases.',
-    whyExternal: 'a page served by justtype.io cannot prove justtype.io is honest, so the independent checks do not live here. they run on github pages, built by github actions from the public repository, on infrastructure justtype\'s servers cannot touch: every served file is re-hashed and compared against an independent build of the source, and a scheduled monitor repeats this every 15 minutes and raises a public alert on any mismatch.',
-    keyNote: 'releases are signed on the developer\'s machine. the server never holds the key, so a compromised server cannot ship modified code that this browser would accept.',
+    title: 'verify the build',
+    description: 'the check that matters runs off justtype\'s servers.',
+    loaderVerified: (v) => `this page load is release v${v}, signature checked.`,
+    loaderBeta: (v) => `this page load is beta v${v}, pinned to the server manifest, not signed.`,
+    loaderDev: 'dev build: nothing to check.',
+    whyExternal: 'a page served by justtype.io cannot vouch for justtype.io. the independent check runs on github pages, built from the public repository, and repeats every 15 minutes.',
+    keyNote: 'releases are signed on the developer\'s machine. the server never holds the key.',
     openVerifier: 'open the independent verifier',
     verifierUrl: 'https://alfaoz.github.io/justtype/',
     releasesLog: 'releases log',

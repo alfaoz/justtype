@@ -64,9 +64,9 @@
 <body>
 <main>
   <h1>justtype verify</h1>
-  <p class="dim">this page is hosted on github pages and built by github actions from the
-  <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer">public repository</a>.
-  justtype's servers cannot change it, which is the point: a page served by justtype.io cannot honestly audit justtype.io.</p>
+  <p class="dim">built by github actions from the
+  <a href="https://github.com/alfaoz/justtype" target="_blank" rel="noopener noreferrer">public repository</a>
+  and hosted on github pages, out of reach of justtype's servers.</p>
 
   <div id="banner" class="banner"><span class="pulse">checking justtype.io...</span></div>
 
@@ -82,32 +82,28 @@
 
   <section>
     <p class="head">what gets checked</p>
-    <p class="dim" style="margin:0.25rem 0 0.75rem;">every javascript and css file justtype.io serves, plus index.html
-    (the loader that decides what runs), is downloaded by your browser here, hashed, and compared against the hashes
-    github actions produced by building the public repository. the release signature is checked against the pinned
-    release key, which lives on the developer's machine and never on the server. in the app itself the loader repeats
-    the signature check on every page load and pins every file with subresource integrity, so a server that cannot
-    sign a release cannot get your browser to run modified code.</p>
-    <p class="dim" style="margin:0;">beta builds (beta.justtype.io) are not published here and are not signed;
-    they pin files against the server manifest only.</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">every file justtype.io serves is downloaded here, hashed, and
+    compared with the hashes github actions produced from the public source. the release signature is checked
+    against the pinned key.</p>
+    <p class="dim" style="margin:0;">beta builds are not published here.</p>
   </section>
 
   <section>
     <p class="head">verify from your terminal</p>
-    <p class="dim" style="margin:0.25rem 0 0.75rem;">hash what the server sends without trusting any web page:</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">hash what the server sends, without any web page:</p>
     <pre id="curl">loading...</pre>
-    <p class="dim" style="margin:0;">compare against <a href="./build-hashes.json" target="_blank" rel="noopener noreferrer">build-hashes.json</a>, which github actions publishes here.</p>
+    <p class="dim" style="margin:0;">compare with <a href="./build-hashes.json" target="_blank" rel="noopener noreferrer">build-hashes.json</a>.</p>
   </section>
 
   <section>
     <p class="head">build it yourself</p>
-    <p class="dim" style="margin:0.25rem 0 0.75rem;">zero trust required: clone, build, compare.</p>
+    <p class="dim" style="margin:0.25rem 0 0.75rem;">clone, build, compare.</p>
     <pre>git clone https://github.com/alfaoz/justtype.git
 cd justtype
 npm ci
 VITE_TURNSTILE_SITE_KEY="0x4AAAAAACSJvMqEG5Z-iXyo" npm run build
 cat dist/build-manifest.json</pre>
-    <p class="dim" style="margin:0;">the turnstile site key is public and baked into the bundle; without it the hashes will not match.</p>
+    <p class="dim" style="margin:0;">the turnstile site key is public and part of the bundle.</p>
   </section>
 
   <section>
