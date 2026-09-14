@@ -198,7 +198,7 @@ function DotMenu({ isOpen, onToggle, children, small = false }) {
       </button>
 
       {isOpen && (
-        <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
+        <div ref={menuRef} data-dropdown className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
           {children}
         </div>
       )}
@@ -1126,6 +1126,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     const from = el.getBoundingClientRect();
     const to = target ? target.getBoundingClientRect() : { left: from.left + from.width / 2, top: 0, width: 0, height: 0 };
     const ghost = el.cloneNode(true);
+    ghost.querySelectorAll('[data-dropdown]').forEach((m) => m.remove()); // the menu that was just used stays behind
     Object.assign(ghost.style, {
       position: 'fixed', left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px`,
       margin: 0, zIndex: 60, pointerEvents: 'none', boxSizing: 'border-box', transformOrigin: 'center',
