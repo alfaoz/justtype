@@ -165,8 +165,6 @@ const strings = {
       savedAsPrivate: 'saved as private',
       savedAs: (n) => `saved as /slate/${n}`,
       deleted: 'moved to trash',
-      scratch: 'this device only',
-      savedHere: 'saved here',
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
@@ -352,14 +350,6 @@ const strings = {
       unpin: 'unpin',
       moveUp: 'move up',
       moveDown: 'move down',
-    },
-    scratch: {
-      title: 'scratch',
-      status: 'this device',
-      note: 'this device only',
-      clear: 'clear',
-      toSlate: 'make it a slate',
-      cleared: 'scratch cleared',
     },
     tags: {
       rowLabel: 'tags:',

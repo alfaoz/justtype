@@ -33,7 +33,6 @@ import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
-import { scratchSlate, clearScratch } from './scratch';
 import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
 import { useToast } from './components/Toast';
 
@@ -426,9 +425,8 @@ export default function App() {
       } else if (path.startsWith('/slate/')) {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
-          // Slates created offline carry a local id until they sync; the
-          // scratch slate has no number at all
-          setCurrentSlate(slateId === 'scratch' ? scratchSlate() : { slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
+          // Slates created offline carry a local id until they sync
+          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
           setView('writer');
         }
       } else if (path === '/slates') {
@@ -976,10 +974,6 @@ export default function App() {
   // Command palette execute handler
   const handleCommandExecute = async (cmd) => {
     switch (cmd.action) {
-      case 'SCRATCH':
-        await handleSelectSlate(scratchSlate());
-        break;
-
       case 'IMPORT':
         importInputRef.current?.click();
         break;
@@ -1423,7 +1417,6 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
-              onScratchToSlate={async (text) => { await handleOpenAsNewSlate(text); clearScratch(userId).catch(() => {}); }}
               onImport={() => importInputRef.current?.click()}
               // The slate open in the writer went to the trash: the writer
               // is a blank page when we come back to it

@@ -6,7 +6,6 @@ import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity
 import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
-import { scratchSlate, readScratch, clearScratch } from '../scratch';
 import { markdownOf, zipOf, fileNameFor, downloadText, downloadBlob } from '../exporter';
 import { openDocKey as openLockKey } from '../slateLock';
 import { createPortal } from 'react-dom';
@@ -39,9 +38,7 @@ const formatDateShort = (dateString) =>
 // the rest of the app already speaks (blue = public, orange = was public,
 // accent = shared with me). Private is the default state, so it stays dim.
 const statusFor = (slate) =>
-  slate.scratch
-    ? { label: strings.slates.scratch.status, cls: 'text-[var(--theme-text-dim)]' }
-  : slate.deleted_at
+  slate.deleted_at
     ? { label: strings.slates.status.inTrash, cls: 'text-[var(--theme-text-dim)]' }
   : slate.shared
     ? { label: strings.collab.shared.by(slate.owner), cls: 'text-[var(--theme-accent)]' }
@@ -212,22 +209,11 @@ function DotMenu({ isOpen, onToggle, children, small = false }) {
  * The slate menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice, onScratchClear, onScratchToSlate }) {
+function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
   return (
     <DotMenu isOpen={isOpen} onToggle={onToggle}>
-          {slate.scratch ? (
-            <>
-              <button onClick={onScratchToSlate} className={menuItemCls(false)}>
-                <CloudDownIcon className={menuIcon} />
-                {strings.slates.scratch.toSlate}
-              </button>
-              <button onClick={onScratchClear} className={menuItemCls(true)}>
-                <TrashIcon className={menuIcon} />
-                {strings.slates.scratch.clear}
-              </button>
-            </>
-          ) : slate.deleted_at ? (
+          {slate.deleted_at ? (
             <>
               <button onClick={onRestore} className={menuItemCls(false)}>
                 <UnarchiveIcon className={menuIcon} />
@@ -319,14 +305,6 @@ const DeviceMark = ({ slate, offline, onCopy, onKeep }) => {
   if (slate.shared) return null;
   const o = strings.slates.offline;
   const icon = 'w-[1em] h-[1em]';
-  if (slate.scratch) {
-    // Always here, never anywhere else
-    return (
-      <HoverNote plain note={strings.slates.scratch.note} className="device-mark p-1 -m-1 text-[var(--theme-text-dim)]">
-        <MarkGlyph kind="check" className={`${icon} opacity-70`} aria-label={strings.slates.scratch.note} role="img" />
-      </HoverNote>
-    );
-  }
   if (slate.syncing) {
     return (
       <HoverNote plain note={o.syncing} className="device-mark is-live p-1 -m-1 text-[var(--theme-orange)]">
@@ -482,7 +460,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   );
 }
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, onScratchToSlate, onImport, onTrashed, currentSlateNumber = null }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, onImport, onTrashed, currentSlateNumber = null }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
   const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
@@ -630,8 +608,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   }, []);
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
   const [tagFilter, setTagFilter] = useState(null);
-  // The scratch slate on this device: its text, for the row's counts
-  const [scratch, setScratch] = useState(null);
   // Editing tags: every tag gets a menu (rename, remove); a rename is typed in place
   const [tagEditing, setTagEditing] = useState(false);
   const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
@@ -799,10 +775,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       // Get slate key for decryption
       const slateKey = userId ? await getSlateKey(userId) : null;
-      readScratch(userId, slateKey).then(({ text, updatedAt }) => setScratch({
-        text, updatedAt, words: text.trim() ? text.trim().split(/\s+/).length : 0, chars: text.length,
-      })).catch(() => setScratch(null));
-
       if (slateKey) {
         // Decrypt encrypted titles (private) and tags (E2E-only). Collab
         // slates are keyed under their shared doc key, unwrapped per slate.
@@ -973,22 +945,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     else if (ev.type === 'failed') drop(ev.slateNumber);
     else if (ev.type === 'finished') { setSyncing(new Set()); refreshDeviceCopies(); }
   }), [userId]);
-
-  // The scratch slate's row: clear it, or move its text into a real slate
-  const scratchClear = async (e) => {
-    e?.stopPropagation?.(); e?.preventDefault?.();
-    setOpenMenuId(null);
-    await clearScratch(userId).catch(() => {});
-    setScratch(s => (s ? { ...s, text: '', words: 0, chars: 0, updatedAt: Date.now() } : s));
-    showToast(strings.slates.scratch.cleared);
-  };
-  const scratchToSlate = (e) => {
-    e?.stopPropagation?.(); e?.preventDefault?.();
-    setOpenMenuId(null);
-    if (!scratch?.text.trim() || !onScratchToSlate) return;
-    onScratchToSlate(scratch.text);
-    setScratch(s => (s ? { ...s, text: '', words: 0, chars: 0 } : s));
-  };
 
   // Pinned order: pinned slates sort by pinned_at, newest first, so a new
   // order is a new set of pinned_at values, largest at the top
@@ -1686,23 +1642,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={strings.slates.searchPlaceholder}
-                className="flex-1 min-w-0 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
+                className="flex-1 min-w-0 h-10 bg-transparent border-b border-[var(--theme-border)] px-0 focus:outline-none focus:border-[var(--theme-text-dim)] transition-colors text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
               />
+              {/* import, then select: select turns into done in place, so it
+                  sits last among the words and nothing before it moves */}
               <div className="flex items-center gap-x-3 flex-shrink-0 text-xs md:text-sm">
+                {onImport && (
+                  <>
+                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                      {strings.slates.importer.start}
+                    </button>
+                    <span className="opacity-30">·</span>
+                  </>
+                )}
                 <button
                   onClick={() => (selecting ? endSelecting() : setSelecting(true))}
                   className={`transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
                 >
                   <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
                 </button>
-                {onImport && !selecting && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
-                      {strings.slates.importer.start}
-                    </button>
-                  </>
-                )}
                 {/* The two layouts (desktop only: both are one column on a
                     phone, so there was nothing to switch) */}
                 <span className="hidden md:inline-flex items-center gap-x-2 ml-2">
@@ -1864,22 +1822,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
           }`}
         >
-          {scratch && !selecting && (visibilityFilter === 'all' || visibilityFilter === 'private') && !searchQuery.trim() && !tagFilter && !appFilter && !collabFilter && (
-            <SlateItem
-              key="scratch"
-              slate={{ ...scratchSlate(), title: strings.slates.scratch.title, word_count: scratch.words, char_count: scratch.chars, updated_at: scratch.updatedAt ? new Date(scratch.updatedAt).toISOString() : new Date().toISOString(), tags: [], available: true }}
-              layout={effectiveViewMode === 'list' ? 'row' : 'card'}
-              onOpen={() => onSelectSlate(scratchSlate())}
-              onTagFilter={setTagFilter}
-              editing={currentSlateNumber === 'scratch'}
-              menuProps={{
-                isOpen: openMenuId === 'scratch',
-                onToggle: (e) => toggleMenu('scratch', e),
-                onScratchClear: scratchClear,
-                onScratchToSlate: scratchToSlate,
-              }}
-            />
-          )}
           {filteredAndSortedSlates.map((slate) => (
             <SlateItem
               key={slate.slate_number}

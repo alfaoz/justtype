@@ -6,7 +6,6 @@ import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, decryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { useScroll, centerTextareaCaret } from '../typewriter';
-import { isScratchNumber, readScratch, writeScratch } from '../scratch';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
 import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory } from '../history';
@@ -350,8 +349,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Shared mode: this Writer shows a slate someone else owns — same surface,
   // no owner powers (no PUT saves, publish, or member management)
   const isShared = !!sharedSlateId;
-  // The scratch slate: this device only, no number on the server
-  const isScratch = !!currentSlate?.scratch || isScratchNumber(currentSlate?.slate_number);
   const [sharedBy, setSharedBy] = useState(null);
   const [sharedRemoved, setSharedRemoved] = useState(false);
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
@@ -1144,7 +1141,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const saveCaret = () => {
     const n = caretSlateRef.current;
-    if (!userId || n == null || isLocalSlateNumber(n) || isScratchNumber(n)) return;
+    if (!userId || n == null || isLocalSlateNumber(n)) return;
     let sel = null;
     if (editorMode === 'wysiwyg') sel = richEditorRef.current?.getSelection?.() || null;
     else if (textareaRef.current) sel = { anchor: textareaRef.current.selectionStart, head: textareaRef.current.selectionEnd };
@@ -1182,26 +1179,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     saveCaret();
     caretSlateRef.current = id;
     lastLoadedRef.current = id;
-    if (isScratchNumber(id)) {
-      // The scratch slate comes from this device alone
-      const key = userId ? await getSlateKey(userId) : null;
-      const { text } = await readScratch(userId, key);
-      setCollabDocKey(null); setCollabSlateDbId(null); setLockDocKey(null); setIsLocked(false);
-      lockedSlateRef.current = null;
-      lockGateRef.current = null; setLockGate(null); setLockPrompt(null);
-      caretRestoreRef.current = null;
-      setTitle(strings.slates.scratch.title);
-      setContent(text);
-      setShareUrl(null);
-      setWasPublishedBeforeEdit(false);
-      lastSavedContentRef.current = JSON.stringify({ content: text });
-      setHasUnsavedChanges(false);
-      setStatus(strings.writer.status.scratch);
-      setLoadingFadeOut(true);
-      setContentFadeKey(prev => prev + 1);
-      setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
-      return;
-    }
     try {
       // The device copy: the truth for slates created offline and for slates
       // with an edit still waiting to sync; the fallback when the network
@@ -1710,20 +1687,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const saveSlateNow = async ({ explicit = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
     if (lockGateRef.current) return null; // a shut lock shows no content to save
-    if (isScratch) {
-      // Kept on this device, nothing leaves
-      const key = userId ? await getSlateKey(userId) : null;
-      if (!key) return null;
-      if (JSON.stringify({ content }) === lastSavedContentRef.current) {
-        if (explicit) { setStatus(strings.writer.status.savedHere); holdAnnouncement(2000, () => setStatus(strings.writer.status.scratch)); }
-        return { unchanged: true, scratch: true };
-      }
-      await writeScratch(userId, key, content);
-      lastSavedContentRef.current = JSON.stringify({ content });
-      setHasUnsavedChanges(false);
-      if (explicit) { setStatus(strings.writer.status.savedHere); holdAnnouncement(2000, () => setStatus(strings.writer.status.scratch)); }
-      return { scratch: true };
-    }
     const openNumber = currentSlate?.slate_number ?? null;
     const stillOpen = () => (currentSlateRef.current?.slate_number ?? null) === openNumber;
     if (!content.trim()) {
@@ -2581,7 +2544,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Slate lock. Locking re-keys the content under a fresh doc key wrapped to
   // the account's lock key and rides on a normal save; unlocking re-keys it
   // back to the master key. Runs on the save chain so it never races a save.
-  const canLock = !!(token && currentSlate && !isShared && !isScratch && !collabDocKey && !shareUrl && !isLocalSlateNumber(currentSlate.slate_number));
+  const canLock = !!(token && currentSlate && !isShared && !collabDocKey && !shareUrl && !isLocalSlateNumber(currentSlate.slate_number));
   const rekeyForLock = async (lockOn, { secret = null, recoveryKey = null, docKey = null } = {}) => {
     const slateKey = userId ? await getSlateKey(userId) : null;
     if (!slateKey || !currentSlate) return;
@@ -2729,7 +2692,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setContent(text);
     setHasUnsavedChanges(true);
   };
-  const canHistory = !!(token && currentSlate && !isShared && !isScratch && !isLocalSlateNumber(currentSlate.slate_number) && !lockGate && (!collabDocKey || collabSlateDbId));
+  const canHistory = !!(token && currentSlate && !isShared && !isLocalSlateNumber(currentSlate.slate_number) && !lockGate && (!collabDocKey || collabSlateDbId));
 
   // The settings row renders from one control model (see SettingsRow.jsx)
   const stripControls = {
@@ -2743,9 +2706,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
     ].filter(Boolean),
     actions: [
-      token && !isScratch && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
+      token && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
       canHistory && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
-      token && !isShared && !isScratch && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
+      token && !isShared && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
     ].filter(Boolean),
   };
 
@@ -2856,7 +2819,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         />
       )}
 
-      {sharePanel && currentSlate && !isShared && !isScratch && (
+      {sharePanel && currentSlate && !isShared && (
         <SharePanel
           share={shareState()}
           onChange={applyShare}
