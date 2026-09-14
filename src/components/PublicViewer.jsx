@@ -6,7 +6,6 @@ import { applyThemeVariables, deviceDefaultTheme } from '../themes';
 import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
 import { TextMorph } from './TextMorph';
-import { useMotion, setMotion } from '../motion';
 import { nextPunto, usePunto, setPunto } from '../punto';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { SecretField } from './SecretField';
@@ -22,7 +21,6 @@ export function PublicViewer() {
   const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
   const punto = usePunto();
-  const motion = useMotion();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
   // A private link: ciphertext until the key from the address, or a passphrase, opens it
@@ -217,7 +215,6 @@ export function PublicViewer() {
     device: [
       { id: 'theme', label: 'theme', kind: 'cycle', value: theme, onCycle: toggleTheme },
       { id: 'size', label: 'size', kind: 'cycle', value: punto, onCycle: cyclePunto },
-      { id: 'motion', label: 'motion', kind: 'cycle', value: motion, onCycle: () => setMotion(motion === 'on' ? 'off' : 'on') },
     ],
     slate: [
       { id: 'view', label: 'view', kind: 'cycle', value: viewMode, onCycle: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
