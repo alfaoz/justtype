@@ -1114,11 +1114,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       showToast(strings.errors.deleteSlate);
     }
   };
-  // A slate leaving for the trash: a red line strikes through the row from
-  // left to right, the row fades and folds shut so the rows below glide up,
-  // and the word `trash` gives a small bounce as it goes. The same in both
-  // layouts. Returns the moment the row is gone from view, and a way to put
-  // it back if the server said no.
+  // A slate leaving for the trash: a red line is drawn through the row the
+  // way a pencil draws, slow off the mark, quick through the middle, easing
+  // to a stop; a beat later the row is squished flat from the top, fast, so
+  // the rows below glide up, and the word `trash` gives a small bounce as
+  // that happens. The same in both layouts. Returns the moment the row is
+  // gone from view, and a way to put it back if the server said no.
   const flyToTrash = (n) => {
     const el = document.querySelector(`[data-slate="${n}"]`);
     const target = document.querySelector('[data-choice="trash"]');
@@ -1126,31 +1127,28 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     const from = el.getBoundingClientRect();
     const title = el.querySelector('h3');
     const t = title ? title.getBoundingClientRect() : from;
-    const STRIKE = 300;
+    const DRAW = 720;
+    const HOLD = 160;
+    const SQUISH = 190;
+    const PENCIL = 'cubic-bezier(0.55, 0.05, 0.25, 1)';
     const line = document.createElement('div');
     Object.assign(line.style, {
       position: 'fixed', left: `${t.left}px`, top: `${t.top + t.height / 2}px`, width: `${from.right - t.left - 8}px`, height: '1.5px',
       background: 'var(--theme-red)', transformOrigin: 'left center', transform: 'scaleX(0)', zIndex: 60, pointerEvents: 'none',
     });
     document.body.appendChild(line);
-    const strike = line.animate([
-      { transform: 'scaleX(0)', opacity: 1 },
-      { transform: 'scaleX(1)', opacity: 1, offset: STRIKE / 620 },
-      { transform: 'scaleX(1)', opacity: 1, offset: 0.55 },
-      { transform: 'scaleX(1)', opacity: 0 },
-    ], { duration: 620, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    const strike = line.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: DRAW, easing: PENCIL, fill: 'forwards' });
+    const lineOut = line.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SQUISH, delay: DRAW + HOLD, easing: 'ease-in', fill: 'forwards' });
 
-    // The row fades once struck through, then folds shut
+    // The squish: the row's box folds and its contents flatten toward the top
     const style = getComputedStyle(el);
     el.style.pointerEvents = 'none';
     el.style.overflow = 'hidden';
-    const open = { height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
+    el.style.transformOrigin = 'center top';
     const fold = el.animate([
-      { opacity: 1, ...open },
-      { opacity: 1, ...open, offset: STRIKE / 620 },
-      { opacity: 0, ...open, offset: 0.55 },
-      { opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-    ], { duration: 620, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+      { transform: 'scaleY(1)', height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
+      { transform: 'scaleY(0)', height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
+    ], { duration: SQUISH, delay: DRAW + HOLD, easing: 'cubic-bezier(0.7, 0, 0.85, 0.25)', fill: 'forwards' });
 
     // The word bounces as the row goes
     target?.animate([
@@ -1159,11 +1157,11 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       { transform: 'translateY(0)', offset: 0.6 },
       { transform: 'translateY(-2px)', offset: 0.8 },
       { transform: 'translateY(0)' },
-    ], { duration: 460, delay: STRIKE, easing: 'ease-out' });
+    ], { duration: 460, delay: DRAW + HOLD + 60, easing: 'ease-out' });
 
-    strike.onfinish = () => line.remove();
+    lineOut.onfinish = () => line.remove();
     const done = new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
-    const cancel = () => { strike.cancel(); fold.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    const cancel = () => { strike.cancel(); lineOut.cancel(); fold.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; el.style.transformOrigin = ''; };
     return { done, cancel };
   };
   const trashSlate = async (slate, e) => {
