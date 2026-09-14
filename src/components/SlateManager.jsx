@@ -7,7 +7,7 @@ import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, 
 import { onSync } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { scratchSlate, readScratch, clearScratch } from '../scratch';
-import { combined, downloadText } from '../exporter';
+import { markdownOf, zipOf, fileNameFor, downloadText, downloadBlob } from '../exporter';
 import { openDocKey as openLockKey } from '../slateLock';
 import { createPortal } from 'react-dom';
 const MarkdownViewLazy = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -150,11 +150,10 @@ const menuItemCls = (danger) =>
 const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
 
 /**
- * The three-dot menu both layouts share. Own slates get pin/tags/publish/
- * delete; slates shared with me get the two-step leave.
+ * Three dots that open a small menu: the slate rows have one, and in edit
+ * mode every tag does.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice, onScratchClear, onScratchToSlate }) {
-  const isPinned = Boolean(slate.pinned_at);
+function DotMenu({ isOpen, onToggle, children }) {
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
   const wrapRef = useRef(null);
@@ -202,6 +201,21 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTag
 
       {isOpen && (
         <div ref={menuRef} className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The slate menu both layouts share. Own slates get pin/tags/publish/
+ * delete; slates shared with me get the two-step leave.
+ */
+function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice, onScratchClear, onScratchToSlate }) {
+  const isPinned = Boolean(slate.pinned_at);
+  return (
+    <DotMenu isOpen={isOpen} onToggle={onToggle}>
           {slate.scratch ? (
             <>
               <button onClick={onScratchToSlate} className={menuItemCls(false)}>
@@ -286,9 +300,7 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTag
               </button>
             </>
           )}
-        </div>
-      )}
-    </div>
+    </DotMenu>
   );
 }
 
@@ -406,7 +418,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
             three stray lines. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0 flex-1">
-            {selecting && <span className={`text-xs mt-1 w-3 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
+            {selecting && <span className={`text-lg leading-none w-5 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
             <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words">{title}</h3>
             <span className="mt-1"><TagWords slate={slate} onTagFilter={onTagFilter} /></span>
@@ -444,7 +456,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {selecting && <span className={`text-xs w-3 text-center ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
+          {selecting && <span className={`text-lg leading-none w-5 text-center ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
           {isPinned && <PinGlyph />}
           <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
           <TagWords slate={slate} onTagFilter={onTagFilter} />
@@ -470,7 +482,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   );
 }
 
-export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, onScratchToSlate, currentSlateNumber = null }) {
+export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenShared, onScratchToSlate, onImport, onTrashed, currentSlateNumber = null }) {
   const { online } = useConnectivity();
   // Which slates this device holds a copy of, and which are pinned to it
   const [deviceCopies, setDeviceCopies] = useState({ available: new Set(), kept: new Set(), offloaded: new Set(), pending: new Set() });
@@ -620,8 +632,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [tagFilter, setTagFilter] = useState(null);
   // The scratch slate on this device: its text, for the row's counts
   const [scratch, setScratch] = useState(null);
-  const [tagManager, setTagManager] = useState(false);
+  // Editing tags: every tag gets a menu (rename, remove); a rename is typed in place
+  const [tagEditing, setTagEditing] = useState(false);
   const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
   const [tagBusy, setTagBusy] = useState(false);
   const [dragOverId, setDragOverId] = useState(null);
   const dragRef = useRef(null);
@@ -1063,8 +1077,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     } finally { setTagBusy(false); }
   };
 
-  // Export the selected slates as one file. Each is fetched and decrypted
-  // here; a locked slate whose lock is shut is left out and counted.
+  // Export the selected slates: one file, or a zip with a file per slate.
+  // Each is fetched and decrypted here; a locked slate whose lock is shut is
+  // left out and counted.
   const toggleSelected = (n) => setSelected(prev => { const next = new Set(prev); if (next.has(n)) next.delete(n); else next.add(n); return next; });
   const endSelecting = () => { setSelecting(false); setSelected(new Set()); };
   const gatherSelected = async () => {
@@ -1094,9 +1109,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       const { items, skipped } = await gatherSelected();
       if (skipped) showToast(strings.slates.select.skippedLocked(skipped));
       if (!items.length) { if (!skipped) showToast(strings.slates.select.nothing); return; }
-      const stamp = new Date().toISOString().split('T')[0];
       if (format === 'pdf') { setPrintItems(items); return; }
-      downloadText(combined(items, format), `justtype-${stamp}.${format}`, format === 'md' ? 'text/markdown' : 'text/plain');
+      const type = format === 'md' ? 'text/markdown' : 'text/plain';
+      if (items.length === 1) downloadText(format === 'md' ? markdownOf(items[0]) : items[0].text, fileNameFor(items[0].title, format), type);
+      else downloadBlob(await zipOf(items, format), `justtype-export-${new Date().toISOString().split('T')[0]}.zip`);
       endSelecting();
     } catch (err) {
       showToast(err?.message === 'locked' ? strings.slates.tags.unlockRequired : strings.errors.loadFailed);
@@ -1148,6 +1164,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { showToast(data.error || strings.errors.deleteSlate); return; }
       markDeleted(slate.slate_number, data.deleted_at || Math.floor(Date.now() / 1000));
+      onTrashed?.(slate.slate_number);
       showToast(strings.slates.trash.moved, { action: { label: strings.slates.trash.undo, onClick: () => restoreSlate(slate) } });
     } catch (err) {
       console.error('Failed to delete slate:', err);
@@ -1169,6 +1186,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
   };
   const emptyTrash = async () => {
+    if (!confirmEmpty) { setConfirmEmpty(true); setTimeout(() => setConfirmEmpty(false), 3000); return; }
+    setConfirmEmpty(false);
     try {
       const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) throw new Error('empty failed');
@@ -1669,12 +1688,18 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 className="flex-1 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
               />
 
+              {/* Two quiet words beside the search: select rows, or bring files in */}
               <button
                 onClick={() => (selecting ? endSelecting() : setSelecting(true))}
-                className={`h-10 px-3 text-xs md:text-sm rounded border transition-colors flex-shrink-0 ${selecting ? 'border-[var(--theme-text-dim)] text-[var(--theme-text)]' : 'border-[var(--theme-border)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                className={`px-1 text-xs md:text-sm transition-colors flex-shrink-0 ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
               >
-                {selecting ? strings.slates.select.done : strings.slates.select.start}
+                <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
               </button>
+              {onImport && !selecting && (
+                <button onClick={onImport} className="px-1 text-xs md:text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors flex-shrink-0">
+                  {strings.slates.importer.start}
+                </button>
+              )}
 
               {/* View Mode Toggle (desktop only: both layouts are one column
                   on a phone, so the control had nothing to switch) */}
@@ -1724,11 +1749,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 value={visibilityFilter}
                 onChange={setVisibilityFilter}
               />
-              {visibilityFilter === 'trash' && slates.some(s => s.deleted_at) && (
-                <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
-                  {strings.slates.trash.empty}
-                </button>
-              )}
               {hasCollabSlates && (
                 <ChoiceRow
                   label={strings.collab.filter.label}
@@ -1752,28 +1772,67 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 />
               )}
             </div>
-            {/* Every tag in the library, a row of its own under sort and show */}
+            {/* Every tag in the library, a row of its own under sort and show.
+                While editing, each tag has a menu of its own (rename in place,
+                or remove from every slate) instead of filtering. */}
             {allTags.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
-                <ChoiceRow
-                  label={strings.slates.tags.rowLabel}
-                  options={[
-                    { id: ALL_TAGS, label: strings.slates.tags.all },
-                    ...allTags.map(tag => ({ id: tag, label: `#${tag}`, title: tag })),
-                  ]}
-                  value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
-                  onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
-                />
-                <button onClick={() => setTagManager(true)} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
-                  {strings.slates.tags.manage}
+                {tagEditing ? (
+                  <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${tagBusy ? 'opacity-60 pointer-events-none' : ''}`}>
+                    <span className="text-[var(--theme-text-dim)] select-none">{strings.slates.tags.rowLabel}</span>
+                    {allTags.map(tag => (
+                      <span key={tag} className="flex items-center gap-1">
+                        {tagEdit?.tag === tag ? (
+                          <input
+                            autoFocus
+                            value={tagEdit.draft}
+                            onChange={(e) => setTagEdit({ tag, draft: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') renameTag(tag, tagEdit.draft);
+                              if (e.key === 'Escape') { e.stopPropagation(); setTagEdit(null); }
+                            }}
+                            onBlur={() => setTagEdit(null)}
+                            maxLength={MAX_TAG_LENGTH}
+                            size={Math.max(4, tagEdit.draft.length + 1)}
+                            className="bg-transparent border-b border-[var(--theme-text-dim)] text-[var(--theme-text)] focus:outline-none"
+                          />
+                        ) : (
+                          <span className="text-[var(--theme-text)]">#{tag}</span>
+                        )}
+                        <DotMenu isOpen={openMenuId === `tag:${tag}`} onToggle={(e) => toggleMenu(`tag:${tag}`, e)}>
+                          <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag, draft: tag }); }} className={menuItemCls(false)}>
+                            {strings.slates.tags.rename}
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); removeTagEverywhere(tag); }} className={menuItemCls(true)}>
+                            {strings.slates.tags.remove}
+                          </button>
+                        </DotMenu>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <ChoiceRow
+                    label={strings.slates.tags.rowLabel}
+                    options={[
+                      { id: ALL_TAGS, label: strings.slates.tags.all },
+                      ...allTags.map(tag => ({ id: tag, label: `#${tag}`, title: tag })),
+                    ]}
+                    value={tagFilter && allTags.includes(tagFilter) ? tagFilter : ALL_TAGS}
+                    onChange={(id) => setTagFilter(id === ALL_TAGS ? null : id)}
+                  />
+                )}
+                <button onClick={() => { setTagEditing(!tagEditing); setTagEdit(null); }} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                  <TextMorph>{tagEditing ? strings.slates.tags.done : strings.slates.tags.edit}</TextMorph>
                 </button>
               </div>
             )}
             {selecting && (
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
-                <span className="text-[var(--theme-text-dim)]">{strings.slates.select.count(selected.size)}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm text-[var(--theme-text-dim)]">
+                <span>{strings.slates.select.count(selected.size)}</span>
+                <span className="opacity-30">·</span>
+                <span>{strings.slates.select.exportAs}</span>
                 {['txt', 'md', 'pdf'].map(f => (
-                  <button key={f} onClick={() => exportSelected(f)} disabled={!selected.size || exporting} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors disabled:opacity-40 disabled:hover:text-[var(--theme-text-dim)]">
+                  <button key={f} onClick={() => exportSelected(f)} disabled={!selected.size || exporting} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40 disabled:hover:text-[var(--theme-text-dim)]">
                     {strings.slates.select[f]}
                   </button>
                 ))}
@@ -1805,7 +1864,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
           }`}
         >
-          {scratch && (visibilityFilter === 'all' || visibilityFilter === 'private') && !searchQuery.trim() && !tagFilter && !appFilter && !collabFilter && (
+          {scratch && !selecting && (visibilityFilter === 'all' || visibilityFilter === 'private') && !searchQuery.trim() && !tagFilter && !appFilter && !collabFilter && (
             <SlateItem
               key="scratch"
               slate={{ ...scratchSlate(), title: strings.slates.scratch.title, word_count: scratch.words, char_count: scratch.chars, updated_at: scratch.updatedAt ? new Date(scratch.updatedAt).toISOString() : new Date().toISOString(), tags: [], available: true }}
@@ -1868,6 +1927,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           ))}
         </div>
       )}
+      {/* Under the trash: the one way to empty it, asked twice */}
+      {visibilityFilter === 'trash' && filteredAndSortedSlates.length > 0 && (
+        <div className="flex justify-end mt-4 text-xs md:text-sm">
+          <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
+            <TextMorph>{confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}</TextMorph>
+          </button>
+        </div>
+      )}
 
       {/* Content search: what is not on this device, and the way to search it */}
       {contentQuery && (
@@ -1904,53 +1971,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           ))}
         </div>,
         document.body
-      )}
-      {/* Tag management: every tag, renamed or removed across the library */}
-      {tagManager && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-center justify-center z-50 p-4" onClick={() => !tagBusy && setTagManager(false)}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-5">{strings.slates.tags.manageTitle}</h2>
-            {tagCounts.length === 0 ? (
-              <p className="text-xs text-[var(--theme-text-dim)]">{strings.slates.tags.noTags}</p>
-            ) : (
-              <div className="flex flex-col divide-y divide-[var(--theme-border-light)] max-h-[50vh] overflow-y-auto">
-                {tagCounts.map(([tag, count]) => (
-                  <div key={tag} className="flex items-center gap-3 py-2.5 text-sm">
-                    {tagEdit?.tag === tag ? (
-                      <input
-                        autoFocus
-                        value={tagEdit.draft}
-                        onChange={(e) => setTagEdit({ tag, draft: e.target.value })}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') renameTag(tag, tagEdit.draft);
-                          if (e.key === 'Escape') { e.stopPropagation(); setTagEdit(null); }
-                        }}
-                        placeholder={strings.slates.tags.renamePlaceholder}
-                        maxLength={MAX_TAG_LENGTH}
-                        disabled={tagBusy}
-                        className="flex-1 min-w-0 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-2 py-1 text-sm focus:outline-none focus:border-[var(--theme-text-dim)]"
-                      />
-                    ) : (
-                      <span className="flex-1 min-w-0 truncate text-[var(--theme-text)]">#{tag}</span>
-                    )}
-                    <span className="text-xs text-[var(--theme-text-dim)] w-6 text-right">{count}</span>
-                    {tagEdit?.tag === tag ? (
-                      <button onClick={() => renameTag(tag, tagEdit.draft)} disabled={tagBusy} className="text-xs text-[var(--theme-text)] hover:opacity-70 disabled:opacity-40">{strings.slates.tags.save}</button>
-                    ) : (
-                      <>
-                        <button onClick={() => setTagEdit({ tag, draft: tag })} disabled={tagBusy} className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">{strings.slates.tags.rename}</button>
-                        <button onClick={() => removeTagEverywhere(tag)} disabled={tagBusy} className="text-xs text-[var(--theme-red)] hover:opacity-70 transition-opacity disabled:opacity-40">{strings.slates.tags.remove}</button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex justify-end mt-5">
-              <button onClick={() => !tagBusy && setTagManager(false)} className="text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">{strings.slates.tags.cancel}</button>
-            </div>
-          </div>
-        </div>
       )}
       {/* Tags Modal */}
       {tagsModal.show && (

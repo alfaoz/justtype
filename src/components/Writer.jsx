@@ -5,11 +5,11 @@ import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, decryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
-import { SCROLL_MODES, useScroll, setScroll, nextScroll, centerTextareaCaret } from '../typewriter';
+import { useScroll, centerTextareaCaret } from '../typewriter';
 import { isScratchNumber, readScratch, writeScratch } from '../scratch';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
-import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory } from '../history';
+import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, seedHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -1210,6 +1210,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const pending = userId ? await getPendingFor(userId, id).catch(() => null) : null;
       let data = null;
       let fromCache = false;
+      let gone = false;
       if (isLocalSlateNumber(id) || pending) {
         if (!cached?.data?.encryptedContent) throw new Error('local copy missing');
         data = cached.data;
@@ -1230,9 +1231,22 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               return;
             }
           }
+          // Gone from the account, or in its trash: nothing to open, and
+          // nothing to keep on the device
+          if (response.status === 404 || response.status === 410) { gone = true; throw new Error('gone'); }
           if (!response.ok) throw new Error(`load ${response.status}`);
           data = await response.json();
+          if (data.deleted_at) { gone = true; throw new Error('gone'); }
         } catch (netErr) {
+          if (gone) {
+            leaveGoneSlate(id);
+            setContent('');
+            setTitle('');
+            setStatus('ready');
+            setIsLoading(false);
+            setLoadingFadeOut(false);
+            return;
+          }
           reportNetworkFailure();
           if (!cached?.data?.encryptedContent) {
             setStatus(strings.writer.connectivity.notAvailableOffline);
@@ -1644,6 +1658,21 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return deleteCurrentSlate();
   };
   const deletingRef = useRef(null);
+  // The slate is gone (deleted here, trashed from the list, or found gone
+  // on load): its copy leaves the device and the writer is a blank page
+  const leaveGoneSlate = (n) => {
+    deleteCachedSlate(userId, n).catch(() => {});
+    forgetHistory(userId, n);
+    localStorage.removeItem('justtype-draft');
+    lastSavedContentRef.current = '';
+    loadedSlateRef.current = null;
+    setHasUnsavedChanges(false);
+    setShareUrl(null);
+    setWasPublishedBeforeEdit(false);
+    endAnnouncement();
+    onSlateChange(null);
+    if (window.location.pathname.startsWith('/slate/')) window.history.replaceState({}, '', '/');
+  };
   const deleteCurrentSlate = async () => {
     const n = currentSlate?.slate_number;
     if (n == null || deletingRef.current === n) return null; // one delete in flight per slate
@@ -1659,17 +1688,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     } finally {
       deletingRef.current = null;
     }
-    deleteCachedSlate(userId, n).catch(() => {});
-    forgetHistory(userId, n);
-    localStorage.removeItem('justtype-draft');
-    lastSavedContentRef.current = '';
-    loadedSlateRef.current = null;
-    setHasUnsavedChanges(false);
-    setShareUrl(null);
-    setWasPublishedBeforeEdit(false);
-    endAnnouncement();
-    onSlateChange(null);
-    if (window.location.pathname.startsWith('/slate/')) window.history.replaceState({}, '', '/');
+    leaveGoneSlate(n);
     announceStatus(strings.writer.status.deleted, 2000);
     return { deleted: true };
   };
@@ -1910,6 +1929,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (loud) holdAnnouncement(2000);
       } else if (creating && data.slate_number != null) {
         announceStatus(strings.writer.status.savedAs(data.slate_number));
+        // The slate's first version is the text it was created with
+        if (userId && contentKey && !collabDocKey) seedHistory({ userId, n: data.slate_number, key: contentKey, text: content }).catch(() => {});
       } else if (explicit) {
         announceStatus('saved', 2000);
       } else if (!quiet) {
@@ -2675,8 +2696,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const n = currentSlate?.slate_number;
     return {
       list: async () => {
-        const entries = await loadHistory(userId, n, await historyKey());
+        const key = await historyKey();
+        let entries = await loadHistory(userId, n, key);
         if (!entries) throw new Error(strings.collab.history.unavailable);
+        // A slate from before there were versions starts with the text it has now
+        if (!entries.length && !isLocalSlateNumber(n)) entries = (await seedHistory({ userId, n, key, text: contentRef.current }).catch(() => null)) || entries;
         return [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
       },
       text: async (cp) => (heldHistory(userId, n) || []).find(e => e.id === cp.id)?.text ?? '',
@@ -2710,16 +2734,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       { id: 'size', label: 'size', kind: 'cycle', value: punto, options: PUNTO_SIZES, onCycle: cyclePunto, onSet: setPunto },
       { id: 'focus', label: 'focus', kind: 'cycle', value: focusMode === 'auto' ? 'smart' : focusMode, options: ['off', 'on', 'smart'], onCycle: cycleFocus, onSet: (v) => setFocusMode(v === 'smart' ? 'auto' : v) },
       { id: 'counter', label: 'counter', kind: 'toggle', value: showCounter ? 'on' : 'off', onCycle: () => setShowCounter(!showCounter), onSet: (v) => setShowCounter(v === 'on') },
-      { id: 'scroll', label: 'scroll', kind: 'cycle', value: scrollMode, options: SCROLL_MODES, onCycle: () => setScroll(nextScroll(scrollMode)), onSet: setScroll },
     ],
     slate: [
       { id: 'editor', label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
-      canLock && { id: 'lock', label: strings.writer.lock.label, kind: 'toggle', value: isLocked ? 'on' : 'off', onCycle: toggleLock, onSet: (v) => { if ((v === 'on') !== isLocked) toggleLock(); } },
     ].filter(Boolean),
     actions: [
       token && !isScratch && { id: 'collab', label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
       canHistory && { id: 'history', label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
-      token && !isShared && !isScratch && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl },
+      token && !isShared && !isScratch && { id: 'share', label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
     ].filter(Boolean),
   };
 
@@ -3034,9 +3056,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             {token && (
               <div className="relative flex items-center gap-3">
                 {/* One compact publish indicator: blue when the public copy is
-                    current, orange and clickable when it needs a sync */}
+                    current (a click opens the share panel), orange when it
+                    needs a sync (a click syncs) */}
                 {shareUrl && !wasPublishedBeforeEdit && (
-                  <span className="text-sm text-blue-400">{strings.writer.publicState.current}</span>
+                  <button
+                    onClick={() => { setCollabPanel(null); setSharePanel(true); }}
+                    className="text-sm text-blue-400 hover:text-white transition-colors duration-200"
+                  >
+                    {strings.writer.publicState.current}
+                  </button>
                 )}
                 {wasPublishedBeforeEdit && (
                   <button

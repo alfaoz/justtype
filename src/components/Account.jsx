@@ -12,6 +12,7 @@ import { useMotion, setMotion } from '../motion';
 import { SCALES, useScale, setScale } from '../scale';
 import { readableFont, lineFocus } from '../reading';
 import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
+import { SCROLL_MODES, useScroll, setScroll } from '../typewriter';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { rewrapLockRecovery } from '../slateLock';
@@ -190,6 +191,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const focusLine = lineFocus.use();
   const sounds = soundsPref.use();
   const haptics = hapticsPref.use();
+  const scroll = useScroll();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -1517,6 +1519,9 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           </InfoRow>
           <InfoRow label={strings.account.accessibility.lineFocus}>
             <ChoiceRow options={wordOptions(lineFocus.values)} value={focusLine} onChange={lineFocus.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.scroll}>
+            <ChoiceRow options={wordOptions(SCROLL_MODES)} value={scroll} onChange={setScroll} />
           </InfoRow>
           <InfoRow label={strings.account.accessibility.sounds}>
             {/* Turning it on plays the save tick, so you hear what you chose */}

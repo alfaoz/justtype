@@ -159,14 +159,9 @@ export async function prepareCheckpoint({ userId, n, text, key, explicit = false
   return { history: { blob: out.blob, count: out.entries.length }, entries: out.entries, blob: out.blob };
 }
 
-// Name a version (or clear its name) and save the bundle on its own
-export async function labelVersion({ userId, n, key, id, label }) {
-  const entries = await loadHistory(userId, n, key);
-  if (!entries) throw new Error('history unavailable');
-  const clean = (label || '').trim().slice(0, 60);
-  if (clean && entries.filter(e => e.label && e.id !== id).length >= MAX_LABELED) throw new Error('too many named');
-  const next = entries.map(e => (e.id === id ? { ...e, label: clean || undefined } : e));
-  const out = await fit(next, key);
+// Save a bundle on its own, apart from any content save
+async function putBundle(userId, n, entries, key) {
+  const out = await fit(entries, key);
   if (!out) throw new Error('history too large');
   const res = await fetch(`${API_URL}/slates/${encodeURIComponent(n)}/history`, {
     method: 'PUT',
@@ -176,6 +171,28 @@ export async function labelVersion({ userId, n, key, id, label }) {
   });
   if (!res.ok) throw new Error('history save failed');
   commitHistory(userId, n, out.entries, out.blob);
+  return out.entries;
+}
+
+// The first version: the text as it is, so a slate has a history from the
+// moment it exists. Right after a slate is created, and for slates from
+// before there were versions, when their history is first looked at. A
+// slate with versions already is left alone.
+export async function seedHistory({ userId, n, key, text }) {
+  if (!userId || n == null || !key || !text.trim()) return null;
+  const entries = await loadHistory(userId, n, key);
+  if (!entries) return null;
+  if (entries.length) return entries;
+  return putBundle(userId, n, [{ id: newId(), at: Date.now(), text }], key);
+}
+
+// Name a version (or clear its name) and save the bundle on its own
+export async function labelVersion({ userId, n, key, id, label }) {
+  const entries = await loadHistory(userId, n, key);
+  if (!entries) throw new Error('history unavailable');
+  const clean = (label || '').trim().slice(0, 60);
+  if (clean && entries.filter(e => e.label && e.id !== id).length >= MAX_LABELED) throw new Error('too many named');
+  await putBundle(userId, n, entries.map(e => (e.id === id ? { ...e, label: clean || undefined } : e)), key);
   return clean;
 }
 

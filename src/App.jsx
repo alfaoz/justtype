@@ -1424,6 +1424,16 @@ export default function App() {
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
               onScratchToSlate={async (text) => { await handleOpenAsNewSlate(text); clearScratch(userId).catch(() => {}); }}
+              onImport={() => importInputRef.current?.click()}
+              // The slate open in the writer went to the trash: the writer
+              // is a blank page when we come back to it
+              onTrashed={(n) => {
+                if (lastSlateRef.current?.slate_number === n) lastSlateRef.current = null;
+                if (currentSlate?.slate_number === n) {
+                  writerRef.current?.clearContent?.();
+                  setCurrentSlate(null);
+                }
+              }}
               currentSlateNumber={currentSlate?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);

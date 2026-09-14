@@ -9,8 +9,8 @@ import { EXPIRY_CHOICES } from '../share';
  * Everything about a slate's link, as rows in the settings grammar:
  *   link: off public private
  *   open with: link passphrase        (private links)
- *   expires: never day week month
- * then the address with copy, and the way to forget it was ever public.
+ *   expires: never a day a week a month
+ * then the whole address with copy, and the way to forget it was ever public.
  * A side panel like the collab panel, so the slate stays in view.
  *
  * `share` { mode, openWith, expires, url, wasPublic, busy }
@@ -55,8 +55,6 @@ export function SharePanel({ share, onChange, onForget, onClose }) {
             value={share.mode}
             onChange={(mode) => mode !== share.mode && onChange({ mode })}
           />
-          <p className="text-[var(--theme-text-dim)] -mt-3">{s.hint[share.mode]}</p>
-
           {share.mode === 'private' && (
             <>
               <ChoiceRow
@@ -87,10 +85,10 @@ export function SharePanel({ share, onChange, onForget, onClose }) {
           )}
 
           {share.url && (
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="truncate text-[var(--theme-text-muted)]" title={share.url}>{share.url.replace(/^https?:\/\//, '')}</span>
-              <button onClick={copy} className="text-[var(--theme-text)] hover:opacity-70 transition-opacity whitespace-nowrap">{copied ? s.copied : s.copy}</button>
-            </div>
+            <p className="break-all text-[var(--theme-text-muted)] leading-relaxed">
+              {share.url.replace(/^https?:\/\//, '')}
+              <button onClick={copy} className="ml-3 text-[var(--theme-text)] hover:opacity-70 transition-opacity whitespace-nowrap">{copied ? s.copied : s.copy}</button>
+            </p>
           )}
 
           {share.wasPublic && share.mode === 'off' && (

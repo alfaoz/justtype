@@ -1,6 +1,7 @@
 // Export shapes shared by the writer and the list: a markdown file with or
-// without front matter (a device setting), and several slates joined into
-// one text or markdown file, each under its own heading.
+// without front matter (a device setting), several slates as a zip with a
+// file per slate named after it, and several slates joined into one text
+// for printing.
 import { makePref } from './pref';
 
 export const FRONT_MATTER = ['off', 'on'];
@@ -25,24 +26,32 @@ export function markdownOf({ title, text, created, updated, tags = [] }, frontMa
   return `${lines.join('\n')}\n${text}`;
 }
 
-// Several slates as one file. Markdown: a heading per slate; text: the
-// title underlined; both separated by a rule.
-export function combined(items, format, frontMatter = readFrontMatter()) {
-  const parts = items.map(({ title, text, created, updated, tags = [] }) => {
-    const t = title || 'untitled slate';
-    const body = text.replace(/\s+$/, '');
-    if (format === 'md') {
-      const head = frontMatter === 'on' ? markdownOf({ title: t, text: '', created, updated, tags }, 'on').replace(/\n$/, '') + '\n\n' : '';
-      const withoutTitleLine = body.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') === t ? body.split('\n').slice(1).join('\n').replace(/^\n+/, '') : body;
-      return `${head}# ${t}\n\n${withoutTitleLine}`;
-    }
-    return `${t}\n${'='.repeat(Math.min(t.length, 60))}\n\n${body}`;
-  });
-  return parts.join(format === 'md' ? '\n\n---\n\n' : '\n\n\n');
+// A file name from a slate's title, safe on every system, unique in a set
+export function fileNameFor(title, ext, taken = new Set()) {
+  const base = (title || 'untitled slate').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'untitled slate';
+  let name = `${base}.${ext}`;
+  for (let i = 2; taken.has(name); i++) name = `${base} (${i}).${ext}`;
+  taken.add(name);
+  return name;
+}
+
+// Several slates as a zip: one text or markdown file each, named after the slate
+export async function zipOf(items, format, frontMatter = readFrontMatter()) {
+  const { default: JSZip } = await import('jszip');
+  const zip = new JSZip();
+  const taken = new Set();
+  for (const item of items) {
+    const body = format === 'md' ? markdownOf(item, frontMatter) : item.text;
+    zip.file(fileNameFor(item.title, format, taken), body);
+  }
+  return zip.generateAsync({ type: 'blob' });
 }
 
 export function downloadText(text, filename, type = 'text/plain') {
-  const blob = new Blob([text], { type });
+  downloadBlob(new Blob([text], { type }), filename);
+}
+
+export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

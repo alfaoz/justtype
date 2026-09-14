@@ -65,7 +65,7 @@ const strings = {
     },
     publicState: {
       current: 'public',
-      outdated: 'private draft · sync',
+      outdated: 'sync',
       outdatedHint: 'your public copy is stale. click to update it'
     },
     lock: {
@@ -178,11 +178,6 @@ const strings = {
       off: 'off',
       public: 'public',
       private: 'private',
-      hint: {
-        off: 'only you can read this slate.',
-        public: 'anyone with the link can read it, as plain text.',
-        private: 'the link carries the key. the server holds only ciphertext.',
-      },
       openWith: 'open with:',
       byLink: 'link',
       byPassphrase: 'passphrase',
@@ -191,7 +186,7 @@ const strings = {
       passphraseSetGo: 'set',
       passphraseChange: 'change',
       expires: 'expires:',
-      expiry: { never: 'never', day: 'in a day', week: 'in a week', month: 'in a month' },
+      expiry: { never: 'never', day: 'a day', week: 'a week', month: 'a month' },
       copy: 'copy',
       copied: 'copied',
       failed: 'sharing failed',
@@ -295,10 +290,10 @@ const strings = {
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
     // The empty list under a filter, when nothing was searched for
-    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived', trash: 'the trash is empty' },
-    trash: { moved: 'moved to trash', undo: 'undo', restored: 'restored', empty: 'empty trash', emptied: 'trash emptied', gone: 'deleted' },
-    select: { start: 'select', done: 'done', count: (n) => `${n} selected`, txt: 'txt', md: 'md', pdf: 'pdf', skippedLocked: (n) => `${n} locked slate${n === 1 ? '' : 's'} left out`, nothing: 'nothing to export' },
-    importer: { drop: 'drop to import', working: (a, b) => `importing ${a} of ${b}`, done: (n) => `imported ${n} slate${n === 1 ? '' : 's'}`, nothing: 'nothing to import in that', failed: 'import failed', locked: 'unlock your slates first' },
+    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived yet', trash: 'nothing in the trash yet' },
+    trash: { moved: 'moved to trash', undo: 'undo', restored: 'restored', empty: 'empty trash', emptyConfirm: 'sure?', emptied: 'trash emptied', gone: 'deleted' },
+    select: { start: 'select', done: 'done', count: (n) => `${n} selected`, exportAs: 'export as:', txt: 'txt', md: 'md', pdf: 'pdf', skippedLocked: (n) => `${n} locked slate${n === 1 ? '' : 's'} left out`, nothing: 'nothing to export' },
+    importer: { start: 'import', drop: 'drop to import', working: (a, b) => `importing ${a} of ${b}`, done: (n) => `imported ${n} slate${n === 1 ? '' : 's'}`, nothing: 'nothing to import in that', failed: 'import failed', locked: 'unlock your slates first' },
     // Content search: what is on this device is searched as you type; the
     // line under the results offers the rest
     search: {
@@ -369,15 +364,14 @@ const strings = {
     tags: {
       rowLabel: 'tags:',
       all: 'all',
-      manage: 'manage',
-      manageTitle: 'tags',
+      edit: 'edit',
+      done: 'done',
       rename: 'rename',
       remove: 'remove',
       renamePlaceholder: 'new name',
       renamed: (a, b, n) => `#${a} is now #${b} on ${n} slate${n === 1 ? '' : 's'}`,
       removed: (a, n) => `#${a} removed from ${n} slate${n === 1 ? '' : 's'}`,
       needsNetwork: 'tag changes need a connection',
-      noTags: 'no tags yet',
       addPlaceholder: 'add tag...',
       addButton: 'add',
       saving: 'saving...',
@@ -446,7 +440,7 @@ const strings = {
       title: 'version history',
       loading: 'loading checkpoints...',
       empty: 'no checkpoints yet. they build up as you write together.',
-      emptySolo: 'no versions yet. they build up as you write.',
+      emptySolo: 'no versions yet.',
       unavailable: 'history is not available right now',
       pick: 'pick a checkpoint to preview it.',
       loadingPreview: 'opening...',
@@ -753,6 +747,7 @@ const strings = {
       lineFocus: 'line focus',
       sounds: 'sounds',
       haptics: 'haptics',
+      scroll: 'scroll',
       note: 'for this device.',
     },
     info: {
