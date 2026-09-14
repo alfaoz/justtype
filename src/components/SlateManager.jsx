@@ -1676,17 +1676,52 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           </div>
         )}
 
-        {/* Search on its own line; sort and show under it, with the verbs and
-            the two layouts at the right edge; tags on a line of their own */}
+        {/* Search with the verbs and the two layouts after it, as words and
+            glyphs; sort and show on the line below; tags on a line of their own */}
         {hasAnySlates && (
           <div className="flex flex-col gap-3 mb-6">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={strings.slates.searchPlaceholder}
-              className="w-full h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
-            />
+            <div className="flex items-center gap-4">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={strings.slates.searchPlaceholder}
+                className="flex-1 min-w-0 h-10 bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded px-4 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
+              />
+              <div className="flex items-center gap-x-3 flex-shrink-0 text-xs md:text-sm">
+                <button
+                  onClick={() => (selecting ? endSelecting() : setSelecting(true))}
+                  className={`transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                >
+                  <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
+                </button>
+                {onImport && !selecting && (
+                  <>
+                    <span className="opacity-30">·</span>
+                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                      {strings.slates.importer.start}
+                    </button>
+                  </>
+                )}
+                {/* The two layouts (desktop only: both are one column on a
+                    phone, so there was nothing to switch) */}
+                <span className="hidden md:inline-flex items-center gap-x-2 ml-2">
+                  {[
+                    ['list', strings.slates.viewToggle.list, <><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></>],
+                    ['grid', strings.slates.viewToggle.grid, <><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></>],
+                  ].map(([mode, title, shape]) => (
+                    <button
+                      key={mode}
+                      onClick={() => withViewTransition(() => setViewMode(mode))}
+                      aria-label={title}
+                      className={`p-1 transition-colors ${viewMode === mode ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">{shape}</svg>
+                    </button>
+                  ))}
+                </span>
+              </div>
+            </div>
 
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
               <ChoiceRow
@@ -1729,39 +1764,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   onChange={(id) => setAppFilter(id === ALL_APPS ? null : id)}
                 />
               )}
-              <div className="ml-auto flex items-center gap-x-3">
-                <button
-                  onClick={() => (selecting ? endSelecting() : setSelecting(true))}
-                  className={`transition-colors ${selecting ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
-                >
-                  <TextMorph>{selecting ? strings.slates.select.done : strings.slates.select.start}</TextMorph>
-                </button>
-                {onImport && !selecting && (
-                  <>
-                    <span className="opacity-30">·</span>
-                    <button onClick={onImport} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
-                      {strings.slates.importer.start}
-                    </button>
-                  </>
-                )}
-                {/* The two layouts (desktop only: both are one column on a
-                    phone, so there was nothing to switch) */}
-                <span className="hidden md:inline-flex items-center gap-x-2 ml-2">
-                  {[
-                    ['list', strings.slates.viewToggle.list, <><rect x="1" y="2" width="14" height="2" rx="0.5"/><rect x="1" y="7" width="14" height="2" rx="0.5"/><rect x="1" y="12" width="14" height="2" rx="0.5"/></>],
-                    ['grid', strings.slates.viewToggle.grid, <><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></>],
-                  ].map(([mode, title, shape]) => (
-                    <button
-                      key={mode}
-                      onClick={() => withViewTransition(() => setViewMode(mode))}
-                      aria-label={title}
-                      className={`p-1 transition-colors ${viewMode === mode ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-dim)] hover:text-[var(--theme-text)]'}`}
-                    >
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">{shape}</svg>
-                    </button>
-                  ))}
-                </span>
-              </div>
             </div>
             {/* Every tag in the library, a row of its own under sort and show.
                 Editing adds a small menu after each tag (rename in place, or
