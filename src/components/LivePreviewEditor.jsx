@@ -34,12 +34,29 @@ const focusEnd = (view) => {
 const centering = new Compartment();
 const editing = new Compartment();
 const editable = (readOnly) => [EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)];
+// The editor grows with its text and the page around it scrolls (the
+// scroller is overflow visible), so the caret is measured on screen and
+// the nearest scrolling ancestor moved to put it in the middle
+const scrollParent = (el) => {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+};
 const keepCentered = (viewRef) => EditorView.updateListener.of((u) => {
   if (!(u.selectionSet || u.docChanged)) return;
   const head = u.state.selection.main.head;
   requestAnimationFrame(() => {
     const v = viewRef.current;
-    if (v && v.state.selection.main.head === head) v.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'center' }) });
+    if (!v || v.state.selection.main.head !== head) return;
+    const c = v.coordsAtPos(head);
+    const scroller = scrollParent(v.dom);
+    if (!c || !scroller) return;
+    const mid = (c.top + c.bottom) / 2 - scroller.getBoundingClientRect().top;
+    const delta = mid - scroller.clientHeight / 2;
+    if (Math.abs(delta) < 2) return;
+    scroller.scrollTo({ top: scroller.scrollTop + delta, behavior: 'smooth' });
   });
 });
 const clampSel = (sel, len) => (sel && Number.isFinite(sel.anchor)
