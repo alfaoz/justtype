@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { readSwipe } from '../swipe';
 
 /**
  * A row of words to pick one from (`sort: recent oldest ...`), with one
@@ -9,7 +10,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
  * renders something right after each word (a tag's menu). With `swipe`, a
  * two-finger swipe across the row moves the choice a word at a time: every
  * eighty pixels of travel is one step, a long swipe keeps stepping, and the
- * ends stop.
+ * ends stop. Which way is the device's `swipe` setting.
  */
 export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false }) {
   const wrapRef = useRef(null);
@@ -30,8 +31,11 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
       idle = setTimeout(() => { travel = 0; at = null; }, 200);
       travel += e.deltaX;
       while (Math.abs(travel) >= STEP) {
-        const dir = Math.sign(travel);
-        travel -= dir * STEP;
+        const moved = Math.sign(travel);
+        travel -= moved * STEP;
+        // Fingers going left give a positive deltaX on a trackpad; natural
+        // follows the fingers, so that is the word to the left
+        const dir = readSwipe() === 'flipped' ? moved : -moved;
         const { value: v, options: opts, onChange: change } = live.current;
         const i = opts.findIndex(o => o.id === (at ?? v));
         const next = opts[i + dir];

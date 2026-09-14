@@ -740,6 +740,7 @@ const strings = {
       sounds: 'sounds',
       haptics: 'haptics',
       scroll: 'scroll',
+      swipe: 'swipe',
       note: 'for this device.',
     },
     info: {
