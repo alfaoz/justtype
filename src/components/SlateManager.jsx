@@ -1114,52 +1114,56 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       showToast(strings.errors.deleteSlate);
     }
   };
-  // A slate leaving for the trash: its title lifts off the row and travels
-  // to the word `trash`, shrinking as it goes, the way a message slips into
-  // a folder; the row fades and folds shut beneath it, so the rows below
-  // glide up, and the word gives a nod as the title arrives. The same in
-  // both layouts. Returns the moment the row is gone from view, and a way
-  // to put it back if the server said no.
+  // A slate leaving for the trash: a red line strikes through the row from
+  // left to right, the row fades and folds shut so the rows below glide up,
+  // and the word `trash` gives a small bounce as it goes. The same in both
+  // layouts. Returns the moment the row is gone from view, and a way to put
+  // it back if the server said no.
   const flyToTrash = (n) => {
     const el = document.querySelector(`[data-slate="${n}"]`);
     const target = document.querySelector('[data-choice="trash"]');
     if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
-    const title = el.querySelector('h3') || el;
-    const from = title.getBoundingClientRect();
-    const to = target ? target.getBoundingClientRect() : { left: from.left, top: 0, width: 0, height: 0 };
-    const ghost = document.createElement('span');
-    ghost.textContent = title.textContent;
-    const font = getComputedStyle(title);
-    Object.assign(ghost.style, {
-      position: 'fixed', left: `${from.left}px`, top: `${from.top}px`, zIndex: 60, pointerEvents: 'none', whiteSpace: 'nowrap',
-      font: font.font, color: font.color, letterSpacing: font.letterSpacing, lineHeight: font.lineHeight,
-      transformOrigin: 'left center', willChange: 'transform, opacity',
+    const from = el.getBoundingClientRect();
+    const title = el.querySelector('h3');
+    const t = title ? title.getBoundingClientRect() : from;
+    const STRIKE = 300;
+    const line = document.createElement('div');
+    Object.assign(line.style, {
+      position: 'fixed', left: `${t.left}px`, top: `${t.top + t.height / 2}px`, width: `${from.right - t.left - 8}px`, height: '1.5px',
+      background: 'var(--theme-red)', transformOrigin: 'left center', transform: 'scaleX(0)', zIndex: 60, pointerEvents: 'none',
     });
-    document.body.appendChild(ghost);
-    const dx = to.left - from.left;
-    const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
-    const flight = ghost.animate([
-      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
-      { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - 18}px) scale(0.8)`, opacity: 0.9, offset: 0.55 },
-      { transform: `translate(${dx}px, ${dy}px) scale(0.55)`, opacity: 0 },
-    ], { duration: 560, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    document.body.appendChild(line);
+    const strike = line.animate([
+      { transform: 'scaleX(0)', opacity: 1 },
+      { transform: 'scaleX(1)', opacity: 1, offset: STRIKE / 620 },
+      { transform: 'scaleX(1)', opacity: 1, offset: 0.55 },
+      { transform: 'scaleX(1)', opacity: 0 },
+    ], { duration: 620, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
 
-    // The row fades at once and folds shut behind the title
+    // The row fades once struck through, then folds shut
     const style = getComputedStyle(el);
     el.style.pointerEvents = 'none';
     el.style.overflow = 'hidden';
+    const open = { height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
     const fold = el.animate([
-      { opacity: 1, height: `${el.getBoundingClientRect().height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
-      { opacity: 0, height: `${el.getBoundingClientRect().height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth, offset: 0.4 },
+      { opacity: 1, ...open },
+      { opacity: 1, ...open, offset: STRIKE / 620 },
+      { opacity: 0, ...open, offset: 0.55 },
       { opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-    ], { duration: 520, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+    ], { duration: 620, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
 
-    flight.onfinish = () => {
-      ghost.remove();
-      target?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.15)', offset: 0.4 }, { transform: 'scale(1)' }], { duration: 300, easing: 'ease-out' });
-    };
+    // The word bounces as the row goes
+    target?.animate([
+      { transform: 'translateY(0)' },
+      { transform: 'translateY(-5px)', offset: 0.3 },
+      { transform: 'translateY(0)', offset: 0.6 },
+      { transform: 'translateY(-2px)', offset: 0.8 },
+      { transform: 'translateY(0)' },
+    ], { duration: 460, delay: STRIKE, easing: 'ease-out' });
+
+    strike.onfinish = () => line.remove();
     const done = new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
-    const cancel = () => { flight.cancel(); fold.cancel(); ghost.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    const cancel = () => { strike.cancel(); fold.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
     return { done, cancel };
   };
   const trashSlate = async (slate, e) => {
