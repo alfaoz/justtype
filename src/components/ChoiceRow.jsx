@@ -8,7 +8,8 @@ import { Ico } from './icons';
  * instead of blinking from one to the next. `label` is optional: inside an
  * account row the label is already on the left. An option may bring its own
  * `node` in place of the word (a tag being renamed), a `tone` of `danger`
- * colours the word red, `after(option)` renders something right after each
+ * colours the word red and the underline with it while it sits there
+ * (it crosses over to the accent as it glides away), `after(option)` renders something right after each
  * word (a tag's menu), and `icon` is the label's glyph when the device
  * wants icons. With `swipe`, a
  * two-finger swipe across the row moves the choice a word at a time: every
@@ -90,8 +91,8 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
       {bar && (
         <span
           aria-hidden="true"
-          className="absolute h-px bg-[var(--theme-accent)] pointer-events-none"
-          style={{ left: bar.left, width: bar.width, top: bar.top, transition: 'left 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1), top 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
+          className={`absolute h-px pointer-events-none ${options.find(o => o.id === value)?.tone === 'danger' ? 'bg-[var(--theme-red)]' : 'bg-[var(--theme-accent)]'}`}
+          style={{ left: bar.left, width: bar.width, top: bar.top, transition: 'left 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1), top 300ms cubic-bezier(0.4, 0, 0.2, 1), background-color 300ms cubic-bezier(0.4, 0, 0.2, 1)' }}
         />
       )}
     </div>

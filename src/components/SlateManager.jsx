@@ -206,6 +206,21 @@ function DotMenu({ isOpen, onToggle, children, small = false }) {
   );
 }
 
+// The red line through a title: drawn when the slate goes to the trash,
+// lying across it while it is there, rubbed out when it comes back. The
+// wrapper around the title carries the row's text size so `top` lands on
+// the middle of the first line.
+function Strike({ on, top }) {
+  return (
+    <span
+      data-strike
+      aria-hidden="true"
+      className="absolute left-0 right-0 h-[1.5px] bg-[var(--theme-red)] pointer-events-none"
+      style={{ top, marginTop: '-0.75px', transformOrigin: 'left center', transform: on ? 'scaleX(1)' : 'scaleX(0)' }}
+    />
+  );
+}
+
 /**
  * The slate menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
@@ -378,6 +393,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   const open = unavailable ? undefined : onOpen;
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
   const title = slate.title || strings.slates.untitled;
+  const struckCls = slate.deleted_at ? ' opacity-60' : '';
   const stats = (
     <>
       <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
@@ -400,7 +416,10 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           <div className="flex items-start gap-2 min-w-0 flex-1">
             {selecting && <span className={`text-lg leading-none w-5 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
-            <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium line-clamp-2 break-words">{title}</h3>
+            <div className="relative min-w-0 text-sm md:text-base">
+              <h3 className={`text-[var(--theme-text)] font-medium line-clamp-2 break-words${struckCls}`}>{title}</h3>
+              <Strike on={Boolean(slate.deleted_at)} top="0.72em" />
+            </div>
             <span className="mt-1"><TagWords slate={slate} onTagFilter={onTagFilter} /></span>
           </div>
           <SlateMenu slate={slate} {...menuProps} />
@@ -439,7 +458,10 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="flex items-center gap-2">
           {selecting && <span className={`text-lg leading-none w-5 text-center ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
           {isPinned && <PinGlyph />}
-          <h3 className="text-[var(--theme-text)] text-sm md:text-base font-medium truncate min-w-0">{title}</h3>
+          <div className="relative min-w-0 text-sm md:text-base">
+            <h3 className={`text-[var(--theme-text)] font-medium truncate min-w-0${struckCls}`}>{title}</h3>
+            <Strike on={Boolean(slate.deleted_at)} top="50%" />
+          </div>
           <TagWords slate={slate} onTagFilter={onTagFilter} />
         </div>
         {snippet}
@@ -1115,92 +1137,80 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       console.error('Failed to restore slate:', err);
     }
   };
-  // A slate coming back from the trash: the red line through its row is
-  // rubbed out from left to right, the way an eraser goes, and the row lifts
-  // away upward to rejoin the list, the rows below closing the gap. Returns
-  // the moment the row is gone from the trash, and a way to keep it there
-  // if the server said no.
-  const unstrike = (n) => {
+  // The pieces the trash motion works on, or nothing when motion is off
+  const PENCIL = 'cubic-bezier(0.55, 0.05, 0.25, 1)';
+  const strikeParts = (n) => {
     const el = document.querySelector(`[data-slate="${n}"]`);
-    if (!el || !el.animate || motionOff()) return { done: Promise.resolve(), cancel: () => {} };
-    const from = el.getBoundingClientRect();
-    const title = el.querySelector('h3');
-    const t = title ? title.getBoundingClientRect() : from;
-    const ERASE = 560;
-    const LIFT = 240;
-    const line = document.createElement('div');
-    Object.assign(line.style, {
-      position: 'fixed', left: `${t.left}px`, top: `${t.top + t.height / 2}px`, width: `${from.right - t.left - 8}px`, height: '1.5px',
-      background: 'var(--theme-red)', transformOrigin: 'right center', zIndex: 60, pointerEvents: 'none',
-    });
-    document.body.appendChild(line);
-    const erase = line.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ERASE, easing: 'cubic-bezier(0.55, 0.05, 0.25, 1)', fill: 'forwards' });
-    erase.onfinish = () => line.remove();
-
+    if (!el || !el.animate || motionOff()) return null;
+    return { el, line: el.querySelector('[data-strike]'), title: el.querySelector('h3') };
+  };
+  // A row folding away: its height, padding and borders go to nothing so
+  // the rows below glide up, while what is on it does `keyframes`
+  const fold = (el, keyframes, opts) => {
     const style = getComputedStyle(el);
-    el.style.pointerEvents = 'none';
+    const open = { height: `${el.getBoundingClientRect().height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
+    const shut = { height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' };
     el.style.overflow = 'hidden';
-    const open = { height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth };
-    const lift = el.animate([
-      { transform: 'translateY(0)', opacity: 1, ...open },
-      { transform: 'translateY(-10px)', opacity: 0, ...open, offset: 0.6 },
-      { transform: 'translateY(-10px)', opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-    ], { duration: LIFT + 160, delay: ERASE + 80, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
-
+    el.style.pointerEvents = 'none';
+    return el.animate(keyframes.map((k, i) => ({ ...k, ...(i === keyframes.length - 1 ? shut : open) })), { fill: 'forwards', ...opts });
+  };
+  // A slate coming back from the trash: the red line across its title is
+  // rubbed out from right to left and the title brightens as it goes; then
+  // the row lifts out of the trash, fading as its box closes under it and
+  // the rows below rise. Returns the moment the row is gone, and a way to
+  // leave it as it was if the server said no.
+  const unstrike = (n) => {
+    const p = strikeParts(n);
+    if (!p) return { done: Promise.resolve(), cancel: () => {} };
+    const { el, line, title } = p;
+    const ERASE = 380;
+    const LIFT = 220;
+    if (line) line.style.transformOrigin = 'right center';
+    const erase = line?.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: ERASE, easing: PENCIL, fill: 'forwards' });
+    const wake = title?.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: ERASE, easing: 'ease-out', fill: 'forwards' });
+    const lift = fold(el, [{ transform: 'translateY(0)', opacity: 1 }, { transform: 'translateY(-6px)', opacity: 0 }], { duration: LIFT, delay: ERASE + 60, easing: 'cubic-bezier(0.55, 0, 0.85, 0.3)' });
     const done = new Promise((resolve) => { lift.onfinish = resolve; lift.oncancel = resolve; });
-    const cancel = () => { erase.cancel(); lift.cancel(); line.remove(); el.style.pointerEvents = ''; el.style.overflow = ''; };
+    const cancel = () => {
+      erase?.cancel(); wake?.cancel(); lift.cancel();
+      if (line) line.style.transformOrigin = 'left center';
+      el.style.pointerEvents = ''; el.style.overflow = '';
+    };
     return { done, cancel };
   };
-  // A slate leaving for the trash: a red line is drawn through the row the
-  // way a pencil draws, slow off the mark, quick through the middle, easing
-  // to a stop; once the server has agreed and the line is drawn, the row is
-  // squished flat from the top, fast, so the rows below glide up, and the
-  // word `trash` gives one small bounce. The same in both layouts. Returns
-  // the strike, the squish to call when the server says yes, and a way to
-  // put the row back if it says no.
-  const flyToTrash = (n) => {
-    const el = document.querySelector(`[data-slate="${n}"]`);
-    const target = document.querySelector('[data-choice="trash"]');
+  // A slate leaving for the trash: the red line is drawn across its title
+  // the way a pencil draws, slow off the mark, quick through the middle,
+  // easing to a stop, and the title dims under it; once the server has
+  // agreed and the line is drawn, the row is squished flat from the top,
+  // fast, the rows below gliding up, and the word `trash` gives one small
+  // nod. The same in both layouts. Returns the strike, the squish to call
+  // when the server says yes, and a way to leave the row if it says no.
+  const strikeOut = (n) => {
     const still = { struck: Promise.resolve(), squish: async () => {}, cancel: () => {} };
-    if (!el || !el.animate || motionOff()) return still;
-    const from = el.getBoundingClientRect();
-    const title = el.querySelector('h3');
-    const t = title ? title.getBoundingClientRect() : from;
-    const DRAW = 720;
-    const HOLD = 160;
-    const SQUISH = 190;
-    const PENCIL = 'cubic-bezier(0.55, 0.05, 0.25, 1)';
-    const line = document.createElement('div');
-    Object.assign(line.style, {
-      position: 'fixed', left: `${t.left}px`, top: `${t.top + t.height / 2}px`, width: `${from.right - t.left - 8}px`, height: '1.5px',
-      background: 'var(--theme-red)', transformOrigin: 'left center', transform: 'scaleX(0)', zIndex: 60, pointerEvents: 'none',
-    });
-    document.body.appendChild(line);
+    const p = strikeParts(n);
+    if (!p) return still;
+    const { el, line, title } = p;
+    const target = document.querySelector('[data-choice="trash"]');
+    const DRAW = 440;
+    const HOLD = 70;
+    const SQUISH = 200;
     el.style.pointerEvents = 'none';
-    const strike = line.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: DRAW, easing: PENCIL, fill: 'forwards' });
-    const struck = new Promise((resolve) => { strike.onfinish = resolve; strike.oncancel = resolve; });
-    let fold = null;
-    let lineOut = null;
+    const strike = line?.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: DRAW, easing: PENCIL, fill: 'forwards' });
+    const dim = title?.animate([{ opacity: 1 }, { opacity: 0.6 }], { duration: DRAW, easing: 'ease-in', fill: 'forwards' });
+    const struck = strike ? new Promise((resolve) => { strike.onfinish = resolve; strike.oncancel = resolve; }) : Promise.resolve();
+    let shut = null;
     const squish = () => {
-      const style = getComputedStyle(el);
-      el.style.overflow = 'hidden';
       el.style.transformOrigin = 'center top';
-      lineOut = line.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SQUISH, delay: HOLD, easing: 'ease-in', fill: 'forwards' });
-      lineOut.onfinish = () => line.remove();
-      fold = el.animate([
-        { transform: 'scaleY(1)', height: `${from.height}px`, paddingTop: style.paddingTop, paddingBottom: style.paddingBottom, borderTopWidth: style.borderTopWidth, borderBottomWidth: style.borderBottomWidth },
-        { transform: 'scaleY(0)', height: '0px', paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
-      ], { duration: SQUISH, delay: HOLD, easing: 'cubic-bezier(0.7, 0, 0.85, 0.25)', fill: 'forwards' });
-      // One bounce: up quickly and slowing, down under gravity
+      shut = fold(el, [{ transform: 'scaleY(1)', opacity: 1 }, { transform: 'scaleY(0)', opacity: 0 }], { duration: SQUISH, delay: HOLD, easing: 'cubic-bezier(0.6, 0, 0.9, 0.3)' });
+      // One nod: up quickly and slowing, down under gravity
       target?.animate([
         { transform: 'translateY(0)', easing: 'cubic-bezier(0.2, 0.7, 0.4, 1)' },
-        { transform: 'translateY(-6px)', offset: 0.42, easing: 'cubic-bezier(0.55, 0, 0.8, 0.4)' },
+        { transform: 'translateY(-5px)', offset: 0.42, easing: 'cubic-bezier(0.55, 0, 0.8, 0.4)' },
         { transform: 'translateY(0)' },
-      ], { duration: 360, delay: HOLD + 40 });
-      return new Promise((resolve) => { fold.onfinish = resolve; fold.oncancel = resolve; });
+      ], { duration: 320, delay: HOLD });
+      return new Promise((resolve) => { shut.onfinish = resolve; shut.oncancel = resolve; });
     };
     const cancel = () => {
-      strike.cancel(); lineOut?.cancel(); fold?.cancel(); line.remove();
+      strike?.cancel(); dim?.cancel(); shut?.cancel();
       el.style.pointerEvents = ''; el.style.overflow = ''; el.style.transformOrigin = '';
     };
     return { struck, squish, cancel };
@@ -1209,7 +1219,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
-    const fx = flyToTrash(slate.slate_number);
+    const fx = strikeOut(slate.slate_number);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}`, { method: 'DELETE', credentials: 'include' });
       const data = await r.json().catch(() => ({}));
