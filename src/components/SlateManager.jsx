@@ -1914,7 +1914,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 which stay where they are. */}
             {allTags.length > 0 && (
               <div className="mt-2 flex items-start gap-x-3 text-xs md:text-sm">
-                <ScrollRow className="flex-1 min-w-0" wrap={tagEditing}>
+                <ScrollRow className="min-w-0" wrap={tagEditing}>
                 <ChoiceRow
                   nowrap={!tagEditing}
                   icon={TagIcon}
