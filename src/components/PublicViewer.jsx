@@ -144,13 +144,14 @@ export function PublicViewer() {
   const loadPublicSlate = async (shareId) => {
     try {
       const response = await fetch(`${API_URL}/public/slates/${shareId}`);
-      if (!response.ok) {
-        // Pick a random message from the array
+      // One of the not-found lines, at random; also what a private link
+      // without its key gets, so the address says nothing about itself
+      const notFound = () => {
         const messages = strings.slateNotFound.messages;
-        const randomMessage = messages[Math.floor(Math.random() * messages.length)];
-        setErrorMessage(randomMessage);
+        setErrorMessage(messages[Math.floor(Math.random() * messages.length)]);
         throw new Error('Slate not found');
-      }
+      };
+      if (!response.ok) notFound();
       const data = await response.json();
       if (data.encrypted) {
         const { blob, pass, ...meta } = data;
@@ -158,7 +159,7 @@ export function PublicViewer() {
         if (key) {
           try { await openSealed({ blob, meta }, key); return; } catch { /* the address key did not fit */ }
         }
-        if (!pass) { setErrorMessage(strings.public.locked.noKey); throw new Error('key missing'); }
+        if (!pass) notFound();
         setSealed({ blob, pass, meta });
         document.title = pages.home.title; // nothing about the slate until it is opened
         return;

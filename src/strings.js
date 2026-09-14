@@ -1058,7 +1058,6 @@ const strings = {
       hint: 'its passphrase, then enter',
       open: 'open it',
       wrong: 'that did not open it',
-      noKey: 'this link is missing its key. ask for the whole address.',
     }
   },
 
