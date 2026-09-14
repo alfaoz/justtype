@@ -19,6 +19,7 @@ import { motionOff } from '../motion';
 import { useEscape } from '../useEscape';
 import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
+import { ScrollRow } from './ScrollRow';
 import { goneForever, readGone, writeGone, GONE_WAYS } from '../goneLab';
 import { Ico, PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, EyeIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon, ArrowUpIcon, ArrowDownIcon, ImportIcon, SelectIcon, SortIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
@@ -407,7 +408,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
       <div
         onClick={open}
         data-slate={slate.slate_number}
-        className={`slate-item ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
+        className={`slate-item is-card ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
         {/* The title is the card: let it wrap to two lines instead of
             truncating at twenty characters, and gather every piece of meta
@@ -638,6 +639,32 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [tagEditing, setTagEditing] = useState(false);
   const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
   const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  // Hover that keeps up with scrolling: the browser only settles which row
+  // is under the pointer once the wheel stops, so the row under it is
+  // marked here on every scroll and pointer move, and styled like a hover
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    let x = -1, y = -1, marked = null, raf = 0;
+    const mark = (row) => {
+      if (row === marked) return;
+      marked?.removeAttribute('data-hover');
+      row?.setAttribute('data-hover', '');
+      marked = row;
+    };
+    const onMove = (e) => { x = e.clientX; y = e.clientY; mark(e.target.closest?.('.slate-item') || null); };
+    const onLeave = () => { x = y = -1; mark(null); };
+    const onScroll = () => {
+      if (x < 0 || raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; mark(document.elementFromPoint(x, y)?.closest('.slate-item') || null); });
+    };
+    root.addEventListener('pointermove', onMove);
+    root.addEventListener('pointerleave', onLeave);
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => { root.removeEventListener('pointermove', onMove); root.removeEventListener('pointerleave', onLeave); root.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); mark(null); };
+  }, [loading]);
   const [goneWay, setGoneWay] = useState(readGone);
   const [tagBusy, setTagBusy] = useState(false);
   const [dragOverId, setDragOverId] = useState(null);
@@ -1083,6 +1110,17 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
     return { items, skipped };
   };
+  // The rows go one after another, a beat apart, and the whole lot is
+  // awaited; the beat shrinks so a long list does not take all day
+  const stagger = (items, fn) => Promise.all(items.map((item, i) => new Promise(r => setTimeout(r, Math.min(i * 45, 600))).then(() => fn(item))));
+  // The selection, acted on as one: what a row's menu does, for every
+  // chosen row, then the selection ends
+  const bulk = async (fn) => {
+    if (!selected.size || bulkBusy) return;
+    setBulkBusy(true);
+    try { await stagger(filteredAndSortedSlates.filter(s => selected.has(s.slate_number) && !s.shared), fn); endSelecting(); }
+    finally { setBulkBusy(false); }
+  };
   const exportSelected = async (format) => {
     if (!selected.size || exporting) return;
     setExporting(true);
@@ -1216,8 +1254,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return { struck, squish, cancel };
   };
   const trashSlate = async (slate, e) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e?.stopPropagation();
+    e?.preventDefault();
     setOpenMenuId(null);
     const fx = strikeOut(slate.slate_number);
     try {
@@ -1234,8 +1272,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
   };
   const deleteForever = async (slate, e) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e?.stopPropagation();
+    e?.preventDefault();
     setOpenMenuId(null);
     const fx = goneForever(document.querySelector(`[data-slate="${slate.slate_number}"]`));
     try {
@@ -1254,6 +1292,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     try {
       const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) throw new Error('empty failed');
+      await stagger(filteredAndSortedSlates, (slate) => goneForever(document.querySelector(`[data-slate="${slate.slate_number}"]`)).done);
       setSlates(prev => prev.filter(s => !s.deleted_at));
     } catch (err) {
       console.error('Failed to empty the trash:', err);
@@ -1263,8 +1302,8 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   // Archive: the slate leaves the list for the archived section, and comes
   // back the same way. Nothing else about it changes.
   const toggleArchive = async (slate, e) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e?.stopPropagation();
+    e?.preventDefault();
     setOpenMenuId(null);
     const archived = !slate.archived_at;
     try {
@@ -1692,7 +1731,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const hasCollabSlates = slates.some(s => s.is_collab) || sharedSlates.length > 0;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div ref={scrollRef} className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-4 md:p-8">
         <div className="flex justify-between items-center mb-4 md:mb-6">
           <h1 className="text-xl md:text-2xl text-[var(--theme-text)]">{strings.slates.title}</h1>
@@ -1740,7 +1779,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         {/* Search with the verbs and the two layouts after it, as words and
             glyphs; sort and show on the line below; tags on a line of their own */}
         {hasAnySlates && (
-          <div className="flex flex-col gap-3 mb-6">
+          <div className="sticky top-0 z-20 -mt-2 pt-2 pb-3 mb-3 bg-[var(--theme-bg)] flex flex-col gap-3">
+            {/* The list slides under a short fade rather than a hard edge */}
+            <div aria-hidden="true" className="absolute left-0 right-0 top-full h-4 bg-gradient-to-b from-[var(--theme-bg)] to-transparent pointer-events-none" />
             <div className="flex items-center gap-4">
               <input
                 type="text"
@@ -1841,9 +1882,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 remove from every slate); the menus grow in beside the words,
                 which stay where they are. */}
             {allTags.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
+              <div className="mt-2 flex items-start gap-x-3 text-xs md:text-sm">
+                <ScrollRow className="flex-1 min-w-0" wrap={tagEditing}>
                 <ChoiceRow
-                  swipe
+                  nowrap={!tagEditing}
                   icon={TagIcon}
                   label={strings.slates.tags.rowLabel}
                   className={tagBusy ? 'opacity-60 pointer-events-none' : ''}
@@ -1893,8 +1935,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     </span>
                   )}
                 />
-                <span className="opacity-30">·</span>
-                <button onClick={() => { setTagEditing(!tagEditing); setTagEdit(null); }} className="text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors">
+                </ScrollRow>
+                <span className="opacity-30 flex-shrink-0">·</span>
+                <button onClick={() => { setTagEditing(!tagEditing); setTagEdit(null); }} className="flex-shrink-0 text-[var(--theme-text)] hover:opacity-70 transition-opacity">
                   {tagEditing ? strings.slates.tags.done : strings.slates.tags.edit}
                 </button>
               </div>
@@ -1908,6 +1951,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   <button key={f} onClick={() => exportSelected(f)} disabled={!selected.size || exporting} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40 disabled:hover:text-[var(--theme-text-dim)]">
                     {strings.slates.select[f]}
                   </button>
+                ))}
+                {/* What a row's menu offers, for the whole selection: in the
+                    trash that is restore and delete forever, elsewhere
+                    archive (or unarchive) and delete */}
+                {(visibilityFilter === 'trash'
+                  ? [[strings.slates.menu.restore, restoreSlate, false], [strings.slates.menu.deleteForever, deleteForever, true]]
+                  : [[visibilityFilter === 'archived' ? strings.slates.menu.unarchive : strings.slates.menu.archive, toggleArchive, false], [strings.slates.menu.delete, trashSlate, true]]
+                ).map(([word, act, danger]) => (
+                  <React.Fragment key={word}>
+                    <span className="opacity-30">·</span>
+                    <button onClick={() => bulk(act)} disabled={!selected.size || bulkBusy} className={`transition-colors disabled:opacity-40 ${danger ? 'text-[var(--theme-red)] hover:opacity-70' : 'hover:text-[var(--theme-text)] disabled:hover:text-[var(--theme-text-dim)]'}`}>
+                      {word}
+                    </button>
+                  </React.Fragment>
                 ))}
               </div>
             )}

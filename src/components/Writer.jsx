@@ -17,6 +17,7 @@ import { TextMorph } from './TextMorph';
 import { PUNTO_SIZES, nextPunto, usePunto, setPunto } from '../punto';
 import { cue } from '../cues';
 import { HoverNote } from './HoverNote';
+import { ScrollRow } from './ScrollRow';
 import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
@@ -101,54 +102,6 @@ function AboutLink({ href, children }) {
     >
       {children}
     </a>
-  );
-}
-
-/**
- * A horizontally scrolling row with its own scroll indicator.
- *
- * Native scrollbars are invisible on iOS and auto-hiding elsewhere, so a row
- * that continues past the edge looks like a row that simply got cut off. This
- * draws a thumb whose width is the visible fraction and whose position tracks
- * scrollLeft, which is the same technique the desktop settings strip uses.
- */
-function ScrollRow({ children, className = '' }) {
-  const ref = useRef(null);
-  const [bar, setBar] = useState(null); // { width, left } as percentages, or null when it all fits
-
-  const measure = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { scrollWidth, clientWidth, scrollLeft } = el;
-    if (scrollWidth <= clientWidth + 1) {
-      setBar((prev) => (prev === null ? prev : null));
-      return;
-    }
-    const width = Math.max(14, (clientWidth / scrollWidth) * 100);
-    const left = (scrollLeft / (scrollWidth - clientWidth)) * (100 - width);
-    setBar((prev) =>
-      prev && Math.abs(prev.left - left) < 0.5 && Math.abs(prev.width - width) < 0.5 ? prev : { width, left }
-    );
-  }, []);
-
-  useEffect(() => {
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [measure]);
-
-  return (
-    <div className={className}>
-      <div ref={ref} onScroll={measure} className="flex gap-2 overflow-x-auto settings-strip no-native-scrollbar">
-        {children}
-      </div>
-      <div className="h-[3px] mt-2 rounded-full bg-[var(--theme-border)]/40 overflow-hidden" style={{ opacity: bar ? 1 : 0 }}>
-        <div
-          className="h-full rounded-full bg-[var(--theme-text-dim)] transition-[margin] duration-75"
-          style={{ width: `${bar ? bar.width : 0}%`, marginLeft: `${bar ? bar.left : 0}%` }}
-        />
-      </div>
-    </div>
   );
 }
 

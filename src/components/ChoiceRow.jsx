@@ -11,12 +11,13 @@ import { Ico } from './icons';
  * colours the word red and the underline with it while it sits there
  * (it crosses over to the accent as it glides away), `after(option)` renders something right after each
  * word (a tag's menu), and `icon` is the label's glyph when the device
- * wants icons. With `swipe`, a
+ * wants icons, and `nowrap` keeps the words on one line for a row that
+ * scrolls. With `swipe`, a
  * two-finger swipe across the row moves the choice a word at a time: every
  * eighty pixels of travel is one step, a long swipe keeps stepping, and the
  * ends stop. Which way is the device's `swipe` setting.
  */
-export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false, icon = null }) {
+export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false, icon = null, nowrap = false }) {
   const wrapRef = useRef(null);
   const [bar, setBar] = useState(null);
   const live = useRef({ value, options, onChange });
@@ -62,9 +63,9 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
     return () => ro.disconnect();
   }, [value, options.length]);
   return (
-    <div ref={wrapRef} className={`relative flex items-center flex-wrap gap-x-3 gap-y-1 ${className}`}>
+    <div ref={wrapRef} className={`relative flex items-center gap-x-3 gap-y-1 ${nowrap ? 'flex-nowrap whitespace-nowrap' : 'flex-wrap'} ${className}`}>
       {label && (
-        <span className="inline-flex items-center gap-1.5 text-[var(--theme-text-dim)] select-none">
+        <span className="inline-flex items-center gap-1.5 text-[var(--theme-text)] select-none">
           {icon && <Ico of={icon} className="w-3.5 h-3.5" />}
           {label}
         </span>
