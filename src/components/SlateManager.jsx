@@ -21,6 +21,10 @@ import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
 import { ScrollRow } from './ScrollRow';
 import { goneForever, readGone, writeGone, GONE_WAYS } from '../goneLab';
+
+// Where the list was left when the writer took over: its filters, search
+// and scroll position, so coming back lands on the same view
+let remembered = null;
 import { Ico, PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, EyeIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon, ArrowUpIcon, ArrowDownIcon, ImportIcon, SelectIcon, SortIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
@@ -526,7 +530,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   useEffect(() => () => clearTimeout(leaveTimerRef.current), []);
   const [showToast, toastNode] = useToast();
   const [openMenuId, setOpenMenuId] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => remembered?.searchQuery ?? '');
   // Whether the account's lock is open right now: the open locked slate
   // reads "unlocked" only while it is
   // Lock changes re-render the list: the slates whose lock is open read
@@ -621,7 +625,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     showToast(strings.writer.lock.recovered);
   };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
+  const [sortBy, setSortBy] = useState(() => remembered?.sortBy ?? 'recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
   // Phones always get the list, whatever preference the desktop toggle saved.
   const [isNarrow, setIsNarrow] = useState(() =>
@@ -634,7 +638,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return () => mq.removeEventListener('change', onChange);
   }, []);
   const effectiveViewMode = isNarrow ? 'list' : viewMode;
-  const [tagFilter, setTagFilter] = useState(null);
+  const [tagFilter, setTagFilter] = useState(() => remembered?.tagFilter ?? null);
   // Editing tags: every tag gets a menu (rename, remove); a rename is typed in place
   const [tagEditing, setTagEditing] = useState(false);
   const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
@@ -647,23 +651,34 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   useEffect(() => {
     const root = scrollRef.current;
     if (!root) return;
-    let x = -1, y = -1, marked = null, raf = 0;
+    let x = -1, y = -1, marked = null;
     const mark = (row) => {
       if (row === marked) return;
       marked?.removeAttribute('data-hover');
       row?.setAttribute('data-hover', '');
       marked = row;
     };
-    const onMove = (e) => { x = e.clientX; y = e.clientY; mark(e.target.closest?.('.slate-item') || null); };
+    const under = () => (x < 0 ? null : document.elementFromPoint(x, y)?.closest('.slate-item') || null);
+    // The wheel carries the pointer position too, for a pointer that has
+    // not moved since the list appeared
+    const onMove = (e) => { x = e.clientX; y = e.clientY; mark(e.target.closest?.('.slate-item') || under()); };
+    const onWheel = (e) => { x = e.clientX; y = e.clientY; };
     const onLeave = () => { x = y = -1; mark(null); };
-    const onScroll = () => {
-      if (x < 0 || raf) return;
-      raf = requestAnimationFrame(() => { raf = 0; mark(document.elementFromPoint(x, y)?.closest('.slate-item') || null); });
-    };
+    const onScroll = () => mark(under());
     root.addEventListener('pointermove', onMove);
+    root.addEventListener('wheel', onWheel, { passive: true });
     root.addEventListener('pointerleave', onLeave);
     root.addEventListener('scroll', onScroll, { passive: true });
-    return () => { root.removeEventListener('pointermove', onMove); root.removeEventListener('pointerleave', onLeave); root.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf); mark(null); };
+    return () => { root.removeEventListener('pointermove', onMove); root.removeEventListener('wheel', onWheel); root.removeEventListener('pointerleave', onLeave); root.removeEventListener('scroll', onScroll); mark(null); };
+  }, [loading]);
+  // The list as it was left: filters, search and scroll come back when the
+  // writer hands back to it (see `remembered` at the top of the file)
+  const rememberRef = useRef(null);
+  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter, appFilter };
+  useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
+  useEffect(() => {
+    if (loading || !scrollRef.current || !remembered?.scrollTop) return;
+    scrollRef.current.scrollTop = remembered.scrollTop;
   }, [loading]);
   const [goneWay, setGoneWay] = useState(readGone);
   const [tagBusy, setTagBusy] = useState(false);
@@ -681,9 +696,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [slates, sharedSlates]);
   const allTags = useMemo(() => tagCounts.map(([t]) => t), [tagCounts]);
-  const [appFilter, setAppFilter] = useState(null); // source_app client_id, or null for all
-  const [visibilityFilter, setVisibilityFilter] = useState('all'); // 'all' | 'public' | 'private' | 'archived'
-  const [collabFilter, setCollabFilter] = useState(false); // true = only collaborative slates
+  const [appFilter, setAppFilter] = useState(() => remembered?.appFilter ?? null); // source_app client_id, or null for all
+  const [visibilityFilter, setVisibilityFilter] = useState(() => remembered?.visibilityFilter ?? 'all'); // 'all' | 'public' | 'private' | 'archived'
+  const [collabFilter, setCollabFilter] = useState(() => remembered?.collabFilter ?? false); // true = only collaborative slates
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState('');

@@ -15,6 +15,18 @@ export function ScrollRow({ children, className = '', wrap = false }) {
   const ref = useRef(null);
   const [bar, setBar] = useState(null); // { width, left } as percentages, or null when it all fits
   const [fade, setFade] = useState({ l: false, r: false });
+  // The thumb is there while the pointer is over the row or the row is
+  // moving, and fades out once both have stopped
+  const [hover, setHover] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const movingTimer = useRef(null);
+  const onScroll = () => {
+    measure();
+    setMoving(true);
+    clearTimeout(movingTimer.current);
+    movingTimer.current = setTimeout(() => setMoving(false), 700);
+  };
+  useEffect(() => () => clearTimeout(movingTimer.current), []);
 
   const measure = useCallback(() => {
     const el = ref.current;
@@ -42,11 +54,11 @@ export function ScrollRow({ children, className = '', wrap = false }) {
   }, [measure, wrap]);
 
   return (
-    <div className={className}>
-      <div ref={ref} onScroll={measure} className={wrap ? 'flex flex-wrap gap-2' : `flex gap-2 overflow-x-auto settings-strip no-native-scrollbar ${fade.l ? 'strip-fade-l' : ''} ${fade.r ? 'strip-fade-r' : ''}`}>
+    <div className={className} onPointerEnter={() => setHover(true)} onPointerLeave={() => setHover(false)}>
+      <div ref={ref} onScroll={onScroll} className={wrap ? 'flex flex-wrap gap-2' : `flex gap-2 overflow-x-auto settings-strip no-native-scrollbar ${fade.l ? 'strip-fade-l' : ''} ${fade.r ? 'strip-fade-r' : ''}`}>
         {children}
       </div>
-      <div className="h-[3px] mt-2 rounded-full bg-[var(--theme-border)]/40 overflow-hidden" style={{ opacity: bar ? 1 : 0 }}>
+      <div className="h-[3px] mt-2 rounded-full bg-[var(--theme-border)]/40 overflow-hidden transition-opacity duration-300" style={{ opacity: bar && (hover || moving) ? 1 : 0 }}>
         <div
           className="h-full rounded-full bg-[var(--theme-text-dim)] transition-[margin] duration-75"
           style={{ width: `${bar ? bar.width : 0}%`, marginLeft: `${bar ? bar.left : 0}%` }}

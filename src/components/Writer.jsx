@@ -305,6 +305,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const isShared = !!sharedSlateId;
   const [sharedBy, setSharedBy] = useState(null);
   const [sharedRemoved, setSharedRemoved] = useState(false);
+  // A slate opened from the trash: shown as it is, not editable, with the
+  // one word that brings it back
+  const [trashedSlate, setTrashedSlate] = useState(null);
+  const inTrash = trashedSlate != null && String(trashedSlate) === String(currentSlate?.slate_number);
+  const inTrashRef = useRef(false);
+  inTrashRef.current = inTrash;
   // Two-step "unpublish completely": arms sure?, reverts after 3s untouched
   const [confirmForget, setConfirmForget] = useState(false);
   // One id per new slate, sent as the create's idempotency key and reused
@@ -1167,7 +1173,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (response.status === 404 || response.status === 410) { gone = true; throw new Error('gone'); }
           if (!response.ok) throw new Error(`load ${response.status}`);
           data = await response.json();
-          if (data.deleted_at) { gone = true; throw new Error('gone'); }
+          setTrashedSlate(data.deleted_at ? id : null);
         } catch (netErr) {
           if (gone) {
             leaveGoneSlate(id);
@@ -1189,7 +1195,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           fromCache = true;
         }
       }
-      if (!fromCache && userId && data.encrypted) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
+      if (!fromCache && userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       else if (cached && userId) cacheSlate(userId, id, {}, { opened: true }).catch(() => {});
       loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: data.encryptedContent ?? null };
       let slateContent;
@@ -1604,6 +1610,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     onSlateChange(null);
     if (window.location.pathname.startsWith('/slate/')) window.history.replaceState({}, '', '/');
   };
+  const restoreCurrentSlate = async () => {
+    const n = currentSlate?.slate_number;
+    if (n == null) return;
+    try {
+      const r = await fetch(`${API_URL}/slates/${n}/restore`, { method: 'POST', credentials: 'include' });
+      if (!r.ok) return;
+      setTrashedSlate(null);
+      onSlateChange({ ...currentSlate, deleted_at: null });
+    } catch {
+      reportNetworkFailure();
+    }
+  };
   const deleteCurrentSlate = async () => {
     const n = currentSlate?.slate_number;
     if (n == null || deletingRef.current === n) return null; // one delete in flight per slate
@@ -1640,6 +1658,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // announced like a first save; the two-second autosave is not.
   const saveSlateNow = async ({ explicit = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
+    if (inTrashRef.current) return null; // read until restored
     if (lockGateRef.current) return null; // a shut lock shows no content to save
     const openNumber = currentSlate?.slate_number ?? null;
     const stillOpen = () => (currentSlateRef.current?.slate_number ?? null) === openNumber;
@@ -2726,6 +2745,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             <TiptapEditor
               ref={richEditorRef}
               content={content}
+              readOnly={inTrash}
               onChange={setContent}
               autofocus={!currentSlate}
               puntoClass={`punto-${punto}`}
@@ -2737,6 +2757,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           <textarea
             ref={textareaRef}
             value={content}
+            readOnly={inTrash}
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleTextareaKeyDown}
             onKeyUp={centerIfWanted}
@@ -3034,6 +3055,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                   <span className="text-sm" style={{ color: 'var(--theme-red)' }}>
                     {strings.collab.viewer.accessRemoved}
                   </span>
+                )}
+                {/* In the trash: read as it is; restore makes it a slate again */}
+                {inTrash && (
+                  <>
+                    <span className="text-sm" style={{ color: 'var(--theme-red)' }}>{strings.slates.status.inTrash}</span>
+                    <button onClick={restoreCurrentSlate} className="text-sm text-[var(--theme-text-dim)] hover:text-white transition-colors duration-200">
+                      {strings.slates.menu.restore}
+                    </button>
+                  </>
                 )}
 
                 {/* Who else is in this collab slate right now */}

@@ -32,6 +32,8 @@ const focusEnd = (view) => {
 // scroller; `initialSelection` / setNextSelection place the caret when the
 // document is next replaced (a slate opening where it was left)
 const centering = new Compartment();
+const editing = new Compartment();
+const editable = (readOnly) => [EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)];
 const keepCentered = (viewRef) => EditorView.updateListener.of((u) => {
   if (!(u.selectionSet || u.docChanged)) return;
   const head = u.state.selection.main.head;
@@ -44,7 +46,7 @@ const clampSel = (sel, len) => (sel && Number.isFinite(sel.anchor)
   ? { anchor: Math.min(Math.max(0, sel.anchor), len), head: Math.min(Math.max(0, sel.head ?? sel.anchor), len) }
   : { anchor: len });
 
-const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false, centerCaret = false, initialSelection = null }, ref) {
+const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onChange, puntoClass = '', autofocus = false, centerCaret = false, initialSelection = null, readOnly = false }, ref) {
   const containerRef = useRef(null);
   const viewRef = useRef(null);
   const nextSelRef = useRef(initialSelection);
@@ -80,6 +82,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
           placeholder(strings.writer.contentPlaceholder),
           keymap.of([...markdownKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
           centering.of(centerCaret ? keepCentered(viewRef) : []),
+          editing.of(editable(readOnly)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               const md = update.state.doc.toString();
@@ -107,6 +110,11 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
     const view = viewRef.current;
     if (view) view.dispatch({ effects: centering.reconfigure(centerCaret ? keepCentered(viewRef) : []) });
   }, [centerCaret]);
+  // A slate in the trash is read, not written, until it is restored
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) view.dispatch({ effects: editing.reconfigure(editable(readOnly)) });
+  }, [readOnly]);
 
   // External content changes (slate load, mode toggle) -> replace the doc,
   // the caret where it was asked to go, else at the end
