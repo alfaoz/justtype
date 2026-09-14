@@ -160,6 +160,7 @@ export function PublicViewer() {
         }
         if (!pass) { setErrorMessage(strings.public.locked.noKey); throw new Error('key missing'); }
         setSealed({ blob, pass, meta });
+        document.title = pages.home.title; // nothing about the slate until it is opened
         return;
       }
       setSlate(data);

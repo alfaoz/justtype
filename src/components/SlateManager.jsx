@@ -859,7 +859,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             }
           }
 
-          if (slate.encrypted_title && !slate.is_published) {
+          // A private link keeps the title under the master key while the
+          // slate counts as published, so decrypt whenever there is nothing plain
+          if (slate.encrypted_title && (!slate.is_published || !slate.title)) {
             try {
               const decryptedTitle = await decryptTitle(slate.encrypted_title, contentKey);
               title = decryptedTitle;

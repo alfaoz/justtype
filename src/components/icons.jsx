@@ -86,6 +86,10 @@ export const ImportIcon = (p) => (
 export const SelectIcon = (p) => (
   <Icon {...p}><circle cx="8" cy="8" r="6" /><path d="M5.25 8.25l1.9 1.9 3.6-4.1" /></Icon>
 );
+// A small stack of slates, the front one whole and one behind it
+export const SlatesIcon = (p) => (
+  <Icon {...p}><rect x="2.5" y="5" width="9.5" height="8.5" rx="1" /><path d="M5 5V3.5a1 1 0 0 1 1-1h6.5a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1" /></Icon>
+);
 export const SortIcon = (p) => (
   <Icon {...p}><path d="M5 3v10m-2.5-2.5L5 13l2.5-2.5" /><path d="M11 13V3m-2.5 2.5L11 3l2.5 2.5" /></Icon>
 );

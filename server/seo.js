@@ -219,8 +219,10 @@ module.exports = function mountSeo(app, { db, b2Storage }) {
         console.error('seo: slate content', error.message || error);
       }
     }
+    // A private or expired link says nothing about itself: the brand for a
+    // title, the author for a line, no article
     send(res, render({
-      title: (slate.title || doc?.title || 'untitled').slice(0, 70),
+      title: hidden ? pages.brand : (slate.title || doc?.title || 'untitled').slice(0, 70),
       description: doc ? doc.description : (summary(content) || `slate by ${author}`),
       canonical: `${SITE}/s/${encodeURIComponent(id)}`,
       robots: doc ? undefined : 'noindex',

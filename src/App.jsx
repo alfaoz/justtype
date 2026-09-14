@@ -34,7 +34,7 @@ import { reportNetworkFailure, reportNetworkSuccess } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
 import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
-import { Ico, PenIcon, ArchiveIcon, UserIcon } from './components/icons';
+import { Ico, PenIcon, SlatesIcon, UserIcon } from './components/icons';
 import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
 
@@ -1318,7 +1318,7 @@ export default function App() {
                   }`}
                 >
                   <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={PenIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.writer}</span>
-                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={ArchiveIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
+                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={SlatesIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
                 </div>
               </button>
               <button
