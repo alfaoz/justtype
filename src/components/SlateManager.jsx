@@ -20,7 +20,7 @@ import { useEscape } from '../useEscape';
 import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
 import { ScrollRow } from './ScrollRow';
-import { goneForever, readGone, writeGone, GONE_WAYS } from '../goneLab';
+import { burnAway } from '../burn';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -462,7 +462,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {selecting && <span className={`text-lg leading-none w-5 text-center ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
+          {selecting && <span className={`text-lg leading-none w-5 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
           {isPinned && <PinGlyph />}
           <div className="relative min-w-0 text-sm md:text-base">
             <h3 className={`text-[var(--theme-text)] font-medium truncate min-w-0${struckCls}`}>{title}</h3>
@@ -671,16 +671,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     root.addEventListener('scroll', onScroll, { passive: true });
     return () => { root.removeEventListener('pointermove', onMove); root.removeEventListener('wheel', onWheel); root.removeEventListener('pointerleave', onLeave); root.removeEventListener('scroll', onScroll); mark(null); };
   }, [loading]);
-  // The list as it was left: filters, search and scroll come back when the
-  // writer hands back to it (see `remembered` at the top of the file)
-  const rememberRef = useRef(null);
-  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter, appFilter };
-  useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
-  useEffect(() => {
-    if (loading || !scrollRef.current || !remembered?.scrollTop) return;
-    scrollRef.current.scrollTop = remembered.scrollTop;
-  }, [loading]);
-  const [goneWay, setGoneWay] = useState(readGone);
   const [tagBusy, setTagBusy] = useState(false);
   const [dragOverId, setDragOverId] = useState(null);
   const dragRef = useRef(null);
@@ -699,6 +689,15 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [appFilter, setAppFilter] = useState(() => remembered?.appFilter ?? null); // source_app client_id, or null for all
   const [visibilityFilter, setVisibilityFilter] = useState(() => remembered?.visibilityFilter ?? 'all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(() => remembered?.collabFilter ?? false); // true = only collaborative slates
+  // The list as it was left: filters, search and scroll come back when the
+  // writer hands back to it (see `remembered` at the top of the file)
+  const rememberRef = useRef(null);
+  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter, appFilter };
+  useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
+  useEffect(() => {
+    if (loading || !scrollRef.current || !remembered?.scrollTop) return;
+    scrollRef.current.scrollTop = remembered.scrollTop;
+  }, [loading]);
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState('');
@@ -1130,11 +1129,28 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const stagger = (items, fn) => Promise.all(items.map((item, i) => new Promise(r => setTimeout(r, Math.min(i * 45, 600))).then(() => fn(item))));
   // The selection, acted on as one: what a row's menu does, for every
   // chosen row, then the selection ends
+  const rowEl = (slate) => document.querySelector(`[data-slate="${slate.slate_number}"]`);
+  const chosen = () => filteredAndSortedSlates.filter(s => selected.has(s.slate_number) && !s.shared);
   const bulk = async (fn) => {
     if (!selected.size || bulkBusy) return;
     setBulkBusy(true);
-    try { await stagger(filteredAndSortedSlates.filter(s => selected.has(s.slate_number) && !s.shared), fn); endSelecting(); }
+    try { await stagger(chosen(), fn); endSelecting(); }
     finally { setBulkBusy(false); }
+  };
+  // Delete forever, the selection as one: the rows burn as a block while
+  // the deletes go out; a refused one puts every row back
+  const forgetSelected = async () => {
+    if (!selected.size || bulkBusy) return;
+    setBulkBusy(true);
+    const items = chosen();
+    const fx = burnAway(items.map(rowEl));
+    try {
+      const ok = await Promise.all(items.map(s => fetch(`${API_URL}/slates/${s.slate_number}?forever=1`, { method: 'DELETE', credentials: 'include' }).then(r => r.ok).catch(() => false)));
+      const gone = new Set(items.filter((s, i) => ok[i]).map(s => s.slate_number));
+      if (gone.size === items.length) await fx.done; else fx.cancel();
+      setSlates(prev => prev.filter(s => !gone.has(s.slate_number)));
+      endSelecting();
+    } finally { setBulkBusy(false); }
   };
   const exportSelected = async (format) => {
     if (!selected.size || exporting) return;
@@ -1290,7 +1306,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e?.stopPropagation();
     e?.preventDefault();
     setOpenMenuId(null);
-    const fx = goneForever(document.querySelector(`[data-slate="${slate.slate_number}"]`));
+    const fx = burnAway([rowEl(slate)]);
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}?forever=1`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) { fx.cancel(); return; }
@@ -1307,7 +1323,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     try {
       const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) throw new Error('empty failed');
-      await stagger(filteredAndSortedSlates, (slate) => goneForever(document.querySelector(`[data-slate="${slate.slate_number}"]`)).done);
+      await burnAway(filteredAndSortedSlates.map(rowEl)).done;
       setSlates(prev => prev.filter(s => !s.deleted_at));
     } catch (err) {
       console.error('Failed to empty the trash:', err);
@@ -1971,12 +1987,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     trash that is restore and delete forever, elsewhere
                     archive (or unarchive) and delete */}
                 {(visibilityFilter === 'trash'
-                  ? [[strings.slates.menu.restore, restoreSlate, false], [strings.slates.menu.deleteForever, deleteForever, true]]
-                  : [[visibilityFilter === 'archived' ? strings.slates.menu.unarchive : strings.slates.menu.archive, toggleArchive, false], [strings.slates.menu.delete, trashSlate, true]]
+                  ? [[strings.slates.menu.restore, () => bulk(restoreSlate), false], [strings.slates.menu.deleteForever, forgetSelected, true]]
+                  : [[visibilityFilter === 'archived' ? strings.slates.menu.unarchive : strings.slates.menu.archive, () => bulk(toggleArchive), false], [strings.slates.menu.delete, () => bulk(trashSlate), true]]
                 ).map(([word, act, danger]) => (
                   <React.Fragment key={word}>
                     <span className="opacity-30">·</span>
-                    <button onClick={() => bulk(act)} disabled={!selected.size || bulkBusy} className={`transition-colors disabled:opacity-40 ${danger ? 'text-[var(--theme-red)] hover:opacity-70' : 'hover:text-[var(--theme-text)] disabled:hover:text-[var(--theme-text-dim)]'}`}>
+                    <button onClick={act} disabled={!selected.size || bulkBusy} className={`transition-colors disabled:opacity-40 ${danger ? 'text-[var(--theme-red)] hover:opacity-70' : 'hover:text-[var(--theme-text)] disabled:hover:text-[var(--theme-text-dim)]'}`}>
                       {word}
                     </button>
                   </React.Fragment>
@@ -2058,9 +2074,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
       {/* Under the trash: the one way to empty it, asked twice */}
       {visibilityFilter === 'trash' && filteredAndSortedSlates.length > 0 && (
-        <div className="flex justify-between items-center gap-3 mt-4 text-xs md:text-sm">
-          {/* Lab: five ways a slate can go for good; keep one, drop the row */}
-          <ChoiceRow label="gone:" options={GONE_WAYS.map(w => ({ id: w, label: w }))} value={goneWay} onChange={(w) => { writeGone(w); setGoneWay(w); }} />
+        <div className="flex justify-end mt-4 text-xs md:text-sm">
           <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
             {confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}
           </button>
