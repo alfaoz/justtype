@@ -1320,16 +1320,29 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       console.error('Failed to delete slate:', err);
     }
   };
+  // `empty trash` asks `sure?` for three seconds; a second press burns the
+  // rows and the word itself at once, the server answering meanwhile
+  const emptyWordRef = useRef(null);
+  const confirmTimer = useRef(null);
   const emptyTrash = async () => {
-    if (!confirmEmpty) { setConfirmEmpty(true); setTimeout(() => setConfirmEmpty(false), 3000); return; }
-    setConfirmEmpty(false);
+    if (!confirmEmpty) {
+      setConfirmEmpty(true);
+      clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setConfirmEmpty(false), 3000);
+      return;
+    }
+    clearTimeout(confirmTimer.current);
+    const fx = burnAway([...filteredAndSortedSlates.map(rowEl), emptyWordRef.current]);
     try {
       const r = await fetch(`${API_URL}/slates/trash`, { method: 'DELETE', credentials: 'include' });
       if (!r.ok) throw new Error('empty failed');
-      await burnAway(filteredAndSortedSlates.map(rowEl)).done;
+      await fx.done;
       setSlates(prev => prev.filter(s => !s.deleted_at));
     } catch (err) {
+      fx.cancel();
       console.error('Failed to empty the trash:', err);
+    } finally {
+      setConfirmEmpty(false);
     }
   };
 
@@ -2081,7 +2094,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       {/* Under the trash: the one way to empty it, asked twice */}
       {visibilityFilter === 'trash' && filteredAndSortedSlates.length > 0 && (
         <div className="flex justify-end mt-4 text-xs md:text-sm">
-          <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
+          <button ref={emptyWordRef} onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
             {confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}
           </button>
         </div>
