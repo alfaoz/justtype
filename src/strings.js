@@ -359,8 +359,6 @@ const strings = {
       rename: 'rename',
       remove: 'remove',
       renamePlaceholder: 'new name',
-      renamed: (a, b, n) => `#${a} is now #${b} on ${n} slate${n === 1 ? '' : 's'}`,
-      removed: (a, n) => `#${a} removed from ${n} slate${n === 1 ? '' : 's'}`,
       needsNetwork: 'tag changes need a connection',
       addPlaceholder: 'add tag...',
       addButton: 'add',

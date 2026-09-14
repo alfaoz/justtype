@@ -19,6 +19,7 @@ import { motionOff } from '../motion';
 import { useEscape } from '../useEscape';
 import { TextMorph } from './TextMorph';
 import { ChoiceRow } from './ChoiceRow';
+import { goneForever, readGone, writeGone, GONE_WAYS } from '../goneLab';
 import { Ico, PinIcon, UnpinIcon, TagIcon, CloudDownIcon, CloudOffIcon, GlobeIcon, EyeOffIcon, EyeIcon, LockIcon, UnlockIcon, ArchiveIcon, UnarchiveIcon, TrashIcon, LeaveIcon, ArrowUpIcon, ArrowDownIcon, ImportIcon, SelectIcon, SortIcon } from './icons';
 import { indexDevice, indexDeeper, findIn, isIndexed } from '../contentSearch';
 import { isOpen, openDocKey, forgetDocKey, onLockChange, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
@@ -637,6 +638,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const [tagEditing, setTagEditing] = useState(false);
   const [tagEdit, setTagEdit] = useState(null); // { tag, draft }
   const [confirmEmpty, setConfirmEmpty] = useState(false);
+  const [goneWay, setGoneWay] = useState(readGone);
   const [tagBusy, setTagBusy] = useState(false);
   const [dragOverId, setDragOverId] = useState(null);
   const dragRef = useRef(null);
@@ -1044,16 +1046,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     if (!to || to === from) { setTagEdit(null); return; }
     setTagBusy(true);
     try {
-      const n = await retag(tags => tags.map(t => (t === from ? to : t)));
-      if (n) showToast(strings.slates.tags.renamed(from, to, n));
+      await retag(tags => tags.map(t => (t === from ? to : t)));
       if (tagFilter === from) setTagFilter(to);
     } finally { setTagBusy(false); setTagEdit(null); }
   };
   const removeTagEverywhere = async (tag) => {
     setTagBusy(true);
     try {
-      const n = await retag(tags => tags.filter(t => t !== tag));
-      if (n) showToast(strings.slates.tags.removed(tag, n));
+      await retag(tags => tags.filter(t => t !== tag));
       if (tagFilter === tag) setTagFilter(null);
     } finally { setTagBusy(false); }
   };
@@ -1237,11 +1237,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
+    const fx = goneForever(document.querySelector(`[data-slate="${slate.slate_number}"]`));
     try {
       const r = await fetch(`${API_URL}/slates/${slate.slate_number}?forever=1`, { method: 'DELETE', credentials: 'include' });
-      if (!r.ok) return;
+      if (!r.ok) { fx.cancel(); return; }
+      await fx.done;
       setSlates(prev => prev.filter(s => s.slate_number !== slate.slate_number));
     } catch (err) {
+      fx.cancel();
       console.error('Failed to delete slate:', err);
     }
   };
@@ -1983,7 +1986,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       )}
       {/* Under the trash: the one way to empty it, asked twice */}
       {visibilityFilter === 'trash' && filteredAndSortedSlates.length > 0 && (
-        <div className="flex justify-end mt-4 text-xs md:text-sm">
+        <div className="flex justify-between items-center gap-3 mt-4 text-xs md:text-sm">
+          {/* Lab: five ways a slate can go for good; keep one, drop the row */}
+          <ChoiceRow label="gone:" options={GONE_WAYS.map(w => ({ id: w, label: w }))} value={goneWay} onChange={(w) => { writeGone(w); setGoneWay(w); }} />
           <button onClick={emptyTrash} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">
             {confirmEmpty ? strings.slates.trash.emptyConfirm : strings.slates.trash.empty}
           </button>
