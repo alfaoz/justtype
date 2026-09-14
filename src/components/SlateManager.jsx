@@ -1683,12 +1683,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
               <ChoiceRow
+                swipe
                 label={strings.slates.sortLabel}
                 options={SORT_OPTIONS}
                 value={sortBy}
                 onChange={setSortBy}
               />
               <ChoiceRow
+                swipe
                 label={strings.slates.filterVisibility}
                 options={[
                   { id: 'all', label: strings.slates.filterVisibilityAll },
@@ -1702,6 +1704,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               />
               {hasCollabSlates && (
                 <ChoiceRow
+                  swipe
                   label={strings.collab.filter.label}
                   options={[
                     { id: 'all', label: strings.collab.filter.all },
@@ -1713,6 +1716,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               )}
               {sourceApps.length > 0 && (
                 <ChoiceRow
+                  swipe
                   label={strings.slates.filterByApp}
                   options={[
                     { id: ALL_APPS, label: strings.slates.filterAllApps },
@@ -1730,6 +1734,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             {allTags.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs md:text-sm">
                 <ChoiceRow
+                  swipe
                   label={strings.slates.tags.rowLabel}
                   className={tagBusy ? 'opacity-60 pointer-events-none' : ''}
                   options={[

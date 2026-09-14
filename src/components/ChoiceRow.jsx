@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * A row of words to pick one from (`sort: recent oldest ...`), with one
@@ -6,11 +6,41 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
  * instead of blinking from one to the next. `label` is optional: inside an
  * account row the label is already on the left. An option may bring its own
  * `node` in place of the word (a tag being renamed), and `after(option)`
- * renders something right after each word (a tag's menu).
+ * renders something right after each word (a tag's menu). With `swipe`, a
+ * two-finger swipe across the row moves the choice a word at a time: every
+ * eighty pixels of travel is one step, a long swipe keeps stepping, and the
+ * ends stop.
  */
-export function ChoiceRow({ label, options, value, onChange, className = '', after }) {
+export function ChoiceRow({ label, options, value, onChange, className = '', after, swipe = false }) {
   const wrapRef = useRef(null);
   const [bar, setBar] = useState(null);
+  const live = useRef({ value, options, onChange });
+  live.current = { value, options, onChange };
+  useEffect(() => {
+    if (!swipe || !wrapRef.current) return;
+    const STEP = 80;
+    let travel = 0;
+    let idle = null;
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault(); // not the browser's back and forward
+      if (Math.abs(e.deltaX) < 2) return; // the tail of the glide
+      clearTimeout(idle);
+      idle = setTimeout(() => { travel = 0; }, 200);
+      travel += e.deltaX;
+      while (Math.abs(travel) >= STEP) {
+        const dir = Math.sign(travel);
+        travel -= dir * STEP;
+        const { value: v, options: opts, onChange: change } = live.current;
+        const i = opts.findIndex(o => o.id === v);
+        const next = opts[i + dir];
+        if (next) change(next.id);
+      }
+    };
+    const el = wrapRef.current;
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => { el.removeEventListener('wheel', onWheel); clearTimeout(idle); };
+  }, [swipe]);
   useLayoutEffect(() => {
     const place = () => {
       const el = wrapRef.current?.querySelector(`[data-choice="${value}"]`);
