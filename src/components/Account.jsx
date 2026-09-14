@@ -52,7 +52,8 @@ function InfoRow({ label, children }) {
 }
 
 /** The header of an expandable row inside a Section. While the row is open,
- * the hover tint leaks down into the box below it and fades out. */
+ * the hover tint leaks down into the box below it and fades out; the box is
+ * positioned after it, so the tint stays behind what the box says. */
 function DisclosureHeader({ label, open, onToggle, tone }) {
   const tint = tone === 'danger' ? 'rgba(127, 29, 29, 0.1)' : 'var(--theme-bg-secondary)';
   return (
@@ -1336,7 +1337,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showPasswordSection}
                 onToggle={() => setShowPasswordSection(!showPasswordSection)}
               />
-              <Collapse open={showPasswordSection}>
+              <Collapse className="relative" open={showPasswordSection}>
                 <div className="px-4 pb-4">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
@@ -1393,7 +1394,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showRecoverySection}
                 onToggle={() => setShowRecoverySection(!showRecoverySection)}
               />
-              <Collapse open={showRecoverySection}>
+              <Collapse className="relative" open={showRecoverySection}>
                 <div className="px-4 pb-4">
                   <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
@@ -1446,7 +1447,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showSessions}
                 onToggle={() => setShowSessions(!showSessions)}
               />
-            <Collapse open={showSessions}>
+            <Collapse className="relative" open={showSessions}>
               <div className="px-4 pb-4">
                 {loadingSessions ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
@@ -1510,7 +1511,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
               open={showAccessibility}
               onToggle={() => setShowAccessibility(!showAccessibility)}
             />
-            <Collapse open={showAccessibility}>
+            <Collapse className="relative" open={showAccessibility}>
               <div className="border-t border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
           <InfoRow label={strings.account.accessibility.motion}>
             <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
@@ -1555,7 +1556,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showConnectedApps}
                 onToggle={() => setShowConnectedApps(!showConnectedApps)}
               />
-            <Collapse open={showConnectedApps}>
+            <Collapse className="relative" open={showConnectedApps}>
               <div className="px-4 pb-4">
                 {loadingApps ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
@@ -1640,7 +1641,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showDangerZone}
                 onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
               />
-            <Collapse open={showDangerZone}>
+            <Collapse className="relative" open={showDangerZone}>
               <div className="px-4 pb-4">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
