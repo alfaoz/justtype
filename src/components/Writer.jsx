@@ -846,7 +846,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Track supporter tier on mount
   useEffect(() => {
     const fetchSupporterTier = async () => {
-      if (!token) return;
+      if (!token || token === 'checking') return; // once, when the session is known
 
       try {
         const response = await fetch(`${API_URL}/user/visit`, {

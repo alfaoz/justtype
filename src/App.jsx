@@ -26,11 +26,11 @@ import { recoverLostSlates } from './slateRecovery';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
 import pages from './pages.json';
-import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefaultTheme } from './themes';
+import { applyThemeVariables, themeExists, fetchAndMergePreferences, fetchPreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
-import { reportNetworkFailure } from './connectivity';
+import { reportNetworkFailure, reportNetworkSuccess } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
 import { findTodaySlate, todayLine, DAILY_TAG } from './today';
 import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
@@ -167,8 +167,7 @@ export default function App() {
     if (seenHere) { markWhatsNewSeen(); return; }
     let cancelled = false;
     let timer = null;
-    fetch(`${API_URL}/preferences`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
+    fetchPreferences()
       .then((prefs) => {
         if (cancelled) return;
         if (prefs && prefs.whatsNewSeen === strings.whatsNewModal.version) {
@@ -242,6 +241,7 @@ export default function App() {
         });
 
         if (response.ok) {
+          reportNetworkSuccess();
           const userData = await response.json();
 
           // If user needs encryption migration, force re-login to trigger it

@@ -515,7 +515,7 @@ app.use(helmet({
       connectSrc: ["'self'", "https://challenges.cloudflare.com", "https://alfaoz.github.io", "https://api.github.com",
         ...(process.env.PUBLIC_URL ? [process.env.PUBLIC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')] : [])],
       frameSrc: ["https://challenges.cloudflare.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
     }
