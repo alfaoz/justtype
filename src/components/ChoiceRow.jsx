@@ -21,20 +21,21 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
     const STEP = 80;
     let travel = 0;
     let idle = null;
+    let at = null; // the word reached within this swipe (the row may not have re-rendered yet)
     const onWheel = (e) => {
       if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
       e.preventDefault(); // not the browser's back and forward
       if (Math.abs(e.deltaX) < 2) return; // the tail of the glide
       clearTimeout(idle);
-      idle = setTimeout(() => { travel = 0; }, 200);
+      idle = setTimeout(() => { travel = 0; at = null; }, 200);
       travel += e.deltaX;
       while (Math.abs(travel) >= STEP) {
         const dir = Math.sign(travel);
         travel -= dir * STEP;
         const { value: v, options: opts, onChange: change } = live.current;
-        const i = opts.findIndex(o => o.id === v);
+        const i = opts.findIndex(o => o.id === (at ?? v));
         const next = opts[i + dir];
-        if (next) change(next.id);
+        if (next) { at = next.id; change(next.id); }
       }
     };
     const el = wrapRef.current;
