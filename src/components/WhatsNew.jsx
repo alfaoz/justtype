@@ -221,12 +221,14 @@ export function WhatsNew() {
     trash: (
     <div className="wn-frame" key="trash">
       <div className="wn-trash">
-        {d.trash.slates.map((t, i) => (
-          <div key={t} className={`wn-trash-row ${i === d.trash.gone ? 'wn-trash-gone' : ''}`}>
-            <span className="wn-trash-title">{t}<i className="wn-trash-line" /></span>
-          </div>
-        ))}
         <div className="wn-trash-show"><span>archived</span><span className="wn-trash-word">trash</span></div>
+        <div className="wn-trash-rows">
+          {d.trash.slates.map((t, i) => (
+            <div key={t} className={`wn-trash-row ${i === d.trash.gone ? 'wn-trash-gone' : ''}`}>
+              <span className="wn-trash-title">{t}<i className="wn-trash-line" /></span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
     ),
@@ -452,8 +454,9 @@ export function WhatsNew() {
 
         /* Trash: the red line draws like a pencil, the row is squished from the top, the word nods */
         .wn-trash { display: flex; flex-direction: column; font-size: 0.8rem; }
-        .wn-trash-row { height: 2.2em; padding: 0.5rem 0; box-sizing: border-box; border-top: 1px solid var(--theme-border-light); color: var(--theme-text); overflow: hidden; transform-origin: center top; }
-        .wn-trash-row:first-child { border-top: 0; }
+        /* The show line sits on top and the rows' box keeps its height, so nothing moves when a row goes */
+        .wn-trash-rows { height: calc(3 * 2.2em); }
+        .wn-trash-row { height: 2.2em; padding: 0.5rem 0; box-sizing: border-box; border-bottom: 1px solid var(--theme-border-light); color: var(--theme-text); overflow: hidden; transform-origin: center top; }
         .wn-trash-title { position: relative; display: inline-block; }
         .wn-trash-line { position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; background: var(--theme-red); transform: scaleX(0); transform-origin: left center; }
         .wn-trash-gone { animation: wnTrashRow 9s infinite; }
@@ -461,8 +464,8 @@ export function WhatsNew() {
         .wn-trash-gone .wn-trash-line { animation: wnTrashLine 9s cubic-bezier(0.55, 0.05, 0.25, 1) infinite; }
         @keyframes wnTrashLine { 0%, 20% { transform: scaleX(0); } 28%, 40% { transform: scaleX(1); } 40.1%, 100% { transform: scaleX(0); } }
         @keyframes wnTrashDim { 0%, 20% { opacity: 1; } 28%, 40% { opacity: 0.6; } 40.1%, 100% { opacity: 1; } }
-        @keyframes wnTrashRow { 0%, 36% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } 39%, 88% { height: 0; padding: 0; border-top-width: 0; transform: scaleY(0); opacity: 0; } 93%, 100% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } }
-        .wn-trash-show { display: flex; justify-content: flex-end; gap: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--theme-border-light); font-size: 0.75rem; color: var(--theme-text-dim); }
+        @keyframes wnTrashRow { 0%, 36% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } 39%, 88% { height: 0; padding: 0; border-bottom-width: 0; transform: scaleY(0); opacity: 0; } 93%, 100% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } }
+        .wn-trash-show { display: flex; justify-content: flex-end; gap: 0.75rem; padding-bottom: 0.6rem; font-size: 0.75rem; color: var(--theme-text-dim); }
         .wn-trash-word { color: var(--theme-red); display: inline-block; animation: wnTrashNod 9s infinite; }
         @keyframes wnTrashNod { 0%, 36% { transform: none; } 37.5% { transform: translateY(-4px); } 39%, 100% { transform: none; } }
 
