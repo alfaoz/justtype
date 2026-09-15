@@ -8,6 +8,7 @@
 // technique used by the established live-preview implementations.
 
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
+import { attachHoverNote } from '../hoverNote';
 import { ViewPlugin } from '@codemirror/view';
 import { StateEffect, StateField } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
@@ -115,12 +116,19 @@ class MathWidget extends WidgetType {
       loadMath(view);
       el.classList.add('cm-lp-math-pending');
       el.textContent = this.source;
-    } else if (!renderMath(el, this.tex, this)) {
-      el.classList.add('cm-lp-math-error');
-      el.textContent = this.source;
+    } else {
+      const error = renderMath(el, this.tex, this);
+      if (error) {
+        // The source stays, dotted; hovering it says what is wrong, and
+        // cmd/ctrl+c while hovering copies that
+        el.classList.add('cm-lp-math-error');
+        el.textContent = this.source;
+        el._hoverOff = attachHoverNote(el, error);
+      }
     }
     return el;
   }
+  destroy(dom) { dom._hoverOff?.(); }
   ignoreEvent() { return false; }
 }
 
