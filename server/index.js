@@ -2897,7 +2897,9 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
       return res.json({ ...slate, adoption_pending: true, content: '', pending: true });
     }
 
-    if (req.e2e) {
+    // A row made outside the app (a system slate) is plain even on an
+    // end to end account: it reads through the plain path below
+    if (req.e2e && slate.encryption_version === 1) {
       // E2E user: download raw encrypted blob from B2, return as base64
       const rawData = await b2Storage.downloadRawFile(slate.b2_file_id);
       const encryptedContent = rawData.toString('base64');

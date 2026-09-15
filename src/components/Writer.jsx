@@ -403,6 +403,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [shownStatus, setShownStatus] = useState('');
   useEffect(() => { if (status !== 'ready') setShownStatus(status); }, [status]);
   const lastSavedContentRef = useRef('');
+  // Whether the slate had text when it was loaded or last saved: only a
+  // slate the writer emptied deletes itself, never one that arrived empty
+  // (a failed decrypt, a plain row) and was then autosaved
+  const loadedHadTextRef = useRef(false);
   const keystrokeDetectedRef = useRef(false);
   const nudgeTimeoutRef = useRef(null);
   const settingsMenuRef = useRef(null);
@@ -547,6 +551,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         setCollabKeyGen((g) => g + 1);
         setCollabSlateDbId(sharedSlateId);
         lastSavedContentRef.current = JSON.stringify({ content: data.content || '' });
+        loadedHadTextRef.current = !!(data.content || '').trim();
         setHasUnsavedChanges(false);
         setLoadingFadeOut(true);
         setContentFadeKey(prev => prev + 1);
@@ -580,6 +585,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         loadedContentRef.current = plain;
         setContent(plain);
         lastSavedContentRef.current = JSON.stringify({ content: plain });
+        loadedHadTextRef.current = !!plain.trim();
         setCollabDocKey(newKey);
         setCollabKeyGen((g) => g + 1);
       } catch (e) {
@@ -910,6 +916,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       loadedSlateRef.current = { updated_at: e.updated_at ?? null, encryptedContent: e.encryptedContent ?? null };
       setContent(e.text);
       lastSavedContentRef.current = JSON.stringify({ content: e.text });
+      loadedHadTextRef.current = !!(e.text || '').trim();
       setHasUnsavedChanges(false);
       setStatus(e.conflicts ? strings.writer.connectivity.conflicts(e.conflicts) : strings.writer.connectivity.merged);
       if (!e.conflicts) setTimeout(() => setStatus('ready'), 4000);
@@ -1299,6 +1306,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const isPreviouslyPublishedDraft = data.published_at && !data.is_published;
       setWasPublishedBeforeEdit(isPreviouslyPublishedDraft);
       lastSavedContentRef.current = JSON.stringify({ content: slateContent });
+      loadedHadTextRef.current = !!(slateContent || '').trim();
       setHasUnsavedChanges(false);
       setLoadingFadeOut(true);
       setContentFadeKey(prev => prev + 1);
@@ -1578,6 +1586,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       adoptSlate({ slate_number: local, local: true });
     }
     lastSavedContentRef.current = JSON.stringify({ content });
+    loadedHadTextRef.current = !!((content) || '').trim();
     setHasUnsavedChanges(false);
     localStorage.removeItem('justtype-draft');
     setStatus(strings.writer.connectivity.savedLocally);
@@ -1664,7 +1673,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const stillOpen = () => (currentSlateRef.current?.slate_number ?? null) === openNumber;
     if (!content.trim()) {
       // An emptied slate deletes itself; a public one asks first
-      if (currentSlate && token && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) return deleteEmptySlate({ explicit });
+      if (currentSlate && token && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number) && loadedHadTextRef.current) return deleteEmptySlate({ explicit });
       return null;
     }
     // Collab slates persist through the Yjs document, which lives on this
@@ -1779,6 +1788,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (stillOpen()) {
           setContent(mergeInfo.text);
           lastSavedContentRef.current = JSON.stringify({ content: mergeInfo.text });
+          loadedHadTextRef.current = !!((mergeInfo.text) || '').trim();
           setHasUnsavedChanges(false);
           setStatus(mergeInfo.conflicts ? strings.writer.connectivity.conflicts(mergeInfo.conflicts) : strings.writer.connectivity.merged);
           if (!mergeInfo.conflicts) setTimeout(() => setStatus('ready'), 4000);
@@ -1816,6 +1826,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (!stillOpen()) { endAnnouncement(); return data; }
 
       lastSavedContentRef.current = JSON.stringify({ content });
+
+      loadedHadTextRef.current = !!((content) || '').trim();
       setHasUnsavedChanges(false);
 
       // Keep any third-party shares of this slate in sync with the new content.
@@ -2526,6 +2538,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     });
     loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: body.encryptedContent };
     lastSavedContentRef.current = JSON.stringify({ content });
+    loadedHadTextRef.current = !!((content) || '').trim();
     setHasUnsavedChanges(false);
     setLockDocKey(key);
     setIsLocked(lockOn);
