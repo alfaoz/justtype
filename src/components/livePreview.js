@@ -123,7 +123,7 @@ class MathWidget extends WidgetType {
         // cmd/ctrl+c while hovering copies that
         el.classList.add('cm-lp-math-error');
         el.textContent = this.source;
-        el._hoverOff = attachHoverNote(el, error);
+        el._hoverOff = attachHoverNote(el, error, { title: strings.writer.math.error, tone: 'danger', copyHint: strings.writer.math.copyHint, copied: strings.writer.math.copied });
       }
     }
     return el;

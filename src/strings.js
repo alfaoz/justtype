@@ -56,6 +56,12 @@ const strings = {
       empty: 'nothing in the catalog yet',
       by: (name) => `by ${name}`
     },
+    // A formula KaTeX could not set: the card over its dotted source
+    math: {
+      error: 'latex syntax error',
+      copyHint: (key) => `${key} to copy`,
+      copied: 'copied',
+    },
     conflict: {
       ours: 'this device',
       theirs: 'elsewhere',
