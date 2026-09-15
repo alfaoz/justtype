@@ -260,8 +260,6 @@ const strings = {
       za: 'z-a',
       words: 'words',
     },
-    filterByApp: 'from app:',
-    filterAllApps: 'all',
     viewToggle: {
       list: 'list view',
       grid: 'grid view',

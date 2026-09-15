@@ -36,7 +36,6 @@ const TAG_REGEX = /^[a-z0-9]+$/;
 const MAX_TAG_LENGTH = 24;
 const MAX_TAGS_PER_SLATE = 20;
 
-const ALL_APPS = '__all__';
 const ALL_TAGS = '__all__';
 
 const formatDateShort = (dateString) =>
@@ -687,13 +686,12 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [slates, sharedSlates]);
   const allTags = useMemo(() => tagCounts.map(([t]) => t), [tagCounts]);
-  const [appFilter, setAppFilter] = useState(() => remembered?.appFilter ?? null); // source_app client_id, or null for all
   const [visibilityFilter, setVisibilityFilter] = useState(() => remembered?.visibilityFilter ?? 'all'); // 'all' | 'public' | 'private' | 'archived'
   const [collabFilter, setCollabFilter] = useState(() => remembered?.collabFilter ?? false); // true = only collaborative slates
   // The list as it was left: filters, search and scroll come back when the
   // writer hands back to it (see `remembered` at the top of the file)
   const rememberRef = useRef(null);
-  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter, appFilter };
+  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter };
   useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
   useEffect(() => {
     if (loading || !scrollRef.current || !remembered?.scrollTop) return;
@@ -1609,15 +1607,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setOpenMenuId(openMenuId === id ? null : id);
   };
 
-  // Distinct apps that have created (dropped) slates, for the "from app" filter.
-  const sourceApps = useMemo(() => {
-    const map = new Map(); // client_id -> display name
-    for (const s of slates) {
-      if (s.source_app) map.set(s.source_app, s.source_app_name || s.source_app);
-    }
-    return Array.from(map, ([id, name]) => ({ id, name }));
-  }, [slates]);
-
   // Content search. Two characters or more searches the text of every copy
   // on this device as you type; the rest can be fetched with 'search deeper'.
   const contentQuery = debouncedSearchQuery.trim().toLowerCase().length >= 2 ? debouncedSearchQuery.trim().toLowerCase() : '';
@@ -1701,10 +1690,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     const filtered = [...slates, ...sharedAsSlates].filter(slate => {
       const tags = Array.isArray(slate.tags) ? slate.tags : [];
 
-      if (appFilter && slate.source_app !== appFilter) {
-        return false;
-      }
-
       // The trash and the archive each live in their own section
       if (visibilityFilter === 'trash') return Boolean(slate.deleted_at);
       if (slate.deleted_at) return false;
@@ -1762,12 +1747,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, appFilter, collabFilter, visibilityFilter, sortBy]);
-
-  // Drop the app filter if the matching app no longer has any slates (e.g. all deleted).
-  useEffect(() => {
-    if (appFilter && !sourceApps.some(a => a.id === appFilter)) setAppFilter(null);
-  }, [appFilter, sourceApps]);
+  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, collabFilter, visibilityFilter, sortBy]);
 
   if (loading) {
     return (
@@ -1912,18 +1892,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   ]}
                   value={collabFilter ? 'collab' : 'all'}
                   onChange={(id) => setCollabFilter(id === 'collab')}
-                />
-              )}
-              {sourceApps.length > 0 && (
-                <ChoiceRow
-                  swipe
-                  label={strings.slates.filterByApp}
-                  options={[
-                    { id: ALL_APPS, label: strings.slates.filterAllApps },
-                    ...sourceApps.map(app => ({ id: app.id, label: app.name, title: app.name })),
-                  ]}
-                  value={appFilter ?? ALL_APPS}
-                  onChange={(id) => setAppFilter(id === ALL_APPS ? null : id)}
                 />
               )}
             </div>
