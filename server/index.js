@@ -3648,7 +3648,7 @@ const destroySlate = async (slate, userId) => {
 const TRASH_KEEP_SECONDS = 30 * 24 * 3600;
 
 // Empty the trash: every slate in it goes for good
-app.delete('/api/slates/trash', authenticateToken, createRateLimitMiddleware('deleteSlate'), async (req, res) => {
+app.delete('/api/slates/trash', authenticateToken, createRateLimitMiddleware('emptyTrash'), async (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM slates WHERE user_id = ? AND deleted_at IS NOT NULL AND is_system_slate = 0').all(req.user.id);
     for (const slate of rows) await destroySlate(slate, req.user.id);

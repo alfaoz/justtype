@@ -122,8 +122,15 @@ export async function decryptContent(base64Blob, slateKeyBytes) {
     input
   );
   const dec = new TextDecoder();
-  const parsed = JSON.parse(dec.decode(result));
-  return parsed.content;
+  const text = dec.decode(result);
+  // Slates travel as { content, uploadedAt }. A third-party app that
+  // encrypted the bare text instead reads as that text, so its drop is
+  // adopted once rather than failing on every sweep.
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.content === 'string') return parsed.content;
+  } catch { /* not the envelope */ }
+  return text;
 }
 
 // Encrypt raw bytes (a history bundle). Same layout as content:

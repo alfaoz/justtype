@@ -24,7 +24,8 @@ class RateLimiter {
     updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
     slateHistory: { max: 600, windowMs: 60 * 60 * 1000 }, // history bundle reads and label edits
     importSlates: { max: 20, windowMs: 60 * 60 * 1000 }, // batch imports, up to 100 slates each
-    deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
+    deleteSlate: { max: 200, windowMs: 60 * 60 * 1000 }, // to the trash and back is cheap and reversible
+    emptyTrash: { max: 20, windowMs: 60 * 60 * 1000 }, // one press clears the whole trash
     publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
     recoverySources: { max: 10, windowMs: 60 * 60 * 1000 }, // one automatic incident sweep per login
     recoveryReport: { max: 50, windowMs: 24 * 60 * 60 * 1000 }, // successful incident restores only
