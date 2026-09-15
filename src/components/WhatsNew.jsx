@@ -94,6 +94,17 @@ export function WhatsNew() {
     return () => io.disconnect();
   }, []);
 
+  // An option row as the account draws it: label, words, one underline
+  const optionRow = (label, words, r) => (
+    <div key={label} className="wn-opt">
+      <span className="wn-opt-label">{label}</span>
+      <span className="wn-opt-words">
+        {words.map((w, i) => <span key={w} className={`wn-opt-w wn-opt-w-${r}-${i}`}>{w}</span>)}
+        <i className={`wn-opt-bar wn-opt-bar-${r}`} />
+      </span>
+    </div>
+  );
+
   // One looping demo per feature, keyed by the feature's `id` so the copy in
   // strings.js can be reordered freely without silently pairing the wrong demo
   // with the wrong paragraph.
@@ -190,15 +201,32 @@ export function WhatsNew() {
     a11y: (
     <div className="wn-frame" key="a11y">
       <div className="wn-opts">
-        {d.a11y.rows.map(([label, words], r) => (
-          <div key={label} className="wn-opt">
-            <span className="wn-opt-label">{label}</span>
-            <span className="wn-opt-words">
-              {words.map((w, i) => <span key={w} className={`wn-opt-w wn-opt-w-${r}-${i}`}>{w}</span>)}
-              <i className={`wn-opt-bar wn-opt-bar-${r}`} />
-            </span>
+        {d.a11y.rows.map(([label, words], r) => optionRow(label, words, r))}
+      </div>
+    </div>
+    ),
+
+    // Private links: the share panel's link row reaches `private`, and the
+    // address shows its key after the hash
+    share: (
+    <div className="wn-frame" key="share">
+      <div className="wn-opts">
+        {optionRow(d.share.label, d.share.words, 'share')}
+        <div className="wn-share-url">{d.share.url}<span className="wn-share-key">{d.share.key}</span></div>
+      </div>
+    </div>
+    ),
+
+    // Trash: a row is struck through, squished away, and the word nods
+    trash: (
+    <div className="wn-frame" key="trash">
+      <div className="wn-trash">
+        {d.trash.slates.map((t, i) => (
+          <div key={t} className={`wn-trash-row ${i === d.trash.gone ? 'wn-trash-gone' : ''}`}>
+            <span className="wn-trash-title">{t}<i className="wn-trash-line" /></span>
           </div>
         ))}
+        <div className="wn-trash-show"><span>archived</span><span className="wn-trash-word">trash</span></div>
       </div>
     </div>
     ),
@@ -256,9 +284,9 @@ export function WhatsNew() {
         @keyframes wnCheck${n} { ${check} }`;
   }).join('');
 
-  // Each option row's underline walks its words on a 9s loop: word widths are
-  // 1ch a letter (monospace), gaps 0.75rem
-  const a11yCss = d.a11y.rows.map(([, words], r) => {
+  // An option row's underline walks its words on a 9s loop: word widths are
+  // 1ch a letter (monospace), gaps 0.75rem. `r` names the row's classes.
+  const walk = (words, r, delay) => {
     const stops = words.map((_, i) => {
       const before = words.slice(0, i).reduce((n, w) => n + w.length, 0);
       return { left: `calc(${before}ch + ${i * 0.75}rem)`, width: `${words[i].length}ch` };
@@ -272,14 +300,16 @@ export function WhatsNew() {
     const lit = stops.map((_, i) => {
       const a = Math.round((i / n) * 100);
       const b = Math.round(((i + 1) / n) * 100) - 6;
-      return `.wn-opt-w-${r}-${i} { animation: wnOptW${r}${i} 9s infinite; animation-delay: ${r * 0.6}s; }
+      return `.wn-opt-w-${r}-${i} { animation: wnOptW${r}${i} 9s infinite; animation-delay: ${delay}s; }
         @keyframes wnOptW${r}${i} { 0%, 100% { color: var(--theme-text-dim); } ${a}%, ${b}% { color: var(--theme-text); } }`;
     }).join('');
     return `
-        .wn-opt-bar-${r} { animation: wnOptBar${r} 9s cubic-bezier(0.4, 0, 0.2, 1) infinite; animation-delay: ${r * 0.6}s; }
+        .wn-opt-bar-${r} { animation: wnOptBar${r} 9s cubic-bezier(0.4, 0, 0.2, 1) infinite; animation-delay: ${delay}s; }
         @keyframes wnOptBar${r} { ${frames} }
         ${lit}`;
-  }).join('');
+  };
+  const a11yCss = d.a11y.rows.map(([, words], r) => walk(words, r, r * 0.6)).join('');
+  const shareCss = walk(d.share.words, 'share', 0);
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
@@ -413,6 +443,28 @@ export function WhatsNew() {
         .wn-opt-w { color: var(--theme-text-dim); transition: color 300ms; }
         .wn-opt-bar { position: absolute; bottom: -3px; height: 1px; background: var(--theme-accent); }
         ${a11yCss}
+
+        /* Private links: the address appears while the underline rests on private */
+        ${shareCss}
+        .wn-share-url { padding-top: 0.75rem; font-size: 0.75rem; color: var(--theme-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; animation: wnShareUrl 9s infinite; }
+        .wn-share-key { color: var(--theme-accent); }
+        @keyframes wnShareUrl { 0%, 68% { opacity: 0; } 74%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+
+        /* Trash: the red line draws like a pencil, the row is squished from the top, the word nods */
+        .wn-trash { display: flex; flex-direction: column; font-size: 0.8rem; }
+        .wn-trash-row { height: 2.2em; padding: 0.5rem 0; box-sizing: border-box; border-top: 1px solid var(--theme-border-light); color: var(--theme-text); overflow: hidden; transform-origin: center top; }
+        .wn-trash-row:first-child { border-top: 0; }
+        .wn-trash-title { position: relative; display: inline-block; }
+        .wn-trash-line { position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; background: var(--theme-red); transform: scaleX(0); transform-origin: left center; }
+        .wn-trash-gone { animation: wnTrashRow 9s infinite; }
+        .wn-trash-gone .wn-trash-title { animation: wnTrashDim 9s infinite; }
+        .wn-trash-gone .wn-trash-line { animation: wnTrashLine 9s cubic-bezier(0.55, 0.05, 0.25, 1) infinite; }
+        @keyframes wnTrashLine { 0%, 20% { transform: scaleX(0); } 28%, 40% { transform: scaleX(1); } 40.1%, 100% { transform: scaleX(0); } }
+        @keyframes wnTrashDim { 0%, 20% { opacity: 1; } 28%, 40% { opacity: 0.6; } 40.1%, 100% { opacity: 1; } }
+        @keyframes wnTrashRow { 0%, 36% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } 39%, 88% { height: 0; padding: 0; border-top-width: 0; transform: scaleY(0); opacity: 0; } 93%, 100% { height: 2.2em; padding: 0.5rem 0; transform: scaleY(1); opacity: 1; } }
+        .wn-trash-show { display: flex; justify-content: flex-end; gap: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--theme-border-light); font-size: 0.75rem; color: var(--theme-text-dim); }
+        .wn-trash-word { color: var(--theme-red); display: inline-block; animation: wnTrashNod 9s infinite; }
+        @keyframes wnTrashNod { 0%, 36% { transform: none; } 37.5% { transform: translateY(-4px); } 39%, 100% { transform: none; } }
 
         /* Content search: the box, the hits, the deeper line (SearchDemo drives it) */
         .wn-search { display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.75rem; }

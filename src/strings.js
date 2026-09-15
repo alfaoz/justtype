@@ -1620,6 +1620,11 @@ take care!
       // braces as they open, so the pairs appear together
       math: { steps: ['$$', '$e$', '$e^$', '$e^{}$', '$e^{i}$', '$e^{i\\}$', '$e^{i\\p}$', '$e^{i\\pi}$', '$e^{i\\pi} $', '$e^{i\\pi} +$', '$e^{i\\pi} + $', '$e^{i\\pi} + 1$', '$e^{i\\pi} + 1 $', '$e^{i\\pi} + 1 =$', '$e^{i\\pi} + 1 = $', '$e^{i\\pi} + 1 = 0$'] },
       a11y: { rows: [['motion', ['on', 'off']], ['big text', ['off', 'big', 'bigger']], ['readable font', ['off', 'on']]] },
+      // The share panel's link row: the underline reaches `private` and the
+      // address carries its key after the hash
+      share: { label: 'link:', words: ['off', 'public', 'private'], url: 'justtype.io/s/9f2ka1', key: '#k=…' },
+      // The list: one row is struck through and leaves for the trash
+      trash: { slates: ['morning pages', 'letter to june', 'packing list'], gone: 1 },
       // Content search: the word is typed, the slates that hold it answer
       search: {
         steps: ['j', 'ju', 'jun', 'june'],
@@ -1658,9 +1663,19 @@ take care!
         body: 'give a slate its own pin or passphrase.'
       },
       {
+        id: 'share',
+        title: 'private links',
+        body: 'a link that opens only for whoever holds it.'
+      },
+      {
         id: 'unpublish',
         title: 'unpublish, completely',
         body: "take a published slate all the way back. long overdue, but it's here!"
+      },
+      {
+        id: 'trash',
+        title: 'trash',
+        body: 'a deleted slate waits in the trash for thirty days.'
       },
       {
         id: 'offline',
