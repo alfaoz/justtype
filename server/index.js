@@ -884,11 +884,13 @@ app.use('/cli', express.static(path.join(__dirname, '..', 'public', 'cli'), {
   }
 }));
 
-// Serve admin console (built separately, not in public repo)
+// Serve admin console (built separately, not in this repo). Where it
+// answers is deployment config, not code: ADMIN_PATH in the environment.
 const adminDistPath = path.join(__dirname, '..', 'admin-dist');
+const adminPath = `/${(process.env.ADMIN_PATH || 'admin').replace(/^\/+|\/+$/g, '')}`;
 if (fs.existsSync(adminDistPath)) {
-  app.use('/holyfuckwhereami', express.static(adminDistPath));
-  app.get('/holyfuckwhereami/*', (req, res) => {
+  app.use(adminPath, express.static(adminDistPath));
+  app.get(`${adminPath}/*`, (req, res) => {
     res.sendFile(path.join(adminDistPath, 'index.html'));
   });
 }

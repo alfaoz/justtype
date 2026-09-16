@@ -17,8 +17,6 @@ const SHELL = 'jt-shell';
 const ASSETS = 'jt-assets';
 
 // Unhashed files the loader needs before any asset is requested
-const NOT_OURS = ['/api/', '/collab/', '/oauth', '/holyfuckwhereami'];
-
 const SHELL_PATHS = ['/', '/build-manifest.json', '/build-manifest.sig', '/theme-preload.js', '/favicon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => { event.waitUntil(self.skipWaiting()); });
@@ -30,10 +28,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   const p = url.pathname;
-  // Paths the app does not own: the server answers these itself, so the
-  // worker never speaks for them (the admin console is its own app, and a
-  // cached shell would answer for it and render the app's 404 instead)
-  if (NOT_OURS.some(x => p.startsWith(x))) return;
+  if (p.startsWith('/api/') || p.startsWith('/collab/') || p.startsWith('/oauth')) return;
 
   if (p.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req));
@@ -41,14 +36,50 @@ self.addEventListener('fetch', (event) => {
     // Never stale while the network is there: this is what names the build
     event.respondWith(networkFirst(event, req, p, true));
   } else if (req.mode === 'navigate') {
-    // Every app route is the same loader, byte-stable across releases, so
-    // the last copy opens the app at once and the network refreshes it
-    // behind; offline, any route boots from '/'
-    event.respondWith(shellFirst(event, req, '/', p === '/'));
+    event.respondWith(navigate(event, req, p));
   } else if (SHELL_PATHS.includes(p)) {
     event.respondWith(shellFirst(event, req, p, true));
   }
 });
+
+// A page the app has said is its own opens from the last copy at once, the
+// network refreshing it behind. Every other path goes to the network and
+// only falls back to the shell offline: the app is not the only thing this
+// origin serves, and a worker that answered for everything would speak for
+// pages that are not its own. The app names its routes itself (a message
+// from main.jsx on every load), so nothing about them is written here.
+const ROUTES = '/__app-routes';
+let claimed = null;
+async function routes() {
+  if (claimed) return claimed;
+  const cache = await caches.open(SHELL);
+  const hit = await cache.match(ROUTES, MATCH);
+  const list = hit ? await hit.json().catch(() => []) : [];
+  claimed = new Set(['/', ...list]);
+  return claimed;
+}
+self.addEventListener('message', (event) => {
+  const p = event.data && event.data.type === 'app-route' && event.data.path;
+  if (typeof p !== 'string' || !p.startsWith('/') || p.length > 512) return;
+  event.waitUntil((async () => {
+    const known = await routes();
+    if (known.has(p)) return;
+    known.add(p);
+    const cache = await caches.open(SHELL);
+    await cache.put(ROUTES, new Response(JSON.stringify([...known])));
+  })());
+});
+async function navigate(event, req, p) {
+  const known = await routes();
+  if (known.has(p)) return shellFirst(event, req, '/', p === '/');
+  try {
+    return await fetch(req);
+  } catch (err) {
+    const hit = await caches.open(SHELL).then(c => c.match('/', MATCH));
+    if (hit) return hit;
+    throw err;
+  }
+}
 
 // The cached copy at once when there is one, the network's copy stored for
 // next time; the network when there is none

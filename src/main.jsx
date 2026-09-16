@@ -21,7 +21,13 @@ try {
 // network the load event has usually fired already: register now in that
 // case, otherwise wait for it so the first paint is not competing with it.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  const register = () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); };
+  // This page is the app's, so the worker may open it from cache next time
+  const claim = () => {
+    const say = () => navigator.serviceWorker.controller?.postMessage({ type: 'app-route', path: window.location.pathname });
+    say();
+    navigator.serviceWorker.addEventListener('controllerchange', say);
+  };
+  const register = () => { navigator.serviceWorker.register('/sw.js').then(claim).catch(() => {}); };
   if (document.readyState === 'complete') register();
   else window.addEventListener('load', register);
 }
