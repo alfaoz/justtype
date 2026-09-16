@@ -17,6 +17,8 @@ const SHELL = 'jt-shell';
 const ASSETS = 'jt-assets';
 
 // Unhashed files the loader needs before any asset is requested
+const NOT_OURS = ['/api/', '/collab/', '/oauth', '/holyfuckwhereami'];
+
 const SHELL_PATHS = ['/', '/build-manifest.json', '/build-manifest.sig', '/theme-preload.js', '/favicon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => { event.waitUntil(self.skipWaiting()); });
@@ -28,7 +30,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   const p = url.pathname;
-  if (p.startsWith('/api/') || p.startsWith('/collab/') || p.startsWith('/oauth')) return;
+  // Paths the app does not own: the server answers these itself, so the
+  // worker never speaks for them (the admin console is its own app, and a
+  // cached shell would answer for it and render the app's 404 instead)
+  if (NOT_OURS.some(x => p.startsWith(x))) return;
 
   if (p.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req));
