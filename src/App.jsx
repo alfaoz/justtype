@@ -1430,7 +1430,8 @@ export default function App() {
                   setCurrentSlate(null);
                 }
               }}
-              currentSlateNumber={currentSlate?.slate_number ?? null}
+              // Marks the row being written, and the list opens on it
+              currentSlateNumber={currentSlate?.slate_number ?? lastSlateRef.current?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);
                 setView('shared');

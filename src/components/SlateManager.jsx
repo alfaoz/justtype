@@ -693,10 +693,23 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   const rememberRef = useRef(null);
   rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter };
   useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
+  // Coming back from the writer, the list opens on the slate that was
+  // being written: it sits in the middle of the screen, wherever it has
+  // moved to. Without one (or if it is filtered out of view) the list is
+  // where it was left.
+  const landed = useRef(false);
   useEffect(() => {
-    if (loading || !scrollRef.current || !remembered?.scrollTop) return;
-    scrollRef.current.scrollTop = remembered.scrollTop;
-  }, [loading]);
+    if (loading || landed.current || !scrollRef.current) return;
+    landed.current = true;
+    const row = currentSlateNumber != null && scrollRef.current.querySelector(`[data-slate="${currentSlateNumber}"]`);
+    if (row) {
+      const box = scrollRef.current.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      scrollRef.current.scrollTop += (r.top + r.height / 2) - (box.top + box.height / 2);
+      return;
+    }
+    if (remembered?.scrollTop) scrollRef.current.scrollTop = remembered.scrollTop;
+  }, [loading, currentSlateNumber]);
   const [tagsModal, setTagsModal] = useState({ show: false, slateId: null, slateTitle: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState('');
