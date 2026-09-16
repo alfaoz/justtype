@@ -20,10 +20,13 @@ class RateLimiter {
     resetPassword: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 per 15 minutes per IP
     resendVerification: { max: 1, windowMs: 60 * 1000 }, // 1 per 60 seconds per IP
     // Slate operations (user-based)
-    createSlate: { max: 50, windowMs: 60 * 60 * 1000 }, // 50 per hour (reasonable for creates)
-    updateSlate: { max: 2000, windowMs: 60 * 60 * 1000 }, // 2000 per hour (autosave every second = ~33/min)
-    deleteSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
-    publishSlate: { max: 30, windowMs: 60 * 60 * 1000 }, // 30 per hour
+    createSlate: { max: 200, windowMs: 60 * 60 * 1000 },
+    updateSlate: { max: 5000, windowMs: 60 * 60 * 1000 }, // autosave every second = ~33/min
+    slateHistory: { max: 1200, windowMs: 60 * 60 * 1000 }, // history bundle reads and label edits
+    importSlates: { max: 60, windowMs: 60 * 60 * 1000 }, // batch imports, up to 100 slates each
+    deleteSlate: { max: 400, windowMs: 60 * 60 * 1000 }, // to the trash and back is cheap and reversible
+    emptyTrash: { max: 40, windowMs: 60 * 60 * 1000 }, // one press clears the whole trash
+    publishSlate: { max: 100, windowMs: 60 * 60 * 1000 },
     recoverySources: { max: 10, windowMs: 60 * 60 * 1000 }, // one automatic incident sweep per login
     recoveryReport: { max: 50, windowMs: 24 * 60 * 60 * 1000 }, // successful incident restores only
     // Admin and public operations (IP-based)
@@ -36,14 +39,14 @@ class RateLimiter {
 
     // Collaborative slates
     collabLookup: { max: 30, windowMs: 15 * 60 * 1000 }, // username -> public key lookups (enumeration guard)
-    collabEnable: { max: 20, windowMs: 60 * 60 * 1000 }, // enable/disable collab (re-uploads the blob)
-    collabInvite: { max: 30, windowMs: 60 * 60 * 1000 }, // invites sent
-    collabRespond: { max: 60, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
-    collabFetch: { max: 240, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
-    collabSnapshot: { max: 120, windowMs: 60 * 60 * 1000 }, // snapshot posts (each re-uploads the doc state)
+    collabEnable: { max: 40, windowMs: 60 * 60 * 1000 }, // enable/disable collab (re-uploads the blob)
+    collabInvite: { max: 60, windowMs: 60 * 60 * 1000 }, // invites sent
+    collabRespond: { max: 120, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
+    collabFetch: { max: 480, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
+    collabSnapshot: { max: 240, windowMs: 60 * 60 * 1000 }, // snapshot posts (each re-uploads the doc state)
   };
 
-  check(userId, operation) {
+  check(userId, operation, factor = 1) {
     const limit = this.limits[operation];
     if (!limit) {
       console.warn(`No rate limit defined for operation: ${operation}`);
@@ -51,6 +54,7 @@ class RateLimiter {
     }
 
     const key = `${userId}:${operation}`;
+    const max = Math.round(limit.max * factor);
     const now = Date.now();
     const windowStart = now - limit.windowMs;
 
@@ -66,14 +70,14 @@ class RateLimiter {
     this.store.set(key, recentTimestamps);
 
     // Check if limit exceeded
-    if (recentTimestamps.length >= limit.max) {
+    if (recentTimestamps.length >= max) {
       const oldestTimestamp = Math.min(...recentTimestamps);
       const resetIn = Math.ceil((oldestTimestamp + limit.windowMs - now) / 1000);
 
       return {
         allowed: false,
         resetIn,
-        limit: limit.max,
+        limit: max,
         current: recentTimestamps.length
       };
     }
@@ -84,8 +88,8 @@ class RateLimiter {
 
     return {
       allowed: true,
-      limit: limit.max,
-      remaining: limit.max - recentTimestamps.length
+      limit: max,
+      remaining: max - recentTimestamps.length
     };
   }
 
@@ -134,6 +138,45 @@ class RateLimiter {
 // Middleware factory
 const rateLimiter = new RateLimiter();
 
+// How much room an account gets on its own slates. An account earns it by
+// settling in: how long it has been here and how much it has written, with
+// a supporter counted as settled at once. It only ever widens a limit, and
+// only on the operations a person does to their own slates -- the guards
+// around auth, lookups and recovery are the same for everyone. Read from
+// the database at most once every ten minutes per account.
+const TRUST_TTL = 10 * 60 * 1000;
+const trust = new Map(); // userId -> { factor, at }
+const EARNS_TRUST = new Set([
+  'createSlate', 'updateSlate', 'slateHistory', 'importSlates',
+  'deleteSlate', 'emptyTrash', 'publishSlate',
+  'collabEnable', 'collabInvite', 'collabRespond', 'collabFetch', 'collabSnapshot',
+]);
+
+function trustFactor(userId) {
+  const hit = trust.get(userId);
+  if (hit && Date.now() - hit.at < TRUST_TTL) return hit.factor;
+  let factor = 1;
+  try {
+    const db = require('./database');
+    const row = db.prepare(`
+      SELECT CAST(julianday('now') - julianday(created_at) AS INTEGER) AS days,
+             supporter_tier,
+             (SELECT COUNT(*) FROM slates WHERE user_id = users.id AND deleted_at IS NULL) AS slates
+      FROM users WHERE id = ?`).get(userId);
+    if (row) {
+      const days = row.days || 0;
+      const slates = row.slates || 0;
+      if (days >= 21 && slates >= 25) factor = 10;
+      else if (days >= 3 && slates >= 5) factor = 3;
+      if (row.supporter_tier) factor = Math.max(factor, 10);
+    }
+  } catch (err) {
+    console.warn('trust lookup failed, treating the account as new:', err.message);
+  }
+  trust.set(userId, { factor, at: Date.now() });
+  return factor;
+}
+
 function getClientIp(req) {
   // Prefer Express's `req.ip` which respects the app's `trust proxy` setting.
   // This avoids trusting spoofable X-Forwarded-For headers when the app is hit directly.
@@ -181,7 +224,8 @@ function createRateLimitMiddleware(operation) {
       identifier = req.user.id;
     }
 
-    const result = rateLimiter.check(identifier, operation);
+    const factor = hasUser && EARNS_TRUST.has(operation) ? trustFactor(req.user.id) : 1;
+    const result = rateLimiter.check(identifier, operation, factor);
 
     if (!result.allowed) {
       return res.status(429).json({
@@ -203,6 +247,7 @@ function createRateLimitMiddleware(operation) {
 }
 
 module.exports = {
+  trustFactor,
   rateLimiter,
   createRateLimitMiddleware
 };

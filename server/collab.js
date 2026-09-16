@@ -120,6 +120,7 @@ function mountCollab(app, deps) {
       if (slate.is_system_slate) return res.status(403).json({ error: 'System slates cannot be shared' });
       if (slate.adoption_pending) return res.status(409).json({ error: 'Slate is pending adoption' });
       if (slate.is_collab) return res.status(409).json({ error: 'Slate is already collaborative' });
+      if (slate.is_locked) return res.status(409).json({ error: 'Locked slates cannot be shared', code: 'SLATE_LOCKED' });
       if (typeof ownerWrappedKey !== 'string' || !ownerWrappedKey.trim()) {
         return res.status(400).json({ error: 'Wrapped doc key required' });
       }
@@ -504,7 +505,7 @@ function mountCollab(app, deps) {
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
         JOIN users u ON u.id = s.user_id
-        WHERE m.user_id = ? AND m.status = 'pending'
+        WHERE m.user_id = ? AND m.status = 'pending' AND s.deleted_at IS NULL
         ORDER BY m.created_at DESC
       `).all(req.user.id);
       res.json({ invites });
@@ -594,7 +595,7 @@ function mountCollab(app, deps) {
         FROM collab_members m
         JOIN slates s ON s.id = m.slate_id
         JOIN users u ON u.id = s.user_id
-        WHERE m.user_id = ? AND m.status = 'accepted' AND m.role != 'owner'
+        WHERE m.user_id = ? AND m.status = 'accepted' AND m.role != 'owner' AND s.deleted_at IS NULL
         ORDER BY s.updated_at DESC
       `).all(req.user.id);
       res.json({ shared });

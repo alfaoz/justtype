@@ -11,21 +11,31 @@
 // is missing here (or a custom one) simply falls through to the stylesheet
 // default until the bundle applies the real variables a moment later.
 (function () {
+  // the whole variable set of the last applied theme is kept on the device
+  // (src/themes.js writes it), so every colour is right from the first
+  // frame, not only the ground; a device without it gets the ground alone.
   try {
-    var bg = {
-      dark: '#050505',
-      legacy: '#111111',
-      light: '#faf9f7',
-      sepia: '#f4ecd8',
-      midnight: '#0a0a14',
-    }[localStorage.getItem('justtype-theme')
-      || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
-    if (!bg) return;
-    document.documentElement.style.setProperty('--theme-bg', bg);
-    document.documentElement.style.backgroundColor = bg;
-    var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', bg);
-  } catch (e) {
-    /* storage unavailable: the stylesheet default is fine */
-  }
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('justtype-theme-vars') || 'null'); } catch (e) { saved = null; }
+    var bg = saved && saved.vars && saved.vars['--theme-bg'];
+    if (bg) {
+      for (var k in saved.vars) root.style.setProperty(k, saved.vars[k]);
+    } else {
+      bg = {
+        dark: '#050505',
+        legacy: '#111111',
+        light: '#faf9f7',
+        sepia: '#f4ecd8',
+        midnight: '#0a0a14',
+      }[localStorage.getItem('justtype-theme')
+        || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
+      if (bg) root.style.setProperty('--theme-bg', bg);
+    }
+    if (bg) {
+      root.style.backgroundColor = bg;
+      var themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) themeMeta.setAttribute('content', bg);
+    }
+  } catch (e) { /* storage unavailable: stylesheet default is fine */ }
 })();
