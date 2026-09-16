@@ -5,6 +5,7 @@ import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { VERSION } from '../version';
 import { generateSlateKey, generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, encryptContent, decryptContent } from '../crypto';
 import { saveSlateKey, getSlateKey } from '../keyStore';
+import { ensureLockRecovery, rewrapLockRecovery } from '../slateLock';
 import { wordlist } from '../bip39-wordlist';
 import { deviceDefaultTheme } from '../themes';
 import { VerifyBadge } from './VerifyBadge';
@@ -256,6 +257,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
         setPendingRecoveryPhrase(recoveryPhrase);
         // Store slate key temporarily to save to IndexedDB after we get the user ID
         window.__pendingSlateKey = slateKey;
+        window.__pendingRecoveryPhrase = recoveryPhrase;
 
         body = {
           username, password, email, termsAccepted,
@@ -305,6 +307,10 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           // Registration: save the slate key we just generated
           await saveSlateKey(data.user.id, window.__pendingSlateKey);
           delete window.__pendingSlateKey;
+          // The keypair that opens forgotten slate locks, wrapped to the
+          // password and the phrase while both are in hand
+          ensureLockRecovery({ login: { kind: 'password', secret: password }, phrase: window.__pendingRecoveryPhrase || null }).catch(() => {});
+          delete window.__pendingRecoveryPhrase;
         } else if (isLogin && data.migrationSlateKey) {
           // Migration: server gave us the slate key (one-time)
           const keyBytes = Uint8Array.from(atob(data.migrationSlateKey), c => c.charCodeAt(0));
@@ -331,6 +337,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             const passwordDerivedKey = await deriveKey(password, data.encryptionSalt);
             const slateKey = await unwrapKey(data.wrappedKey, passwordDerivedKey);
             await saveSlateKey(data.user.id, slateKey);
+            // A lock-recovery keypair the password opens, made once
+            ensureLockRecovery({ login: { kind: 'password', secret: password } }).catch(() => {});
           } catch (unwrapErr) {
             console.error('E2E unwrap failed:', unwrapErr);
             throw new Error('failed to unlock your slates. please try again.');
@@ -533,6 +541,18 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   const [destructiveConfirmed, setDestructiveConfirmed] = useState(false);
   const [resetRecoveryPhrase, setResetRecoveryPhrase] = useState(null); // new phrase from server
   const [resetRecoveryData, setResetRecoveryData] = useState(null); // cache /auth/recovery-data to validate OTP and avoid a second call
+  // Steps crossfade instead of snapping: the old one fades, then the new one
+  // fades in. Work between steps never resolves faster than a breath, so the
+  // person sees something happen rather than a flash.
+  const [stepPhase, setStepPhase] = useState('in'); // 'in' | 'out'
+  const stepTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(stepTimerRef.current), []);
+  const goToStep = (next) => new Promise((resolve) => {
+    setStepPhase('out');
+    clearTimeout(stepTimerRef.current);
+    stepTimerRef.current = setTimeout(() => { setResetStep(next); setStepPhase('in'); resolve(); }, 260);
+  });
+  const atLeast = async (startedAt, ms) => { const left = ms - (Date.now() - startedAt); if (left > 0) await new Promise(r => setTimeout(r, left)); };
 
   const normalizeRecoveryPhrase = (phrase) => phrase.trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -562,6 +582,10 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
         throw new Error(strings.auth.resetPassword.errors.newPasswordRequired);
       }
       const newPassword = passwordInput.value;
+      const confirmInput = document.querySelector('#reset-new-password-confirm');
+      if (confirmInput && confirmInput.value !== newPassword) {
+        throw new Error(strings.auth.resetPassword.errors.mismatch);
+      }
 
       if (method === 'recovery') {
         const recoveryPhrase = normalizeRecoveryPhrase(resetRecoveryInput);
@@ -611,6 +635,21 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           const newRecoveryDerivedKey = await deriveKey(newRecoveryPhrase, newRecoverySalt);
           const newRecoveryWrappedKey = await wrapKey(slateKey, newRecoveryDerivedKey);
 
+          // Lock-recovery keypairs the old phrase opens follow along, wrapped
+          // to the new password and the new phrase
+          let lockRecoveryKeys;
+          try {
+            lockRecoveryKeys = await rewrapLockRecovery({
+              via: { kind: 'phrase', secret: recoveryPhrase },
+              add: [
+                { kind: 'password', secret: newPassword },
+                { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt: newRecoverySalt, recoveryWrappedKey: newRecoveryWrappedKey } },
+              ],
+              info: { keys: recoveryData.lockRecoveryKeys || [], recoverySalt: recoveryData.recoverySalt, recoveryWrappedKey: recoveryData.recoveryWrappedKey },
+              save: false,
+            });
+          } catch { lockRecoveryKeys = undefined; }
+
           const response = await fetch(`${API_URL}/auth/reset-password-with-recovery`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -622,6 +661,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               newRecoveryWrappedKey,
               newRecoverySalt,
               newEncryptionSalt,
+              ...(lockRecoveryKeys && lockRecoveryKeys.length ? { lockRecoveryKeys } : {}),
             }),
           });
 
@@ -821,6 +861,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
         <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div key={resetStep} className={`transition-opacity duration-300 ${stepPhase === 'out' ? 'opacity-0' : 'opacity-100 animate-[fadeIn_0.4s_ease-out]'}`}>
 
           {/* Step 1: OTP entry */}
           {resetStep === 'otp' && (
@@ -855,6 +896,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                   }
                   setError('');
                   setLoading(true);
+                  const startedAt = Date.now();
 
                   try {
                     // Validate the code before we let the user continue.
@@ -875,7 +917,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     }
 
                     setResetRecoveryData(recoveryData);
-                    setResetStep('recovery-entry');
+                    await atLeast(startedAt, 700);
+                    await goToStep('recovery-entry');
                   } catch (err) {
                     setError(err.message);
                   } finally {
@@ -926,21 +969,44 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               {error && <div className="text-red-500 text-sm">{error}</div>}
 
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!resetRecoveryInput.trim()) {
                     setError('enter your recovery key');
                     return;
                   }
                   setError('');
-                  setResetStep('recovery-submit');
+                  setLoading(true);
+                  const startedAt = Date.now();
+                  try {
+                    // The key is checked here, where it was typed: deriving
+                    // and unwrapping is the wait, and a wrong key is caught
+                    // before a new password is asked for
+                    if (resetRecoveryData?.e2e) {
+                      const phrase = normalizeRecoveryPhrase(resetRecoveryInput);
+                      if (!phrase) throw new Error(strings.auth.resetPassword.errors.recoveryRequired);
+                      try {
+                        const derived = await deriveKey(phrase, resetRecoveryData.recoverySalt);
+                        await unwrapKey(resetRecoveryData.recoveryWrappedKey, derived);
+                      } catch {
+                        throw new Error(strings.auth.resetPassword.errors.invalidRecovery);
+                      }
+                    }
+                    await atLeast(startedAt, 900);
+                    await goToStep('recovery-submit');
+                  } catch (err) {
+                    setError(err.message);
+                  } finally {
+                    setLoading(false);
+                  }
                 }}
-                className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]"
+                disabled={loading}
+                className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
               >
-                {strings.auth.resetPassword.recoveryEntry.submit}
+                {loading ? strings.auth.resetPassword.recoveryEntry.checking : strings.auth.resetPassword.recoveryEntry.submit}
               </button>
 
               <button
-                onClick={() => { setError(''); setDestructiveConfirmed(false); setResetStep('destructive'); }}
+                onClick={() => { setError(''); setDestructiveConfirmed(false); goToStep('destructive'); }}
                 className="w-full py-2 opacity-70 hover:opacity-100 transition-opacity text-sm text-red-400"
               >
                 {strings.auth.resetPassword.recoveryEntry.noKey}
@@ -966,6 +1032,17 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     autoFocus
                   />
               </div>
+              <div>
+                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
+                <input
+                    id="reset-new-password-confirm"
+                    type="password"
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    placeholder={strings.auth.resetPassword.confirmPlaceholder}
+                  />
+              </div>
 
               {success && <div className="text-green-500 text-sm">{success}</div>}
               {error && <div className="text-red-500 text-sm">{error}</div>}
@@ -975,11 +1052,11 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 disabled={loading}
                 className="w-full border border-[var(--theme-border)] rounded py-3 transition-all duration-300 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] disabled:opacity-50"
               >
-                {strings.auth.resetPassword.withRecovery.submit}
+                {loading ? strings.auth.resetPassword.withRecovery.working : strings.auth.resetPassword.withRecovery.submit}
               </button>
 
               <button
-                onClick={() => { setError(''); setSuccess(''); setResetStep('recovery-entry'); }}
+                onClick={() => { setError(''); setSuccess(''); goToStep('recovery-entry'); }}
                 className="w-full py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
               >
                 back
@@ -1017,6 +1094,17 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     autoFocus
                   />
               </div>
+              <div>
+                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
+                <input
+                    id="reset-new-password-confirm"
+                    type="password"
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    placeholder={strings.auth.resetPassword.confirmPlaceholder}
+                  />
+              </div>
 
               {success && <div className="text-green-500 text-sm">{success}</div>}
               {error && <div className="text-red-500 text-sm">{error}</div>}
@@ -1026,11 +1114,11 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 disabled={loading || !destructiveConfirmed}
                 className="w-full border border-red-500/50 text-red-400 rounded py-3 transition-all duration-300 hover:bg-red-500 hover:text-white hover:border-red-500 disabled:opacity-50"
               >
-                {strings.auth.resetPassword.destructive.submit}
+                {loading ? strings.auth.resetPassword.destructive.working : strings.auth.resetPassword.destructive.submit}
               </button>
 
               <button
-                onClick={() => { setError(''); setSuccess(''); setDestructiveConfirmed(false); setResetStep('recovery-entry'); }}
+                onClick={() => { setError(''); setSuccess(''); setDestructiveConfirmed(false); goToStep('recovery-entry'); }}
                 className="w-full py-2 opacity-70 hover:opacity-100 transition-opacity text-sm"
               >
                 {strings.auth.resetPassword.destructive.back}
@@ -1038,6 +1126,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             </div>
           )}
 
+          </div>
         </div>
       </div>
     );
@@ -1121,12 +1210,18 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                 name="username"
                 required
                 minLength={3}
-                maxLength={20}
+                maxLength={isLogin ? 254 : 20}
                 autoComplete="username"
-                pattern="[a-z0-9][a-z0-9._\-]*[a-z0-9]|[a-z0-9]"
-                title="username can only contain lowercase letters, numbers, dots, hyphens, and underscores"
+                {...(isLogin ? {} : {
+                  pattern: '[a-z0-9][a-z0-9._\\-]*[a-z0-9]|[a-z0-9]',
+                  title: 'username can only contain lowercase letters, numbers, dots, hyphens, and underscores',
+                })}
                 onChange={(e) => {
-                  e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+                  // Sign-up shapes a username; login also takes an email, so
+                  // it only lowercases
+                  e.target.value = isLogin
+                    ? e.target.value.toLowerCase().trim()
+                    : e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
                 }}
               className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}

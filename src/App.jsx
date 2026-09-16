@@ -26,15 +26,22 @@ import { recoverLostSlates } from './slateRecovery';
 import { wordlist } from './bip39-wordlist';
 import { strings } from './strings';
 import pages from './pages.json';
-import { applyThemeVariables, themeExists, fetchAndMergePreferences, deviceDefaultTheme } from './themes';
+import { applyThemeVariables, themeExists, fetchAndMergePreferences, fetchPreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
 import { startDropRealtime, stopDropRealtime } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
-import { reportNetworkFailure } from './connectivity';
+import { reportNetworkFailure, reportNetworkSuccess } from './connectivity';
+import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
+import { findTodaySlate, todayLine, DAILY_TAG } from './today';
+import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
+import { Ico, PenIcon, SlatesIcon, UserIcon } from './components/icons';
+import { useIcons } from './iconsPref';
+import { useToast } from './components/Toast';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
-const WHATS_NEW_SEEN_KEY = 'justtype-whats-new-seen-v4';
+// Per release: a device that dismissed the last card must not silence this one
+const WHATS_NEW_SEEN_KEY = `justtype-whats-new-seen-${strings.whatsNewModal.version}`;
 
 export default function App() {
   const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
@@ -51,9 +58,40 @@ export default function App() {
   // We check if user might be logged in based on stored username
   const [token, setToken] = useState(localStorage.getItem('justtype-username') ? 'checking' : null);
   const [username, setUsername] = useState(localStorage.getItem('justtype-username'));
+  const icons = useIcons();
   const [userId, setUserId] = useState(localStorage.getItem('justtype-user-id'));
   // Bumped whenever app-created drops are adopted, to refresh the slate list.
   const [dropRefreshKey, setDropRefreshKey] = useState(0);
+  // Import: a file picker from the palette, or files dropped anywhere
+  const importInputRef = useRef(null);
+  const [dropping, setDropping] = useState(false);
+  const dragDepthRef = useRef(0);
+  const [showToast, toastNode] = useToast();
+  const runImport = async (files) => {
+    if (!token || !files?.length) return;
+    let items = [];
+    try { items = await itemsFromFiles(files); } catch { items = []; }
+    if (!items.length) { showToast(strings.slates.importer.nothing); return; }
+    try {
+      const { created } = await importItems(userId, items, (a, b) => { if (b > 1) showToast(strings.slates.importer.working(a, b), { hold: 60000 }); });
+      showToast(strings.slates.importer.done(created));
+      setDropRefreshKey(k => k + 1);
+      if (view !== 'slates') { setView('slates'); window.history.pushState({}, '', '/slates'); }
+    } catch (err) {
+      showToast(err?.message === 'locked' ? strings.slates.importer.locked : strings.slates.importer.failed);
+    }
+  };
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  const onDragEnter = (e) => { if (!token || !hasFiles(e)) return; e.preventDefault(); dragDepthRef.current++; setDropping(true); };
+  const onDragOver = (e) => { if (!token || !hasFiles(e)) return; e.preventDefault(); };
+  const onDragLeave = (e) => { if (!token || !hasFiles(e)) return; dragDepthRef.current = Math.max(0, dragDepthRef.current - 1); if (!dragDepthRef.current) setDropping(false); };
+  const onDrop = async (e) => {
+    if (!token || !hasFiles(e)) return;
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setDropping(false);
+    runImport(await filesFromDataTransfer(e.dataTransfer));
+  };
   // Collab slate opened from the "shared with you" list (slates.id, not slate_number)
   const [sharedSlateId, setSharedSlateId] = useState(null);
   const [email, setEmail] = useState(localStorage.getItem('justtype-email'));
@@ -129,8 +167,7 @@ export default function App() {
     if (seenHere) { markWhatsNewSeen(); return; }
     let cancelled = false;
     let timer = null;
-    fetch(`${API_URL}/preferences`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
+    fetchPreferences()
       .then((prefs) => {
         if (cancelled) return;
         if (prefs && prefs.whatsNewSeen === strings.whatsNewModal.version) {
@@ -204,6 +241,7 @@ export default function App() {
         });
 
         if (response.ok) {
+          reportNetworkSuccess();
           const userData = await response.json();
 
           // If user needs encryption migration, force re-login to trigger it
@@ -760,6 +798,8 @@ export default function App() {
       }
     }
 
+    relock();
+
     // Clear local state and storage
     setToken(null);
     setUsername(null);
@@ -937,6 +977,27 @@ export default function App() {
   // Command palette execute handler
   const handleCommandExecute = async (cmd) => {
     switch (cmd.action) {
+      case 'IMPORT':
+        importInputRef.current?.click();
+        break;
+
+      case 'TODAY': {
+        // Today's slate, opened at its end, or a new one that starts with the date
+        let found = null;
+        try { found = await findTodaySlate(userId); } catch { found = null; }
+        if (found) {
+          writerRef.current?.requestCaretEnd?.();
+          await handleSelectSlate(found);
+        } else {
+          await handleNewSlate();
+          setTimeout(() => {
+            writerRef.current?.setPendingTags?.([DAILY_TAG]);
+            writerRef.current?.setContent?.(`${todayLine()}\n\n`);
+          }, 0);
+        }
+        break;
+      }
+
       case 'NEW_SLATE':
         handleNewSlate();
         break;
@@ -1115,7 +1176,17 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
+    <div
+      className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden"
+      onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+    >
+      <input ref={importInputRef} type="file" multiple accept=".txt,.md,.markdown,.text,.zip,text/plain,text/markdown,application/zip" className="hidden" onChange={(e) => { runImport([...e.target.files]); e.target.value = ''; }} />
+      {dropping && (
+        <div className="fixed inset-0 z-[80] bg-black/30 backdrop-blur-md flex items-center justify-center pointer-events-none animate-modal-overlay">
+          <div className="text-sm text-[var(--theme-text)]">{strings.slates.importer.drop}</div>
+        </div>
+      )}
+      {toastNode}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
@@ -1144,6 +1215,10 @@ export default function App() {
         @keyframes fadeInUp {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
         @keyframes slideDown {
           from { opacity: 0; transform: translateY(-20px); }
@@ -1235,15 +1310,15 @@ export default function App() {
               {/* Toggle button for writer/slates */}
               <button
                 onClick={handleToggleView}
-                className="relative h-5 w-[68px] md:w-24 overflow-hidden hover:text-white transition-colors flex-shrink-0"
+                className={`relative h-5 w-[68px] ${icons === 'on' ? 'md:w-28' : 'md:w-24'} overflow-hidden hover:text-white transition-colors flex-shrink-0`}
               >
                 <div
                   className={`absolute inset-0 flex flex-col transition-transform duration-150 ease-out ${
                     view === 'writer' || view === 'shared' ? '-translate-y-5' : 'translate-y-0'
                   }`}
                 >
-                  <span className="h-5 flex items-center justify-center whitespace-nowrap px-1 leading-5">{strings.app.tabs.writer}</span>
-                  <span className="h-5 flex items-center justify-center whitespace-nowrap px-1 leading-5">{strings.app.tabs.slates}</span>
+                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={PenIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.writer}</span>
+                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={SlatesIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
                 </div>
               </button>
               <button
@@ -1291,7 +1366,7 @@ export default function App() {
                 }}
                 className={`hover:text-white transition-colors ${view === 'account' ? 'text-white' : ''}`}
               >
-                {strings.app.tabs.account}
+                <Ico of={UserIcon} className="w-3.5 h-3.5 hidden md:inline-block mr-1.5 align-[-2px]" />{strings.app.tabs.account}
               </button>
             </>
           ) : (
@@ -1345,6 +1420,17 @@ export default function App() {
               userId={userId}
               onSelectSlate={handleSelectSlate}
               onNewSlate={handleNewSlate}
+              onImport={() => importInputRef.current?.click()}
+              // The slate open in the writer went to the trash: the writer
+              // is a blank page when we come back to it
+              onTrashed={(n) => {
+                if (lastSlateRef.current?.slate_number === n) lastSlateRef.current = null;
+                if (currentSlate?.slate_number === n) {
+                  writerRef.current?.clearContent?.();
+                  setCurrentSlate(null);
+                }
+              }}
+              currentSlateNumber={currentSlate?.slate_number ?? null}
               onOpenShared={(slateId) => {
                 setSharedSlateId(slateId);
                 setView('shared');
@@ -1658,6 +1744,7 @@ export default function App() {
               body: JSON.stringify({ wrappedKey, encryptionSalt, recoveryWrappedKey, recoverySalt }),
             });
             if (!response.ok) throw new Error('failed to save pin');
+            ensureLockRecovery({ login: { kind: 'pin', secret: pin }, phrase: recoveryPhrase }).catch(() => {});
             setShowPinSetup(false);
             setPendingMigrationKey(null);
             setPendingRecoveryPhrase(recoveryPhrase);
@@ -1676,6 +1763,8 @@ export default function App() {
             const pinDerivedKey = await deriveKey(pin, keyData.encryptionSalt, { pin: true });
             const slateKey = await unwrapKey(keyData.wrappedKey, pinDerivedKey);
             await saveSlateKey(userId, slateKey);
+            // A lock-recovery keypair the pin opens, made once
+            ensureLockRecovery({ login: { kind: 'pin', secret: pin } }).catch(() => {});
             setShowPinSetup(false);
           }}
           onRecover={async (recoveryPhrase, newPin) => {
@@ -1717,6 +1806,15 @@ export default function App() {
               body: JSON.stringify({ newPinWrappedKey, newPinSalt, newRecoveryWrappedKey, newRecoverySalt })
             });
             if (!resetResponse.ok) throw new Error('failed to save new pin');
+            // Lock-recovery keypairs the old phrase opens get the new pin
+            // and the new phrase
+            rewrapLockRecovery({
+              via: { kind: 'phrase', secret: recoveryPhrase },
+              add: [
+                { kind: 'pin', secret: newPin },
+                { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt: newRecoverySalt, recoveryWrappedKey: newRecoveryWrappedKey } },
+              ],
+            }).catch(() => {});
 
             // Save slate key locally
             await saveSlateKey(userId, slateKey);

@@ -2,6 +2,18 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
+import './motion'; // mark the document with the device preferences before first paint
+import './scale';
+import './reading';
+import './cues';
+import { applyThemeVariables, themeExists, deviceDefaultTheme } from './themes';
+
+// The theme's variables and body class before anything renders, so the
+// first frame is the theme, not the stylesheet's light defaults
+try {
+  const saved = localStorage.getItem('justtype-theme') || deviceDefaultTheme();
+  applyThemeVariables(themeExists(saved) ? saved : deviceDefaultTheme());
+} catch { /* storage unavailable */ }
 
 // Offline shell (public/sw.js). Production only: during development the
 // dev server must always win, and a worker is exactly how UI goes stale.

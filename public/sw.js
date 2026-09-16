@@ -17,6 +17,8 @@ const SHELL = 'jt-shell';
 const ASSETS = 'jt-assets';
 
 // Unhashed files the loader needs before any asset is requested
+const NOT_OURS = ['/api/', '/collab/', '/oauth', '/holyfuckwhereami'];
+
 const SHELL_PATHS = ['/', '/build-manifest.json', '/build-manifest.sig', '/theme-preload.js', '/favicon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => { event.waitUntil(self.skipWaiting()); });
@@ -28,17 +30,38 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   const p = url.pathname;
-  if (p.startsWith('/api/') || p.startsWith('/collab/') || p.startsWith('/oauth')) return;
+  // Paths the app does not own: the server answers these itself, so the
+  // worker never speaks for them (the admin console is its own app, and a
+  // cached shell would answer for it and render the app's 404 instead)
+  if (NOT_OURS.some(x => p.startsWith(x))) return;
 
   if (p.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req));
-  } else if (req.mode === 'navigate') {
-    // Every app route is the same loader; offline, any route boots from '/'
-    event.respondWith(networkFirst(event, req, '/', p === '/'));
-  } else if (SHELL_PATHS.includes(p)) {
+  } else if (p === '/build-manifest.json' || p === '/build-manifest.sig') {
+    // Never stale while the network is there: this is what names the build
     event.respondWith(networkFirst(event, req, p, true));
+  } else if (req.mode === 'navigate') {
+    // Every app route is the same loader, byte-stable across releases, so
+    // the last copy opens the app at once and the network refreshes it
+    // behind; offline, any route boots from '/'
+    event.respondWith(shellFirst(event, req, '/', p === '/'));
+  } else if (SHELL_PATHS.includes(p)) {
+    event.respondWith(shellFirst(event, req, p, true));
   }
 });
+
+// The cached copy at once when there is one, the network's copy stored for
+// next time; the network when there is none
+async function shellFirst(event, req, key, store) {
+  const cache = await caches.open(SHELL);
+  const hit = await cache.match(key, MATCH);
+  const refresh = fetch(req).then(async (res) => {
+    if (res.ok && store) await cache.put(key, res.clone());
+    return res;
+  });
+  if (hit) { event.waitUntil(refresh.catch(() => {})); return hit; }
+  return refresh.catch(async (err) => { const any = await cache.match('/', MATCH); if (any) return any; throw err; });
+}
 
 // Responses carry `Vary: Origin` (cors middleware), which the Cache API
 // honours by default; a module script request and the precache fetch send
@@ -90,7 +113,11 @@ async function precache(manifestRes) {
     } catch { /* offline again already; next manifest fetch retries */ }
   }));
   for (const p of have) if (!wanted.has(p)) await cache.delete(p);
+  // The unhashed shell files are refetched once per build, not per load
   const shell = await caches.open(SHELL);
+  const seen = await shell.match('/__build', MATCH).then(r => (r ? r.text() : ''), () => '');
+  if (seen === String(manifest.version)) return;
+  await shell.put('/__build', new Response(String(manifest.version)));
   for (const p of SHELL_PATHS) {
     if (p === '/build-manifest.json' || p === '/build-manifest.sig') continue;
     try {

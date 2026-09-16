@@ -56,17 +56,68 @@ const strings = {
       empty: 'nothing in the catalog yet',
       by: (name) => `by ${name}`
     },
+    // A formula KaTeX could not set: the card over its dotted source
+    math: {
+      error: 'latex syntax error',
+      copyHint: (key) => `${key} to copy`,
+      copied: 'copied',
+    },
     conflict: {
       ours: 'this device',
       theirs: 'elsewhere',
-      keepOurs: 'keep mine',
-      keepTheirs: 'keep theirs',
+      keepOurs: 'keep this device',
+      keepTheirs: 'keep elsewhere',
       keepBoth: 'keep both'
     },
     publicState: {
       current: 'public',
-      outdated: 'private draft · sync',
+      outdated: 'sync',
       outdatedHint: 'your public copy is stale. click to update it'
+    },
+    lock: {
+      label: 'lock',
+      locked: 'locked',
+      unlocked: 'unlocked',
+      gateTitle: 'this slate is locked',
+      gateHint: 'its pin or passphrase, then enter',
+      setupTitle: 'choose a pin or passphrase for this slate',
+      setupHint: 'four characters or more. this slate only.',
+      confirmTitle: 'once more',
+      confirmHint: 'the same again, then enter',
+      // What opens a forgotten secret, by name
+      loginWords: { password: 'password', pin: 'pin', both: 'password or pin', phrase: 'recovery key', or: ' or your ' },
+      loginHintSetup: (word) => `type your ${word} once. it opens this slate if you forget the secret.`,
+      recoverTitle: 'forgot slate passphrase',
+      recoverHintLogin: (word) => `enter your ${word} to remove the lock`,
+      recoverHintPhrase: 'enter your recovery key to remove the lock',
+      recoverGo: 'open it',
+      recovering: 'opening...',
+      recovered: 'lock removed',
+      loginEmpty: (word) => `your ${word} first`,
+      wrongLogin: (word) => `that is not your ${word}`,
+      usePhrase: 'use the recovery key',
+      useLogin: (word) => `use your ${word}`,
+      phrasePlaceholder: 'twelve words with spaces between',
+      phraseEntered: 'recovery key: accepted',
+      loginAccepted: (word) => `${word}: accepted`,
+      loginPlaceholder: (word) => `your ${word}`,
+      sureTitle: 'lock this slate?',
+      sureBody: (ways) => (ways ? `if you forget it, your ${ways} opens it.` : 'if you forget it, nothing opens it.'),
+      lockIt: 'lock it',
+      newSecretTitle: 'choose a new pin or passphrase',
+      forgot: 'forgot it?',
+      next: 'next',
+      wrong: 'that did not open it',
+      wrongPhrase: 'that is not the recovery key of this account',
+      phraseInvalid: 'a recovery key is twelve words',
+      exportLocked: 'unlock it to export it',
+      tooShort: 'four characters at least',
+      mismatch: 'those did not match',
+      failed: 'something went wrong, try again',
+      needsNetwork: 'locking needs a connection',
+      cancel: 'never mind',
+      publishBlocked: 'locked',
+      publishBlockedHint: 'locked slates stay private.'
     },
     collabState: {
       label: 'collab',
@@ -96,7 +147,9 @@ const strings = {
       save: 'save',
       export: 'export',
       exportTxt: 'export as txt',
-      exportPdf: 'export as pdf'
+      exportPdf: 'export as pdf',
+      exportMd: 'export as markdown',
+      frontMatter: 'front matter'
     },
     menu: {
       unpublishSlate: 'unpublish slate',
@@ -116,10 +169,31 @@ const strings = {
       linkCopied: 'link copied!',
       privateDraft: 'private draft',
       savedAsPrivate: 'saved as private',
+      savedAs: (n) => `saved as /slate/${n}`,
+      deleted: 'moved to trash',
       published: 'published',
       republished: 'republished',
       draftRestored: 'draft restored',
       forgottenPublic: 'unpublished, link disabled'
+    },
+    share: {
+      title: 'share',
+      link: 'link:',
+      off: 'off',
+      public: 'public',
+      private: 'private',
+      openWith: 'open with:',
+      byLink: 'link',
+      byPassphrase: 'passphrase',
+      passphraseHint: 'four characters or more, then enter',
+      passphraseSet: 'a passphrase is set',
+      passphraseSetGo: 'set',
+      passphraseChange: 'change',
+      expires: 'expires:',
+      expiry: { never: 'never', day: 'a day', week: 'a week', month: 'a month' },
+      copy: 'copy',
+      copied: 'copied',
+      failed: 'sharing failed',
     },
     publishMenu: {
       forget: 'unpublish completely',
@@ -134,15 +208,16 @@ const strings = {
     about: {
       title: 'about justtype',
       description: 'minimalist writing app with cloud storage and sharing.',
-      encryption: 'your slates are locally encrypted with aes-256-gcm, before it gets to our servers.',
-      encryptionLabel: 'end to end encrypted',
+      encryption: 'your slates are encrypted on your device with aes-256-gcm before they leave it. the key never reaches our servers, so they only ever hold ciphertext. not us, not a breach, nobody but you can read what you write.',
+      encryptionLabel: 'end-to-end encrypted. private by design.',
       byline: 'made by',
       links: {
         terms: 'terms of service',
         privacy: 'privacy policy',
         project: 'the justtype project',
         github: 'github',
-        feedback: 'send us feedback'
+        feedback: 'send us feedback',
+        whatsNew: "what's new on justtype"
       },
       support: {
         title: 'support justtype',
@@ -151,9 +226,11 @@ const strings = {
         donate: 'donate once',
         donateHint: 'any amount',
         subscribe: 'subscribe',
-        subscribeHint: '7 eur / 3 months'
+        subscribeHint: '7 eur / 3 months',
+        disabled: 'disabled for now'
       },
       version: (v) => `version ${v}`,
+      versionNote: 'nice.', // 4.2.0 only
       close: 'close'
     },
     // mobile sheet
@@ -176,6 +253,12 @@ const strings = {
     newSlate: '+ new slate',
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
+    filterVisibility: 'show:',
+    filterVisibilityAll: 'all',
+    filterVisibilityPublic: 'public',
+    filterVisibilityPrivate: 'private',
+    filterVisibilityArchived: 'archived',
+    filterVisibilityTrash: 'trash',
     sortOptions: {
       recent: 'recent',
       oldest: 'oldest',
@@ -183,8 +266,6 @@ const strings = {
       za: 'z-a',
       words: 'words',
     },
-    filterByApp: 'from app:',
-    filterAllApps: 'all',
     viewToggle: {
       list: 'list view',
       grid: 'grid view',
@@ -192,26 +273,45 @@ const strings = {
     lockedTitle: 'locked slate',
     offline: {
       // The device mark after each title: a check for a copy on this device
-      // (dim when the app made it, green when you asked for it), a cloud
-      // for a slate that is not here yet
-      auto: 'on this device',
-      kept: 'kept on this device',
-      missing: 'not on this device yet. click to copy it',
+      // (dim when the app made it, green when you asked for it; click to
+      // switch), a cloud for a slate that is not here yet
+      auto: 'on this device. click to keep it here',
+      kept: 'kept on this device. click to stop keeping',
+      missing: 'not on this device yet. click to keep a copy here',
+      offloaded: 'offloaded from this device. click to keep a copy here',
       missingOffline: 'not on this device',
       copying: 'copying to this device',
       pending: 'saved on this device, not in your account yet',
       pendingEdits: 'edits saved on this device, not in your account yet',
       syncing: 'syncing to your account',
       synced: 'synced',
-      keep: 'keep on this device',
-      unkeep: 'remove from this device'
+      offload: 'offload from this device',
+      copy: 'copy to this device'
     },
     untitled: 'untitled slate',
     unlockRequired: 'unlock your slates first.',
     noMatches: (query) => `no slates match "${query}"`,
+    // The empty list under a filter, when nothing was searched for
+    noneUnder: { all: 'no slates yet', public: 'nothing public yet', private: 'nothing private', archived: 'nothing archived yet', trash: 'nothing in the trash yet' },
+    trash: { empty: 'empty trash', emptyConfirm: 'sure?' },
+    select: { start: 'select', done: 'done', count: (n) => `${n} selected`, exportAs: 'export as:', txt: 'txt', md: 'md', pdf: 'pdf', skippedLocked: (n) => `${n} locked slate${n === 1 ? '' : 's'} left out`, nothing: 'nothing to export' },
+    importer: { start: 'import', drop: 'drop to import', working: (a, b) => `importing ${a} of ${b}`, done: (n) => `imported ${n} slate${n === 1 ? '' : 's'}`, nothing: 'nothing to import in that', failed: 'import failed', locked: 'unlock your slates first' },
+    // Content search: what is on this device is searched as you type; the
+    // line under the results offers the rest
+    search: {
+      notOnDevice: (n) => n === 1 ? '1 slate is not on this device' : `${n} slates are not on this device`,
+      deeper: 'search deeper',
+      offline: 'no connection',
+      progress: (done, total) => `searching ${done} of ${total}`,
+      everything: 'everything searched',
+      hits: (n) => n === 1 ? '1 hit' : `${n} hits`,
+    },
     status: {
+      locked: 'locked',
+      unlocked: 'unlocked',
       public: 'public',
       private: 'private',
+      inTrash: 'in trash',
       wasPublic: 'draft (was public)',
       fromApp: 'from {app}',
       fromAppTitle: 'this slate was created by {app} and imported into your account. it is now yours and stays even if you remove the app.',
@@ -239,16 +339,31 @@ const strings = {
       unpublish: 'unpublish',
       makePublic: 'make public',
       makePrivate: 'make private',
+      lock: 'lock',
+      unlock: 'remove lock',
+      archive: 'archive',
+      unarchive: 'unarchive',
       tags: 'tags',
       more: 'more',
-      delete: 'delete'
+      delete: 'delete',
+      restore: 'restore',
+      deleteForever: 'delete forever'
     },
     pin: {
       pin: 'pin',
       unpin: 'unpin',
+      moveUp: 'move up',
+      moveDown: 'move down',
     },
     tags: {
-      filterLabel: (tag) => `tag: ${tag}`,
+      rowLabel: 'tags:',
+      all: 'all',
+      edit: 'edit',
+      done: 'done',
+      rename: 'rename',
+      remove: 'remove',
+      renamePlaceholder: 'new name',
+      needsNetwork: 'tag changes need a connection',
       addPlaceholder: 'add tag...',
       addButton: 'add',
       saving: 'saving...',
@@ -261,12 +376,13 @@ const strings = {
       tooLong: (max) => `tag too long (max ${max} chars).`,
       tooMany: (max) => `too many tags (max ${max}).`,
     },
-    deleteModal: {
-      title: 'delete slate?',
-      message: (title) => `Are you sure you want to delete "${title}"? This cannot be undone!`,
+    // An emptied slate deletes itself on save; a public one asks first
+    deleteEmpty: {
+      title: 'delete this public slate?',
+      message: 'it is empty now. deleting it takes its public link down. keeping it leaves the link up with what was published.',
       confirm: 'delete',
-      cancel: 'cancel'
-    }
+      cancel: 'keep',
+    },
   },
 
   // e2ee collaborative slates
@@ -316,6 +432,10 @@ const strings = {
       title: 'version history',
       loading: 'loading checkpoints...',
       empty: 'no checkpoints yet. they build up as you write together.',
+      emptySolo: 'no versions yet.',
+      versions: 'versions:',
+      offConfirm: 'sure?',
+      unavailable: 'history is not available right now',
       pick: 'pick a checkpoint to preview it.',
       loadingPreview: 'opening...',
       emptyDoc: '(empty)',
@@ -445,8 +565,8 @@ const strings = {
     },
     login: {
       title: 'login',
-      username: 'username',
-      usernamePlaceholder: 'enter username',
+      username: 'username or email',
+      usernamePlaceholder: 'username or email',
       password: 'password',
       passwordPlaceholder: 'enter password',
       submit: 'login',
@@ -492,7 +612,10 @@ const strings = {
       codePlaceholder: 'check your email for the code',
       newPassword: 'new password',
       newPasswordPlaceholder: 'at least 6 characters',
+      confirmPassword: 'confirm password',
+      confirmPlaceholder: 'once more',
       errors: {
+        mismatch: 'the two passwords do not match',
         invalidOrUsedCode: 'invalid or used reset code. send a new one and try again.',
         codeExpired: 'reset code expired. send a new one and try again.',
         recoveryRequired: 'recovery key is required',
@@ -511,18 +634,21 @@ const strings = {
         title: 'enter your recovery key',
         placeholder: 'enter your 12-word recovery key...',
         submit: 'submit recovery codes',
+        checking: 'checking your recovery key',
         noKey: 'i don\'t have recovery codes',
       },
       withRecovery: {
         title: 'set new password',
         description: 'your slates will be preserved.',
         submit: 'reset password',
+        working: 'resetting your password',
       },
       destructive: {
         title: 'reset password',
         warning: 'without your recovery key, all your encrypted slates will be permanently deleted.',
         checkbox: 'i know all my slates will be gone',
         submit: 'reset password and delete all slates',
+        working: 'resetting your password',
         back: 'back',
       },
       success: 'password reset successfully!',
@@ -603,8 +729,22 @@ const strings = {
     sections: {
       account: 'account',
       security: 'security',
+      accessibility: 'accessibility',
       connections: 'connections',
       danger: 'danger zone'
+    },
+    accessibility: {
+      title: 'accessibility options',
+      motion: 'motion',
+      size: 'big text',
+      font: 'readable font',
+      lineFocus: 'line focus',
+      sounds: 'sounds',
+      haptics: 'haptics',
+      scroll: 'scroll',
+      swipe: 'swipe',
+      icons: 'icons',
+      note: 'for this device.',
     },
     info: {
       title: 'account info',
@@ -917,7 +1057,12 @@ const strings = {
     report: 'report',
     copy: 'copy',
     copied: 'copied!',
-    viewMode: (mode) => `view: ${mode}`
+    locked: {
+      title: 'this slate has a passphrase',
+      hint: 'its passphrase, then enter',
+      open: 'open it',
+      wrong: 'that did not open it',
+    }
   },
 
   // 404 not found
@@ -954,7 +1099,6 @@ const strings = {
     title: 'feedback',
     subtitle: (username) => `hey ${username}, what's on your mind?`,
     placeholder: 'anything at all. bugs, ideas, or just say hi...',
-    hint: 'goes straight to alfaoz. no ticket queue, no bot.',
     words: (n) => `${n} ${n === 1 ? 'word' : 'words'}`,
     emailLabel: 'reply to (optional)',
     emailPlaceholder: 'your email',
@@ -1080,6 +1224,7 @@ take care!
     deleteSlate: 'Failed to delete slate',
     publishFailed: 'Failed to update publish status',
     pinFailed: 'Failed to update pin status',
+    archiveFailed: 'could not archive that slate',
     tagsSaveFailed: 'Failed to save tags',
     loginFailed: 'login failed',
     signupFailed: 'signup failed',
@@ -1101,13 +1246,13 @@ take care!
 
   // build verification
   verify: {
-    title: 'verify build integrity',
-    description: 'every page load is verified before it runs. independent checks live off justtype\'s servers.',
-    loaderVerified: (v, n) => `this page load was verified: the browser checked the signature on the v${v} manifest against the pinned release key, then pinned all ${n} files with subresource integrity before running anything.`,
-    loaderBeta: (v, n) => `beta build v${v}: all ${n} files pinned against the server manifest. releases on justtype.io are additionally signature-verified.`,
-    loaderDev: 'dev build: the verified loader only runs on built releases.',
-    whyExternal: 'a page served by justtype.io cannot prove justtype.io is honest, so the independent checks do not live here. they run on github pages, built by github actions from the public repository, on infrastructure justtype\'s servers cannot touch: every served file is re-hashed and compared against an independent build of the source, and a scheduled monitor repeats this every 15 minutes and raises a public alert on any mismatch.',
-    keyNote: 'releases are signed on the developer\'s machine. the server never holds the key, so a compromised server cannot ship modified code that this browser would accept.',
+    title: 'verify the build',
+    description: 'the check that matters runs off justtype\'s servers.',
+    loaderVerified: (v) => `this page load is release v${v}, signature checked.`,
+    loaderBeta: (v) => `this page load is beta v${v}, pinned to the server manifest, not signed.`,
+    loaderDev: 'dev build: nothing to check.',
+    whyExternal: 'a page served by justtype.io cannot vouch for justtype.io. the independent check runs on github pages, built from the public repository, and repeats every 15 minutes.',
+    keyNote: 'releases are signed on the developer\'s machine. the server never holds the key.',
     openVerifier: 'open the independent verifier',
     verifierUrl: 'https://alfaoz.github.io/justtype/',
     releasesLog: 'releases log',
@@ -1438,7 +1583,7 @@ take care!
   },
   // One-time announcement card for users arriving on v4 for the first time.
   whatsNewModal: {
-    version: 'v4',
+    version: 'v4', // the seen-once key: it stays, so 4.2 makes no card; its rows sit on the page
     title: 'markdown and collab are here',
     body: 'justtype just picked up the two things people asked for most.',
     points: [
@@ -1455,7 +1600,7 @@ take care!
     versionTag: 'v4',
     heroEyebrow: 'v4 is here.',
     heroTitle: 'write together. write it better.',
-    heroSub: 'markdown formatting whenever you want it, and real time collaboration on any slate. still end to end encrypted, still just typing.',
+    heroSub: 'markdown formatting and real time collaboration, and now slates that lock, math that sets itself, and a page of options for how the app moves, sounds and reads. still end to end encrypted, still just typing.',
     demo: {
       lineA: 'ideas flow better',
       lineB: "when they're together",
@@ -1471,13 +1616,40 @@ take care!
       markdown: { srcHeading: '## notes for friday', srcLine: '**bold**, *italic*, `code`', outHeading: 'notes for friday' },
       // The slate list: copies land on their own; `written` is the row that
       // gets edited while offline and syncs back
-      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 }
+      offline: { slates: ['morning pages', 'letter to june', 'reading notes', 'packing list'], written: 1 },
+      // 4.2: the lock's stars fill and the word turns; a formula sets itself;
+      // three option rows with the underline gliding; one slate goes to the shelf
+      lock: { stars: 6, before: 'locked', after: 'unlocked' },
+      // The formula as someone types it: the editor closes the dollars and the
+      // braces as they open, so the pairs appear together
+      math: { steps: ['$$', '$e$', '$e^$', '$e^{}$', '$e^{i}$', '$e^{i\\}$', '$e^{i\\p}$', '$e^{i\\pi}$', '$e^{i\\pi} $', '$e^{i\\pi} +$', '$e^{i\\pi} + $', '$e^{i\\pi} + 1$', '$e^{i\\pi} + 1 $', '$e^{i\\pi} + 1 =$', '$e^{i\\pi} + 1 = $', '$e^{i\\pi} + 1 = 0$'] },
+      a11y: { rows: [['motion', ['on', 'off']], ['big text', ['off', 'big', 'bigger']], ['readable font', ['off', 'on']]] },
+      // The share panel's link row: the underline reaches `private` and the
+      // address carries its key after the hash
+      share: { label: 'link:', words: ['off', 'public', 'private'], url: 'justtype.io/s/9f2ka1', key: '#k=…' },
+      // The list: one row is struck through and leaves for the trash
+      trash: { slates: ['morning pages', 'letter to june', 'packing list'], gone: 1 },
+      // Content search: the word is typed, the slates that hold it answer
+      search: {
+        steps: ['j', 'ju', 'jun', 'june'],
+        hits: [
+          { title: 'letter to june', snippet: 'dear june, the garden is' },
+          { title: 'reading notes', snippet: 'finished the june issue' },
+        ],
+      }
     },
     features: [
+      // New rows sit beside the older ones they belong with: math under rich text,
+      // search after offline copies, the options page, then the new justtype last
       {
         id: 'markdown',
         title: 'rich formatting with markdown',
         body: 'we all know it, we all love it. write markdown and watch it format itself as you type, or keep every slate plain. it is a per slate setting, so nothing changes until you ask for it.'
+      },
+      {
+        id: 'math',
+        title: 'math, typeset',
+        body: 'write it between dollar signs and it sets itself as you go, inline or on a line of its own.'
       },
       {
         id: 'collab',
@@ -1487,7 +1659,17 @@ take care!
       {
         id: 'history',
         title: 'version history',
-        body: 'step back through earlier checkpoints of a collab slate, preview them, restore the one you want.'
+        body: 'step back through earlier versions of a slate, preview them, restore the one you want.'
+      },
+      {
+        id: 'lock',
+        title: 'locked slates',
+        body: 'give a slate its own pin or passphrase.'
+      },
+      {
+        id: 'share',
+        title: 'private links',
+        body: 'a link that opens only for whoever holds it.'
       },
       {
         id: 'unpublish',
@@ -1495,16 +1677,31 @@ take care!
         body: "take a published slate all the way back. long overdue, but it's here!"
       },
       {
-        id: 'brand',
-        title: 'a new justtype',
-        body: 'a new default identity, a new default font, a polished design, a new justtype.',
-        notePhrase: 'a new default font',
-        note: 'ibm plex mono'
+        id: 'trash',
+        title: 'trash',
+        body: 'a deleted slate waits in the trash for thirty days.'
       },
       {
         id: 'offline',
         title: 'offline slates',
         body: 'your slates are now kept on your device as well, not just on the server. lose your connection and keep writing; edits are saved locally and synced when you are back. automatic, and still end-to-end encrypted.'
+      },
+      {
+        id: 'search',
+        title: 'content search',
+        body: 'search the words inside your slates, not only their titles.'
+      },
+      {
+        id: 'a11y',
+        title: 'accessibility options',
+        body: 'motion, big text, a readable font, line focus, sounds and haptics.'
+      },
+      {
+        id: 'brand',
+        title: 'a new justtype',
+        body: 'a new default identity, a new default font, a polished design, a new justtype.',
+        notePhrase: 'a new default font',
+        note: 'ibm plex mono'
       }
     ],
     backLink: 'back to writing'
