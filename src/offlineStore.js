@@ -74,6 +74,9 @@ export const newLocalSlateNumber = () => `local-${Math.random().toString(36).sli
 export async function cacheSlate(userId, slateNumber, data, { opened = false } = {}) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('slates', 'readonly', s => s.get(key));
+  // An offloaded slate stays off this device: opening it, saving it or
+  // syncing it does not put a copy back. Keep or copy clears the flag first.
+  if (prev?.offloaded) return prev;
   const rec = {
     key, userId: uid(userId), slateNumber,
     data: { ...(prev?.data || {}), ...data },
@@ -94,7 +97,16 @@ export async function setKeepOffline(userId, slateNumber, keep) {
   const rec = prev || { key, userId: uid(userId), slateNumber, data: {}, cachedAt: 0, lastOpenedAt: 0 };
   rec.userId = uid(userId);
   rec.keep = keep;
+  if (keep) rec.offloaded = false;
   await tx('slates', 'readwrite', s => s.put(rec));
+}
+
+// Take the copy off this device and remember that the person asked, so the
+// app does not quietly bring it back on the next list load. Opening the
+// slate, or clicking its cloud mark, puts a copy back.
+export async function offloadSlate(userId, slateNumber) {
+  const key = slateKeyOf(userId, slateNumber);
+  await tx('slates', 'readwrite', s => s.put({ key, userId: uid(userId), slateNumber, data: {}, keep: false, offloaded: true, cachedAt: 0, lastOpenedAt: 0 }));
 }
 
 // A synced slate replaces its local stand-in under the real number
@@ -145,7 +157,8 @@ export function copyPlan(rows, cached) {
   };
   const eligible = rows.filter(r => !r.local && !r.shared && !isLocalSlateNumber(r.slate_number));
   const kept = eligible.filter(r => byNumber.get(r.slate_number)?.keep);
-  const rest = eligible.filter(r => !byNumber.get(r.slate_number)?.keep)
+  // Offloaded slates stay off until asked for
+  const rest = eligible.filter(r => { const c = byNumber.get(r.slate_number); return !c?.keep && !c?.offloaded; })
     .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   let total = kept.reduce((n, r) => n + (r.size_bytes || 0), 0);
   const within = [];
@@ -171,9 +184,15 @@ export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(uid(
 export async function queuePending(userId, slateNumber, record) {
   const key = slateKeyOf(userId, slateNumber);
   const prev = await tx('pending', 'readonly', s => s.get(key));
+  // A lock change waiting in the queue rides along under later saves of
+  // the same slate: their content is already under the key it switched to
+  const carriedLock = record.body && record.body.lock === undefined && prev?.body?.lock !== undefined
+    ? { body: { ...record.body, lock: prev.body.lock } }
+    : {};
   const rec = {
     key, userId: uid(userId), slateNumber,
     ...record,
+    ...carriedLock,
     // A slate that has not been created on the server yet stays a POST no
     // matter how many times it is saved again offline
     op: prev?.op === 'post' ? 'post' : record.op,

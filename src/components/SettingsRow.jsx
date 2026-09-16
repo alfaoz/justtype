@@ -1,4 +1,6 @@
+import { TextMorph } from './TextMorph';
 import React from 'react';
+import { Ico } from './icons';
 
 /**
  * The writer's settings row: the text controls that open from the three-dot
@@ -10,7 +12,8 @@ import React from 'react';
  * Control model, built in Writer.jsx:
  *   { device: [...], slate: [...], actions: [...] }
  *   control = { id, label, value, options?, kind: 'cycle'|'toggle'|'menu'|'action',
- *               onCycle?, onClick?(e), onOpen?(e), active?, pulse? }
+ *               onCycle?, onClick?(e), onOpen?(e), active?, activeColor?, pulse?, icon? }
+ * Settings sit a dot apart; actions, being separate things, sit a bar apart.
  */
 
 const btnBase = 'transition-colors duration-200 hover:opacity-70 text-sm whitespace-nowrap';
@@ -31,21 +34,22 @@ function joined(items, sep) {
 }
 
 export function SettingsRow({ controls }) {
-  const groups = [controls.device, controls.slate, controls.actions].filter((g) => g.length);
+  const groups = [[controls.device, <Sep />], [controls.slate, <Sep />], [controls.actions, <Bar />]].filter(([g]) => g.length);
   return joined(
-    groups.map((items, gi) => (
+    groups.map(([items, sep], gi) => (
       <React.Fragment key={gi}>
         {joined(items.map((c) => (
           <button
             key={c.id}
             onClick={(e) => (c.kind === 'action' ? c.onClick?.(e) : c.kind === 'menu' ? c.onOpen?.(e) : c.onCycle?.(e))}
-            className={`${btnBase} ${c.pulse ? 'feature-pulse' : ''}`}
-            style={{ color: c.active ? 'rgb(167 139 250)' : 'var(--theme-accent)' }}
+            className={`${btnBase} inline-flex items-center gap-1.5 ${c.pulse ? 'feature-pulse' : ''}`}
+            style={{ color: c.active ? (c.activeColor || 'rgb(167 139 250)') : 'var(--theme-accent)' }}
             {...(c.id === 'theme' ? { 'data-theme-picker': true } : {})}
           >
-            {controlLabel(c)}
+            {c.icon && <Ico of={c.icon} className="w-3.5 h-3.5" />}
+            <TextMorph>{controlLabel(c)}</TextMorph>
           </button>
-        )), <Sep />)}
+        )), sep)}
       </React.Fragment>
     )),
     <Bar />
