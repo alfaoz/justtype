@@ -12,6 +12,7 @@ const pref = makePref({
   values: ['on', 'off'],
   fallback: () => (media?.matches ? 'off' : 'on'),
   attr: 'motion',
+  inApp: false,
 });
 
 export const getMotion = pref.get;

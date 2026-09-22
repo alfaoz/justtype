@@ -6,7 +6,7 @@
 // the invitee's drop-box public key while an invite is pending. Everything the
 // server relays or stores stays opaque.
 
-import { API_URL } from './config';
+import { API_URL, PUBLIC_URL } from './config';
 import {
   generateSlateKey, wrapKey, unwrapKey, encryptContent, decryptContent,
   encryptTitle, decryptTitle, encryptTags, decryptTags, importAppPublicKey, wrapKeyToAppKey, unwrapKeyRsa
@@ -125,7 +125,7 @@ export const fragmentToKey = (s) =>
 
 export async function createInviteLink(slateNumber, docKey) {
   const { token, expires_at } = await api(`/slates/${encodeURIComponent(slateNumber)}/collab/links`, { body: {} });
-  return { url: `${window.location.origin}/join/${token}#k=${keyToFragment(docKey)}`, expiresAt: expires_at };
+  return { url: `${PUBLIC_URL}/join/${token}#k=${keyToFragment(docKey)}`, expiresAt: expires_at };
 }
 
 export function revokeInviteLink(slateNumber) {

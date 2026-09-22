@@ -26,7 +26,9 @@ export function HoverNote({ children, note, className = '', plain = false }) {
 
   const updatePos = (e) => setPos({ x: e.clientX, y: e.clientY });
 
+  // A finger has no hover: a tap never opens the note
   const handleEnter = (e) => {
+    if (e.pointerType !== 'mouse') return;
     updatePos(e);
     timeoutRef.current = setTimeout(() => setShow(true), 200);
   };
@@ -52,9 +54,9 @@ export function HoverNote({ children, note, className = '', plain = false }) {
 
   return (
     <span
-      onMouseEnter={handleEnter}
-      onMouseMove={updatePos}
-      onMouseLeave={handleLeave}
+      onPointerEnter={handleEnter}
+      onPointerMove={updatePos}
+      onPointerLeave={handleLeave}
       className={`${plain ? 'inline-flex items-center' : 'cursor-help underline decoration-dotted underline-offset-4 decoration-[var(--theme-text-dim)]'} hover:text-[var(--theme-accent)] transition-colors ${className}`}
     >
       {children}

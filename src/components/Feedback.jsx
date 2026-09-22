@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API_URL } from '../config';
 import { strings } from '../strings';
 import { PageHeader } from './PageHeader';
+import { canNativePill, setNativePillAction } from '../shellMenu';
 
 export function Feedback({ token, username, email }) {
   const [message, setMessage] = useState('');
@@ -46,6 +47,24 @@ export function Feedback({ token, username, email }) {
   const wordCount = message.trim() ? message.trim().split(/\s+/).length : 0;
   const signedIn = token && token !== 'checking';
 
+  // In the app, send sits in the pill's place and back in the bar (App.jsx)
+  const submitRef = useRef(null);
+  submitRef.current = () => handleSubmit({ preventDefault() {} });
+  const canSend = signedIn && !submitted;
+  const empty = !message.trim();
+  useEffect(() => {
+    if (!canNativePill) return;
+    setNativePillAction(canSend
+      ? { id: 'feedback:send', label: loading ? strings.feedback.sending : strings.feedback.submit, disabled: loading || empty }
+      : {});
+  }, [canSend, loading, empty]);
+  useEffect(() => {
+    if (!canNativePill) return undefined;
+    const on = (e) => { if ((e.detail?.id ?? e.id) === 'feedback:send') submitRef.current(); };
+    window.addEventListener('shell:nav', on);
+    return () => { window.removeEventListener('shell:nav', on); setNativePillAction({}); };
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
       <PageHeader label={strings.feedback.title} onHome={goBack} />
@@ -65,7 +84,7 @@ export function Feedback({ token, username, email }) {
             <p className="text-xs text-[var(--theme-text-dim)] mt-8">{strings.feedback.loggedOut.orLogin}</p>
             <button
               onClick={goBack}
-              className="text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors mt-8"
+              className="native-hidden text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors mt-8"
             >
               {strings.feedback.thankYou.back}
             </button>
@@ -77,7 +96,7 @@ export function Feedback({ token, username, email }) {
             <p className="text-sm leading-relaxed max-w-md mb-10">{strings.feedback.thankYou.message}</p>
             <button
               onClick={goBack}
-              className="text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
+              className="native-hidden text-sm text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors"
             >
               {strings.feedback.thankYou.back}
             </button>
@@ -116,7 +135,7 @@ export function Feedback({ token, username, email }) {
 
               {error && <p className="text-red-400 text-xs mb-4">{error}</p>}
 
-              <div className="flex items-center justify-between">
+              <div className="native-hidden flex items-center justify-between">
                 <button
                   type="button"
                   onClick={goBack}

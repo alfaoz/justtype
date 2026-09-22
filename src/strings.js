@@ -12,6 +12,8 @@ const strings = {
       account: 'account',
       login: 'login / sign-up'
     },
+    // The word that puts the keyboard away, in the iOS shell
+    keyboardDone: 'done',
     hints: {
       toggleTip: 'tip: use the toggle to switch between writer and slates'
     }
@@ -106,6 +108,10 @@ const strings = {
       lockIt: 'lock it',
       newSecretTitle: 'choose a new pin or passphrase',
       forgot: 'forgot it?',
+      // The phone's own way in (the app only): face id or touch id types the secret
+      device: { face: 'face id', touch: 'touch id' },
+      useDevice: (word) => `use ${word}`,
+      deviceReason: 'open this slate',
       next: 'next',
       wrong: 'that did not open it',
       wrongPhrase: 'that is not the recovery key of this account',
@@ -193,6 +199,8 @@ const strings = {
       expiry: { never: 'never', day: 'a day', week: 'a week', month: 'a month' },
       copy: 'copy',
       copied: 'copied',
+      // On a phone the link goes out through the share sheet instead
+      send: 'share',
       failed: 'sharing failed',
     },
     publishMenu: {
@@ -231,6 +239,7 @@ const strings = {
       },
       version: (v) => `version ${v}`,
       versionNote: 'nice.', // 4.2.0 only
+      giveFeedback: 'give feedback',
       close: 'close'
     },
     // mobile sheet
@@ -241,6 +250,8 @@ const strings = {
       counterOn: 'counter on',
       counterOff: 'counter off',
       exportSlate: 'export slate',
+      copyLink: 'copy link',
+      sync: 'sync',
       sections: {
         sharing: 'sharing'
       }
@@ -388,6 +399,7 @@ const strings = {
   // e2ee collaborative slates
   collab: {
     menuButton: 'collab',
+    menuButtonHistory: 'collab & history',
     // Shown when collab is opened on a brand new slate with nothing in it: the
     // slate has to be saved first, and an empty one cannot be.
     needsContent: 'write something first',
@@ -489,6 +501,8 @@ const strings = {
       qrLabel: 'connection code',
       copy: 'copy code',
       copied: 'copied',
+      share: 'send the code',
+      scan: 'scan with the camera',
       network: {
         title: 'the devices cannot reach each other. put both on the same wi-fi:',
         mac: 'mac: system settings → general → sharing → internet sharing, share to wi-fi.',
@@ -534,11 +548,6 @@ const strings = {
       by: (owner) => `by: ${owner}`,
       leave: 'leave',
       leaveConfirm: 'sure?'
-    },
-    filter: {
-      label: 'show:',
-      all: 'all',
-      collab: 'collab'
     },
     badge: 'collab',
     presence: {
@@ -1268,18 +1277,6 @@ take care!
     },
     authFooter: (v) => `v${v}`,
     authFooterVerify: 'verify',
-  },
-
-  // cli page
-  cli: {
-    tagline: 'justtype for your terminal',
-    description: 'works offline. login to sync.',
-    install: 'curl -fsSL https://justtype.io/cli/install.sh | bash',
-    copied: 'copied!',
-    copy: 'copy',
-    copyAction: 'click to copy',
-    platforms: 'linux and macos',
-    github: 'github'
   },
 
   status: {

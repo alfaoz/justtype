@@ -1183,3 +1183,252 @@ body.custom-theme ::-webkit-scrollbar-track {
   .print-root .cm-lp-copy { display: none; }
   .print-root .print-break { break-after: page; page-break-after: always; }
 }
+
+/* The header carries the top safe area: inside the iOS shell the page runs
+   edge to edge under the status bar, so the header grows by that inset and
+   its own background fills the space. In a browser the inset is zero and
+   nothing changes. */
+.app-header { padding-top: calc(1rem + env(safe-area-inset-top)); }
+@media (min-width: 768px) { .app-header { padding-top: calc(2rem + env(safe-area-inset-top)); } }
+
+/* Inside the iOS shell (src/shell.js). --kb is the keyboard's height while it
+   is up, else 0. The header steps aside: its words move to the shell bar at
+   the bottom, where the thumb is. */
+html[data-shell] .app-header { display: none; }
+/* The pages' own header (what's new, terms) steps aside too; what follows
+   it starts under the status bar */
+html[data-shell] .page-header { display: none; }
+html[data-shell] .page-header + * {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: calc(max(var(--kb, 0px), env(safe-area-inset-bottom)) + 5rem);
+}
+/* Overlays keep clear of the status bar and the keyboard */
+html[data-shell] .fixed.inset-0.p-4 {
+  padding-top: calc(1rem + env(safe-area-inset-top));
+  padding-bottom: calc(1rem + max(env(safe-area-inset-bottom), var(--kb, 0px)));
+}
+/* The writer's page keeps its last lines above the keyboard */
+/* Pages keep their last rows clear of the capsules (and the keyboard) */
+html[data-shell] .app-main .overflow-y-auto > .max-w-4xl { padding-bottom: calc(max(var(--kb, 0px), env(safe-area-inset-bottom)) + 4.5rem); }
+/* The writer scrolls down to where the keyboard begins (not the screen's
+   foot), so the caret is never behind it. The last line can scroll up
+   past the dock: that room is the column's own padding, and the rich
+   editor's column grows with its text for it to land after the last line
+   (stretched to the page's height, the padding sat inside that). The plain
+   editor is a textarea that scrolls itself, so it keeps its full height. */
+html[data-shell] .writer-main { margin-bottom: var(--kb, 0px); }
+/* Enough for the last line to rest just above the pills */
+html[data-shell] .writer-column { padding-bottom: calc(env(safe-area-inset-bottom) + 6rem); }
+html[data-shell] .writer-main > div.writer-column { align-self: flex-start; }
+
+/* The phone's pill: a thumb's width above the bottom edge in a browser. In
+   the shell it sits on the safe-area line, where iOS keeps its own floating
+   controls, and rides up to rest on the keyboard while that is up. */
+.writer-pill { bottom: calc(1rem + env(safe-area-inset-bottom)); }
+html[data-shell] .writer-pill,
+html[data-shell] .shell-bar { bottom: max(env(safe-area-inset-bottom), calc(var(--kb, 0px) + 12px)); }
+/* With the header aside, the views take the top safe area themselves */
+html[data-shell] .app-main { padding-top: env(safe-area-inset-top); }
+/* The side panels (collab, share) are sheets in the app on a phone: they
+   rise from the bottom under the status bar, the page dimmed above them, a
+   grabber on top (src/sheetDrag.jsx lets the pull on it close the sheet).
+   Wider, on an iPad, they stay the side panel beside the page. */
+@media (max-width: 767px) {
+  html[data-shell] .collab-panel {
+    top: calc(env(safe-area-inset-top) + 10px);
+    border: 0;
+    border-radius: 16px 16px 0 0;
+    padding-top: 14px;
+    box-shadow: 0 -1px 0 var(--theme-border), 0 -12px 40px rgba(0, 0, 0, 0.35);
+    animation: sheetIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  html[data-shell] .collab-panel[data-closing='true'] { animation: sheetOut 0.22s cubic-bezier(0.4, 0, 1, 1) forwards; }
+  html[data-shell] .collab-panel[data-leaving='true'] { animation: none; }
+  html[data-shell] .collab-panel::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 5px;
+    margin-left: -18px;
+    border-radius: 3px;
+    background: var(--theme-text-dim);
+    opacity: 0.5;
+  }
+}
+@media (min-width: 768px) {
+  .sheet-backdrop { display: none; }
+}
+
+/* The sheet's last row clears the home indicator (and the keyboard) */
+html[data-shell] .collab-panel-inner { padding-bottom: max(var(--kb, 0px), env(safe-area-inset-bottom)); }
+/* A version's text takes the room it needs; its actions follow right under */
+html[data-shell] .history-preview { flex: 0 1 auto; }
+/* The sheet's close and its first action wear the app's glass, like the pill
+   and its save button */
+html[data-shell] .sheet-close {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--theme-text);
+  background: color-mix(in srgb, var(--theme-text) 9%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-text) 14%, transparent), inset 0 0 0 0.5px color-mix(in srgb, var(--theme-text) 12%, transparent);
+}
+html[data-shell] .sheet-secondary {
+  min-height: 44px;
+  border-radius: 999px;
+  border-color: transparent;
+  color: var(--theme-text);
+  background: color-mix(in srgb, var(--theme-text) 9%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-text) 14%, transparent), inset 0 0 0 0.5px color-mix(in srgb, var(--theme-text) 12%, transparent);
+}
+/* A slate just made public: on a phone the card rests at the bottom, where
+   the thumb is, rounded like the sheets */
+@media (max-width: 767px) {
+  html[data-shell] .publish-overlay { align-items: flex-end; }
+  html[data-shell] .publish-card {
+    margin: 0; /* the overlay's padding already clears the home indicator */
+    border-radius: 24px;
+  }
+  html[data-shell] .publish-card > .rounded { border-radius: 12px; }
+}
+/* The nearby tab in the app: the code big and centred, the choices and the
+   next step as buttons a thumb finds */
+html[data-shell] .nearby-qr { width: min(100%, 17rem); height: auto; align-self: center; border-radius: 16px; }
+html[data-shell] .nearby-choice {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--theme-text) 9%, transparent);
+}
+html[data-shell] .nearby-next {
+  align-self: stretch;
+  min-height: 44px;
+  border-radius: 999px;
+  background: var(--theme-text);
+  color: var(--theme-bg);
+}
+/* The one destructive action (delete account) in the same glass, tinted */
+html[data-shell] .sheet-danger {
+  min-height: 44px;
+  border-radius: 999px;
+  color: #f87171;
+  background: color-mix(in srgb, #ef4444 16%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #f87171 22%, transparent), inset 0 0 0 0.5px color-mix(in srgb, #f87171 28%, transparent);
+}
+/* The account's closing pair: export takes the room on one line, sign out
+   keeps to its word */
+html[data-shell] .account-actions > button { margin-left: 0; white-space: nowrap; }
+html[data-shell] .account-actions > button:first-child { flex: 1 1 auto; }
+html[data-shell] .account-actions > button:nth-child(2) { flex: 0 0 auto; padding-inline: 1.25rem; }
+
+
+/* Sign in, on a phone in the app: the whole screen, like the system's own
+   sign-in pages. The glass close replaces `cancel`; fields are big enough for
+   a thumb and 16px so iOS does not zoom; the placeholders name them (the
+   labels stay for VoiceOver); login is the filled button, google its glass
+   partner. The forgot/verify steps share the sheet. */
+@media (max-width: 767px) {
+  html[data-shell] .auth-overlay { padding: 0 !important; background: var(--theme-bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  html[data-shell] .auth-card {
+    max-width: none;
+    min-height: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--theme-bg);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: calc(env(safe-area-inset-top) + 4rem) 1.5rem calc(max(var(--kb, 0px), env(safe-area-inset-bottom)) + 1.5rem);
+  }
+  html[data-shell] .auth-card > h2 { font-size: 1.75rem; margin-bottom: 1.75rem; }
+  html[data-shell] .auth-card > .sheet-close { position: absolute; top: calc(env(safe-area-inset-top) + 0.75rem); right: 1rem; }
+  html[data-shell] .auth-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  html[data-shell] .auth-input { font-size: 16px; border-radius: 14px; padding: 0.95rem 1.1rem; }
+  html[data-shell] .auth-card .sheet-primary, html[data-shell] .auth-card .sheet-secondary { min-height: 50px; }
+  html[data-shell] .auth-or { background: var(--theme-bg); }
+}
+html[data-shell] .sheet-primary {
+  min-height: 44px;
+  border-radius: 999px;
+  background: var(--theme-text);
+  color: var(--theme-bg);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 4px 14px rgb(0 0 0 / 18%);
+}
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.4);
+  animation: sheetDim 0.3s ease-out;
+}
+.sheet-backdrop[data-closing='true'] { animation: sheetDim 0.22s ease-in reverse forwards; }
+@keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes sheetOut { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@keyframes sheetDim { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-shell] .collab-panel,
+  html[data-shell] .collab-panel[data-closing='true'],
+  .sheet-backdrop { animation-duration: 0.01ms; }
+}
+/* A view arriving in the shell settles the way the app's cards do */
+html[data-shell] .animate-slide-down { animation-duration: 0.32s; animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }
+html[data-shell] .writer-enter { opacity: 0; transform: translateY(-20px); }
+/* A slate's text arrives the way the pages do in the app */
+html[data-shell] .writer-arrive { animation: slideDown 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+/* No transform once in, so the writer's fixed parts keep to the screen */
+html[data-shell] .writer-enter.writer-entered { opacity: 1; transform: none; transition: opacity 0.32s cubic-bezier(0.16, 1, 0.3, 1), transform 0.32s cubic-bezier(0.16, 1, 0.3, 1); }
+/* Chrome is not text: a long press selects nothing but what is written */
+html[data-shell] body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+html[data-shell] :is(input, textarea, [contenteditable], .cm-content, .wysiwyg-editor, pre, .print-root) { -webkit-user-select: text; user-select: text; }
+/* The phone draws its own pill (ShellPillPlugin) where this one would be */
+html[data-shell][data-native-pill] .writer-pill { display: none; }
+html[data-shell][data-native-pill] .new-slate-button { display: none; }
+/* An iPad writes across the screen: the column loses its cap and keeps
+   margins that grow with the width */
+html[data-shell][data-device='pad'] .writer-column { max-width: none; padding-inline: clamp(2rem, 6vw, 5rem); }
+/* Controls the phone draws in its own dock (feedback's back and send) */
+html[data-shell][data-native-bar] .native-hidden { display: none; }
+html[data-shell][data-native-bar] .shell-bar { display: none; }
+
+/* Native chrome owns the footer in both orientations, including wide phones. */
+html[data-shell][data-native-pill] .writer-desktop-footer { display: none; }
+
+/* Donation and developer links stay out of the mobile account UI. */
+.native-only { display: none; }
+html[data-shell][data-native-bar] .native-only { display: block; }
+html[data-shell] .mobile-hidden { display: none; }
+@media (max-width: 767px), (pointer: coarse) {
+  .mobile-hidden { display: none; }
+}
+
+/* A translucent glass capsule for the list's primary mobile action. */
+html[data-shell] .new-slate-button {
+  border-radius: 999px;
+  min-height: 44px;
+  background: color-mix(in srgb, var(--theme-text) 7%, color-mix(in srgb, var(--theme-bg) 75%, transparent));
+  border-color: color-mix(in srgb, var(--theme-text) 16%, transparent);
+  color: var(--theme-text);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-text) 10%, transparent), 0 6px 20px rgb(0 0 0 / 10%);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .new-slate-button {
+    border-radius: 999px;
+    min-height: 44px;
+    background: color-mix(in srgb, var(--theme-text) 7%, color-mix(in srgb, var(--theme-bg) 75%, transparent));
+    border-color: color-mix(in srgb, var(--theme-text) 16%, transparent);
+    color: var(--theme-text);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-text) 10%, transparent), 0 6px 20px rgb(0 0 0 / 10%);
+  }
+}

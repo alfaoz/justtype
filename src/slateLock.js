@@ -23,6 +23,7 @@ import {
 import { cacheSlate, getCachedSlate, queuePending, cacheList, getCachedList } from './offlineStore';
 import { isOnline } from './connectivity';
 import { rekeyHistory, commitHistory } from './history';
+import { rememberSecret, forgetSecret } from './deviceUnlock';
 
 export const MIN_SECRET_LENGTH = 4;
 const IDLE_MS = 5 * 60 * 1000;
@@ -108,6 +109,8 @@ export async function unlockSlate(slateNumber, secret, slate) {
     throw new Error('wrong');
   }
   hold(slateNumber, docKey);
+  // Typed on the phone: face id can type it next time
+  rememberSecret(slateNumber, secret);
   return docKey;
 }
 
@@ -367,6 +370,7 @@ export async function saveLockChange({ userId, slateNumber, content, masterKey, 
   }).catch(() => {});
   if (rekeyed) commitHistory(userId, slateNumber, rekeyed.entries, rekeyed.blob);
   if (lockOn) openKeys.set(String(slateNumber), key); else openKeys.delete(String(slateNumber));
+  if (lockOn) rememberSecret(slateNumber, secret); else forgetSecret(slateNumber);
   touchLock();
   emit({ type: lockOn ? 'locked' : 'unlocked', slateNumber, updatedAt: data.updated_at ?? null, encryptedContent: body.encryptedContent, lockFields });
   return { body, data, docKey: key, lockFields };

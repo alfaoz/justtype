@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
-import { API_URL } from '../config';
+import { API_URL, PUBLIC_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
@@ -26,6 +26,9 @@ import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePend
 import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
+import { canNativeMenu, canNativePill, setNativePill, hideNativePill, nativeStatusColor, nativeExportText, nativeExportPDF, canShareLink, shareLink } from '../shellMenu';
+import { inShell } from '../shell';
+import { biometry, hasSecret, readSecret, forgetSecret } from '../deviceUnlock';
 import { SunIcon, SizeIcon, EyeIcon, HashIcon, PenIcon, PeopleIcon, ClockIcon, LinkIcon } from './icons';
 import { LockPanel } from './LockPanel';
 import { LockRecoverModal } from './LockRecoverModal';
@@ -57,9 +60,15 @@ const loadCollabChunk = () => (collabChunk ||= import('./CollabEditor'));
 // may have rich slates waiting; anyone whose local draft is rich certainly
 // does. For a first-time anonymous visitor (plain textarea, no slates) there is
 // nothing to preload, so they are not charged for it.
+// A new slate's editor: the one last chosen for a draft, else rich, which is
+// where newcomers (and phones) start
+const draftMode = () => {
+  try { return localStorage.getItem('justtype-draft-mode') === 'plain' ? 'plain' : 'wysiwyg'; } catch { return 'wysiwyg'; }
+};
+
 const richEditorLikely = () => {
   try {
-    return localStorage.getItem('justtype-draft-mode') === 'wysiwyg'
+    return draftMode() === 'wysiwyg'
       || !!localStorage.getItem('justtype-username');
   } catch (e) {
     return false;
@@ -92,13 +101,25 @@ const CollabPanelLazy = React.lazy(() => import('./CollabPanel'));
 
 /** A link inside the about card: white, and always a new tab so the modal (and
  *  whatever is unsaved behind it) is never navigated away from. */
-function AboutLink({ href, children }) {
+// The app says which build it is: the same version, marked -m
+const shownVersion = inShell ? `${VERSION}-m` : VERSION;
+
+function AboutLink({ href, children, className = 'text-[var(--theme-accent)] hover:underline underline-offset-2 transition-colors' }) {
+  // The app has no second tab: its own pages open in place (a new tab would
+  // go to iOS as a capacitor:// address nothing can open)
+  const inPlace = (e) => {
+    if (!inShell || !href.startsWith('/')) return;
+    e.preventDefault();
+    window.history.pushState({}, '', href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-[var(--theme-accent)] hover:underline underline-offset-2 transition-colors"
+      onClick={inPlace}
+      className={className}
     >
       {children}
     </a>
@@ -127,7 +148,7 @@ function SheetRow({ label, value, accent, onClick, highlight }) {
  */
 function EditorSkeleton({ text, punto }) {
   return (
-    <div className={`w-full max-w-3xl p-8 leading-relaxed whitespace-pre-wrap punto-${punto}`}>
+    <div className={`writer-column w-full max-w-3xl p-8 leading-relaxed whitespace-pre-wrap punto-${punto}`}>
       {text || ''}
     </div>
   );
@@ -201,7 +222,7 @@ async function pullAppEdits(slateNumber, masterKey) {
 // Tags of a loaded slate sit under its doc key when it is collaborative
 const collabDocKeyRefForTags = (data, slateKey) => (data.is_collab && data.collab_wrapped_key ? unwrapKey(data.collab_wrapped_key, slateKey) : slateKey);
 
-export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null, onOpenAsNewSlate }, ref) => {
+export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, onLogin, onZenModeChange, parentZenMode, onOpenAuthModal, sharedSlateId = null, onOpenAsNewSlate, onUnsavedDraft }, ref) => {
   const [content, setContent] = useState('');
   // Mirrors `content` for effects that must see the value as of *now* rather
   // than as of the render they closed over (see the slate-load effect below).
@@ -210,7 +231,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('ready');
   const [zenMode, setZenMode] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  // Opening on a slate starts loading, so the empty editor never shows first
+  const [isLoading, setIsLoading] = useState(() => Boolean(currentSlate && token && !sharedSlateId));
+  // That first load arrives with the text's own entrance, no cover fading
+  // over it; its "loading slate..." words wait, so a quick load never shows them
+  const openingLoadRef = useRef(Boolean(currentSlate && token && !sharedSlateId));
   // Caret memory, per device: where the caret and the scroll were when the
   // slate was last left, kept with the device copy and put back on open
   const mainRef = useRef(null);
@@ -227,6 +252,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const [editorMode, setEditorModeState] = useState('plain'); // 'plain' | 'wysiwyg' — a per-document setting
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const pillRef = useRef(null);
   // Drag-to-dismiss for the mobile sheet: how far it has been pulled down, and
   // whether a finger is currently on it (which turns the snap transition off so
   // the sheet tracks the finger exactly).
@@ -296,6 +322,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const [collabReloadKey, setCollabReloadKey] = useState(0);
   // null | 'people' | 'history' — the collab side panel and which tab it shows
   const [collabPanel, setCollabPanel] = useState(null);
+  // What the panel opened on: opened for history on a private slate it is
+  // history alone; opened for collab it has the people to invite
+  const collabOpenedOn = useRef(null);
+  if (!collabPanel) collabOpenedOn.current = null;
+  else if (!collabOpenedOn.current) collabOpenedOn.current = collabPanel;
   // Live handle into the collab editor ({ replaceText }) for history restores
   const collabApiRef = useRef(null);
   // Rooms are keyed by the slate's DB id (not the per-user slate_number)
@@ -466,10 +497,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     // Only restore if we're on a new slate (no currentSlate) and no content yet
     if (!currentSlate && !sharedSlateId && !content) {
-      // Restore the draft's editor mode preference too
-      if (localStorage.getItem('justtype-draft-mode') === 'wysiwyg') {
-        setEditorModeState('wysiwyg');
-      }
+      // The draft's editor mode too
+      setEditorModeState(draftMode());
       try {
         const savedDraft = localStorage.getItem('justtype-draft');
         if (savedDraft) {
@@ -480,8 +509,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             if (draft.title) setTitle(draft.title);
             draftRestoredRef.current = true;
             setHasUnsavedChanges(true);
-            setStatus(strings.writer.status.draftRestored);
-            setTimeout(() => setStatus('ready'), 3000);
+            if (!inShell && !window.matchMedia('(pointer: coarse)').matches) {
+              setStatus(strings.writer.status.draftRestored);
+              setTimeout(() => setStatus('ready'), 3000);
+            }
           }
         }
       } catch (e) {
@@ -1298,7 +1329,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setLockGate(gate);
       setLockPrompt(null);
       setEditorModeState(data.editor_mode === 'wysiwyg' ? 'wysiwyg' : 'plain');
-      setShareUrl(data.is_published ? `${window.location.origin}/s/${data.share_id}` : null);
+      setShareUrl(data.is_published ? `${PUBLIC_URL}/s/${data.share_id}` : null);
       setShareInfo({ private: !!data.share_private, wrappedKey: data.share_wrapped_key || null, passSalt: data.share_pass_salt || null, passWrappedKey: data.share_pass_wrapped_key || null, expiresAt: data.share_expires_at || null });
       shareKeyRef.current = null;
       setShareLink(null);
@@ -1308,9 +1339,14 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       lastSavedContentRef.current = JSON.stringify({ content: slateContent });
       loadedHadTextRef.current = !!(slateContent || '').trim();
       setHasUnsavedChanges(false);
-      setLoadingFadeOut(true);
       setContentFadeKey(prev => prev + 1);
-      setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
+      if (openingLoadRef.current) {
+        openingLoadRef.current = false;
+        setIsLoading(false);
+      } else {
+        setLoadingFadeOut(true);
+        setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
+      }
     } catch (err) {
       console.error('Failed to load slate:', err);
       setIsLoading(false);
@@ -1379,7 +1415,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
       localStorage.removeItem('justtype-draft');
-      setEditorModeState(localStorage.getItem('justtype-draft-mode') === 'wysiwyg' ? 'wysiwyg' : 'plain');
+      setEditorModeState(draftMode());
       setCollabDocKey(null);
       setCollabSlateDbId(null);
       setCollabPanel(null);
@@ -1474,6 +1510,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   };
 
+  const openAbout = () => {
+    if (inShell || window.matchMedia('(max-width: 767px), (pointer: coarse)').matches) {
+      document.activeElement?.blur?.();
+    }
+    setShowAboutModal(true);
+  };
   const closeAbout = () => withViewTransition(() => setShowAboutModal(false));
   // Escape closes whatever overlay is on top. The hook keeps a stack, so a
   // confirm layered over the collab panel dismisses only itself.
@@ -1871,12 +1913,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         if (loud) holdAnnouncement(3000);
       } else if (data.is_published && data.share_id) {
         // System slates that stay published
-        setShareUrl(`${window.location.origin}/s/${data.share_id}`);
+        setShareUrl(`${PUBLIC_URL}/s/${data.share_id}`);
         setStatus('saved');
         setTimeout(() => setStatus(strings.writer.status.published), 2000);
         if (loud) holdAnnouncement(2000);
       } else if (creating && data.slate_number != null) {
-        announceStatus(strings.writer.status.savedAs(data.slate_number));
+        const mobile = inShell || window.matchMedia('(max-width: 767px), (pointer: coarse)').matches;
+        announceStatus(mobile ? 'saved' : strings.writer.status.savedAs(data.slate_number), mobile ? 2000 : 3500);
       } else if (explicit) {
         announceStatus('saved', 2000);
       } else if (!quiet) {
@@ -2062,6 +2105,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   };
 
   const exportToTxt = () => {
+    if (canNativeMenu) {
+      setShowSaveMenu(false);
+      nativeExportText(content, `${title || 'slate'}.txt`).catch(() => announceStatus('export failed', 2500));
+      return;
+    }
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2076,7 +2124,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
   const exportToMarkdown = () => {
     const f = slateFactsRef.current || {};
-    const blob = new Blob([markdownOf({ title, text: content, created: f.created_at, updated: f.updated_at, tags: f.tags || [] }, frontMatter)], { type: 'text/markdown' });
+    const markdown = markdownOf({ title, text: content, created: f.created_at, updated: f.updated_at, tags: f.tags || [] }, frontMatter);
+    if (canNativeMenu) {
+      setShowSaveMenu(false);
+      nativeExportText(markdown, `${title || 'slate'}.md`).catch(() => announceStatus('export failed', 2500));
+      return;
+    }
+    const blob = new Blob([markdown], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2130,7 +2184,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         await new Promise(r => setTimeout(r, 50));
       }
       await document.fonts?.ready;
-      if (!cancelled) window.print();
+      if (!cancelled) {
+        if (canNativeMenu) {
+          try { await nativeExportPDF(`${title || 'slate'}.pdf`); }
+          catch { announceStatus('export failed', 2500); }
+          finally { done(); }
+        } else window.print();
+      }
     })();
     return () => {
       cancelled = true;
@@ -2581,6 +2641,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setLockGate(null);
     await loadSlate(gate.id);
   };
+  // On the phone, face id (or touch id) can type the gate's secret when this
+  // phone holds a copy of it (src/deviceUnlock.js)
+  const [gateDevice, setGateDevice] = useState(null);
+  useEffect(() => {
+    setGateDevice(null);
+    if (!lockGate) return undefined;
+    let live = true;
+    Promise.all([biometry(), hasSecret(lockGate.id)]).then(([kind, has]) => {
+      if (live && has && kind !== 'none') setGateDevice(strings.writer.lock.device[kind]);
+    });
+    return () => { live = false; };
+  }, [lockGate?.id]);
+  const handleLockGateDevice = async () => {
+    const gate = lockGateRef.current;
+    if (!gate) return;
+    const secret = await readSecret(gate.id, strings.writer.lock.deviceReason);
+    if (!secret) return;
+    try {
+      await handleLockGateSubmit({ secret });
+    } catch (err) {
+      // The secret was changed elsewhere: the copy goes, typing is the way in
+      if (err?.message === 'wrong') { forgetSecret(gate.id); setGateDevice(null); }
+      throw err;
+    }
+  };
   // Forgot it: a small modal takes the password (or the pin, or the phrase);
   // what it opens is the doc key, and the lock comes off the slate
   const [lockRecover, setLockRecover] = useState(null); // { ways, info }
@@ -2692,12 +2777,95 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       { id: 'editor', icon: PenIcon, label: 'editor', kind: 'cycle', value: strings.writer.editorMode.value(editorMode), options: ['plain', 'rich'], onCycle: toggleEditorMode, onSet: (v) => setEditorMode(v === 'rich' ? 'wysiwyg' : 'plain'), pulse: highlightNew },
     ].filter(Boolean),
     actions: [
-      token && { id: 'collab', icon: PeopleIcon, label: strings.collab.menuButton, kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
-      canHistory && { id: 'history', icon: ClockIcon, label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
+      // A collab slate's history is a tab of the collab panel: one button opens both
+      token && { id: 'collab', icon: PeopleIcon, label: collabDocKey && canHistory ? strings.collab.menuButtonHistory : strings.collab.menuButton, wide: !!(collabDocKey && canHistory), kind: 'action', onClick: () => { setSharePanel(false); openCollab('people'); }, active: !!collabDocKey, pulse: highlightNew },
+      canHistory && !(token && collabDocKey) && { id: 'history', icon: ClockIcon, label: strings.collab.history.button, kind: 'action', onClick: () => setCollabPanel('history') },
       token && !isShared && { id: 'share', icon: LinkIcon, label: 'share', kind: 'action', onClick: () => { setCollabPanel(null); setSharePanel(true); }, active: !!shareUrl, activeColor: 'rgb(96 165 250)' },
     ].filter(Boolean),
   };
 
+  // In the iOS shell the pill is the phone's own (ShellPillPlugin): it shows
+  // count and opens the native action panel. Settings carry their choices
+  // and current selection; the phone lays them out behind a disclosure.
+  // The page keeps the panel current and acts on what is picked.
+  const shellMenuItems = () => {
+    const pick = (c) => {
+      const options = c.options || ['on', 'off'];
+      const name = (o) => (c.id === 'theme' ? (getTheme(o)?.name || o) : o);
+      return { id: `set:${c.id}`, label: c.label, selector: true, children: options.map((o) => ({ id: `set:${c.id}:${o}`, label: name(o), checked: o === c.value })) };
+    };
+    return [
+      { inline: true, children: [
+        ...[...stripControls.device, ...stripControls.slate].filter((c) => c.id !== 'focus' && c.id !== 'size').map(pick),
+      ] },
+      { inline: true, children: [
+        { id: 'save', label: isShared ? strings.writer.buttons.export : strings.writer.buttons.save },
+        // A public slate edited since: its page catches up from here
+        ...(token && !isShared && wasPublishedBeforeEdit ? [{ id: 'share:sync', label: strings.writer.mobile.sync }] : []),
+        // Public or private lives in the share panel; share wears its colour while a link is out
+        ...stripControls.actions.map((c) => ({ id: `act:${c.id}`, label: c.label, ...(c.wide ? { wide: true } : {}), ...(c.active && c.activeColor ? { on: true } : {}) })),
+        // Keep the native action grid stable before a slate has history.
+        ...(!canHistory && token ? [{
+          id: 'act:history', label: strings.collab.history.button, disabled: true,
+          hint: !currentSlate ? 'Save this slate to use history.'
+            : isShared ? 'History is only available for your own slates.'
+              : lockGate ? 'Unlock this slate to use history.'
+                : isLocalSlateNumber(currentSlate.slate_number) ? 'Sync this slate to use history.'
+                  : 'History is not available for this slate yet.',
+        }] : []),
+      ] },
+      { inline: true, children: [
+        { id: 'export', label: strings.writer.mobile.exportSlate, children: [
+          { id: 'export:txt', label: strings.writer.buttons.exportTxt },
+          { id: 'export:md', label: strings.writer.buttons.exportMd },
+          { id: 'export:pdf', label: strings.writer.buttons.exportPdf },
+        ] },
+        { id: 'about', label: strings.writer.buttons.about },
+      ] },
+    ];
+  };
+  const onShellPick = (id) => {
+    const [kind, a, b] = id.split(':');
+    if (kind === 'set') {
+      const c = [...stripControls.device, ...stripControls.slate].find((x) => x.id === a);
+      c?.onSet?.(b);
+    } else if (kind === 'act') {
+      stripControls.actions.find((x) => x.id === a)?.onClick?.();
+    } else if (kind === 'save') {
+      if (isShared) setShowExportMenu(true);
+      else if (!token) onLogin();
+      else if (!content.trim() && !currentSlate) announceStatus('write something first', 2500);
+      else if (!hasUnsavedChanges && currentSlate) announceStatus('saved', 2000);
+      else saveSlate({ explicit: true });
+    } else if (kind === 'share') {
+      if (a === 'copy') { navigator.clipboard.writeText(shareUrl); setStatus(strings.writer.status.linkCopied); setTimeout(() => setStatus('ready'), 2000); }
+      else handlePublish();
+    } else if (kind === 'export') {
+      ({ txt: exportToTxt, md: exportToMarkdown, pdf: exportToPdf })[a]?.();
+    } else if (kind === 'about') {
+      openAbout();
+    }
+  };
+  // The latest handler, for the listener below (which is bound once)
+  const shellPickRef = useRef(onShellPick);
+  shellPickRef.current = onShellPick;
+  useEffect(() => {
+    if (!canNativePill) return undefined;
+    const on = (e) => { const id = e.detail?.id ?? e.id; if (id) shellPickRef.current(id); };
+    window.addEventListener('shell:pick', on);
+    return () => { window.removeEventListener('shell:pick', on); hideNativePill(); };
+  }, []);
+  // A new slate with words in it and no save yet: the app's dock offers its
+  // first save beside `done` (after that, saves are automatic)
+  const unsavedDraft = !currentSlate && !isShared && Boolean(token) && Boolean(content.trim());
+  useEffect(() => { onUnsavedDraft?.(unsavedDraft); }, [unsavedDraft]);
+  useEffect(() => () => onUnsavedDraft?.(false), []);
+  // Every render that changes what the pill says or offers reaches the phone
+  const shellPillState = canNativePill ? JSON.stringify({ label: showCounter ? strings.writer.mobile.words(wordCount) : '', dirty: Boolean(hasUnsavedChanges && token), status: status !== 'ready' ? status : '', statusColor: nativeStatusColor(statusTone(status)), items: shellMenuItems() }) : '';
+  useEffect(() => {
+    if (!canNativePill) return;
+    setNativePill(JSON.parse(shellPillState));
+  }, [shellPillState]);
   // Focus mode: the footer chrome fades out and comes back under the pointer.
   // The about/save group also folds to zero width so the status slot sits at
   // the right edge, and glides back left as the group unfolds; the left
@@ -2712,15 +2880,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     <div className="relative flex flex-col bg-[var(--theme-bg)] h-full overflow-hidden">
       {/* LOADING OVERLAY */}
       {isLoading && (
-        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : 'animate-[fadeIn_0.2s_ease-out]'}`}>
-          <div className="text-[var(--theme-text-dim)] text-sm animate-pulse">loading slate...</div>
+        <div className={`absolute inset-0 bg-[var(--theme-bg)] flex items-center justify-center z-50 transition-opacity duration-300 ${loadingFadeOut ? 'opacity-0' : openingLoadRef.current ? '' : 'animate-[fadeIn_0.2s_ease-out]'}`}>
+          <div className={`text-[var(--theme-text-dim)] text-sm ${openingLoadRef.current ? 'animate-[fadeIn_0.2s_ease-out_0.3s_both]' : 'animate-pulse'}`}>loading slate...</div>
         </div>
       )}
 
       {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
           instead of covering the text you are comparing against) */}
       <div className="flex-grow flex min-h-0 w-full">
-      <main ref={mainRef} key={contentFadeKey} className={`flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'animate-[fadeIn_0.3s_ease-out]' : ''}`}>
+      <main ref={mainRef} key={contentFadeKey} className={`writer-main flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'writer-arrive animate-[fadeIn_0.3s_ease-out]' : ''}`}>
         {lockGate || lockPrompt ? (
           <LockPanel
             key={lockGate ? `gate-${lockGate.id}` : 'setup'}
@@ -2732,6 +2900,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             onVerify={lockGate ? undefined : verifyLogin}
             onSubmit={lockGate ? handleLockGateSubmit : handleLockPromptSubmit}
             onForgot={lockGate && lockGate.slate?.lock_recovery_wrapped_key ? handleLockForgot : undefined}
+            device={lockGate ? gateDevice : null}
+            onDevice={handleLockGateDevice}
             onCancel={lockGate ? undefined : () => setLockPrompt(null)}
           />
         ) : collabDocKey && collabSlateDbId ? (
@@ -2779,7 +2949,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             onBlur={saveCaret}
             placeholder={strings.writer.contentPlaceholder}
             spellCheck={false}
-            className={`w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}${scrollMode === 'centered' ? ' pb-[50vh]' : ''}`}
+            className={`writer-column w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}${scrollMode === 'centered' ? ' pb-[50vh]' : ''}`}
           />
         )}
       </main>
@@ -2823,7 +2993,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             tab={collabPanel}
             onTabChange={setCollabPanel}
             onClose={() => setCollabPanel(null)}
-            solo={!collabDocKey && !isShared}
+            solo={!collabDocKey && !isShared && collabOpenedOn.current === 'history'}
             historySource={!collabDocKey && !isShared ? historySource : null}
             canHistory={canHistory}
             slateId={collabSlateDbId}
@@ -2881,7 +3051,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       </div>
 
       {/* DESKTOP FOOTER */}
-      <footer className="hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] relative group" onMouseEnter={() => setFooterHover(true)} onMouseLeave={() => setFooterHover(false)}>
+      <footer className="writer-desktop-footer hidden md:block px-8 py-4 border-t border-transparent bg-[var(--theme-bg)] relative group" onMouseEnter={() => setFooterHover(true)} onMouseLeave={() => setFooterHover(false)}>
         <div className="flex justify-between items-center gap-4 text-sm">
 
           {/* Left Controls */}
@@ -3003,7 +3173,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             )}
 
             <button
-              onClick={() => setShowAboutModal(true)}
+              onClick={openAbout}
               className="hover:text-white transition-colors duration-200"
             >
               {strings.writer.buttons.about}
@@ -3146,6 +3316,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           than a 24px glyph. Falls back to a plain menu glyph when the counter
           is switched off. */}
       <button
+        ref={pillRef}
         onClick={() => {
           if (triggerSwipeRef.current.opened) { triggerSwipeRef.current.opened = false; return; }
           openSheet();
@@ -3155,10 +3326,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         onPointerUp={endTriggerSwipe}
         onPointerCancel={endTriggerSwipe}
         aria-label={strings.writer.mobile.open}
-        className={`md:hidden fixed right-4 z-40 flex items-center gap-2 h-11 px-4 rounded-full bg-[var(--theme-bg-secondary)]/90 backdrop-blur border border-[var(--theme-border)] text-[var(--theme-text-muted)] shadow-lg active:scale-95 transition-all duration-200 touch-none ${
+        className={`writer-pill md:hidden fixed right-4 z-40 flex items-center gap-2 h-11 px-4 rounded-full bg-[var(--theme-bg-secondary)]/90 backdrop-blur border border-[var(--theme-border)] text-[var(--theme-text-muted)] shadow-lg active:scale-95 transition-all duration-200 touch-none ${
           showMobileMenu ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
-        style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
       >
         {showCounter && (
           <TextMorph className="text-sm tabular-nums">{strings.writer.mobile.words(wordCount)}</TextMorph>
@@ -3363,7 +3533,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
                 />
                 <SheetRow
                   label={strings.writer.buttons.about}
-                  onClick={() => { setShowMobileMenu(false); setShowAboutModal(true); }}
+                  onClick={() => { setShowMobileMenu(false); openAbout(); }}
                 />
               </div>
             </div>
@@ -3421,7 +3591,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             </div>
 
             {/* support */}
-            <div className="px-6 py-5 border-t border-[var(--theme-border)] bg-[var(--theme-bg)]">
+            <div className="mobile-hidden px-6 py-5 border-t border-[var(--theme-border)] bg-[var(--theme-bg)]">
               <p className="text-xs text-[var(--theme-text-dim)] leading-relaxed mb-4">
                 {strings.writer.about.support.body}{' '}
                 <a href="/limits" target="_blank" rel="noopener noreferrer" className="text-[var(--theme-text-muted)] hover:text-white underline underline-offset-2 transition-colors">
@@ -3439,16 +3609,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             <div className="px-6 py-3.5 border-t border-[var(--theme-border)] flex items-center gap-2 flex-wrap text-[11px] text-[var(--theme-text-dim)]">
               {/* 4.2.0 gets one word on hover, and only 4.2.0 */}
               {VERSION.startsWith('4.2.0') ? (
-                <HoverNote plain note={strings.writer.about.versionNote} className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</HoverNote>
+                <HoverNote plain note={strings.writer.about.versionNote} className="whitespace-nowrap">{strings.writer.about.version(shownVersion)}</HoverNote>
               ) : (
-                <span className="whitespace-nowrap">{strings.writer.about.version(VERSION)}</span>
+                <span className="whitespace-nowrap">{strings.writer.about.version(shownVersion)}</span>
               )}
-              <span className="opacity-40">·</span>
-              <VerifyBadge className="text-[var(--theme-text-dim)] hover:text-white transition-colors">verify</VerifyBadge>
-              <span className="opacity-40">·</span>
-              <a href="/status" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">status</a>
-              <span className="opacity-40">·</span>
-              <a href="/dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">developers</a>
+              <span className="mobile-hidden opacity-40">·</span>
+              <VerifyBadge className="mobile-hidden text-[var(--theme-text-dim)] hover:text-white transition-colors">verify</VerifyBadge>
+              <span className="mobile-hidden opacity-40">·</span>
+              <a href="/status" target="_blank" rel="noopener noreferrer" className="mobile-hidden hover:text-white transition-colors">status</a>
+              <span className="mobile-hidden opacity-40">·</span>
+              <a href="/dev" target="_blank" rel="noopener noreferrer" className="mobile-hidden hover:text-white transition-colors">developers</a>
+              <AboutLink href="/feedback" className="ml-auto whitespace-nowrap text-[var(--theme-text-muted)] hover:text-white transition-colors">{strings.writer.about.giveFeedback}</AboutLink>
             </div>
           </div>
         </div>
@@ -3456,40 +3627,50 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       {/* PUBLISH MODAL */}
       {showPublishModal && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => {
+        <div className="publish-overlay fixed inset-0 bg-black/30 backdrop-blur-md animate-modal-overlay flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => withViewTransition(() => {
           setShowPublishModal(false);
           setLinkCopied(false);
         })}>
-          <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
+          <div className="publish-card bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded animate-modal-content p-6 md:p-8 max-w-md w-full my-auto" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg md:text-xl text-white mb-4">your slate is now public!</h2>
             <p className="text-sm text-[var(--theme-text-muted)] mb-4">anyone with this link can view your slate:</p>
             <div className="bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded p-3 mb-6 break-all text-sm text-blue-400">
               {publishModalUrl}
             </div>
             <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(publishModalUrl);
-                  setStatus(strings.writer.status.linkCopied);
-                  setLinkCopied(true);
-                  setTimeout(() => setStatus('ready'), 2000);
-                  setTimeout(() => setLinkCopied(false), 2000);
-                }}
-                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium relative overflow-hidden"
-              >
-                <span className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${linkCopied ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'}`}>
-                  copied!
-                </span>
-                <span className={`transition-all duration-300 ${linkCopied ? 'opacity-0 translate-y-full' : 'opacity-100 translate-y-0'}`}>
-                  copy link
-                </span>
-              </button>
+              {/* On a phone the link goes out through the share sheet */}
+              {canShareLink ? (
+                <button
+                  onClick={(e) => shareLink(publishModalUrl, e.currentTarget)}
+                  className="sheet-primary flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
+                >
+                  {strings.writer.share.send}
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(publishModalUrl);
+                    setStatus(strings.writer.status.linkCopied);
+                    setLinkCopied(true);
+                    setTimeout(() => setStatus('ready'), 2000);
+                    setTimeout(() => setLinkCopied(false), 2000);
+                  }}
+                  className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium relative overflow-hidden"
+                >
+                  <span className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${linkCopied ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'}`}>
+                    copied!
+                  </span>
+                  <span className={`transition-all duration-300 ${linkCopied ? 'opacity-0 translate-y-full' : 'opacity-100 translate-y-0'}`}>
+                    copy link
+                  </span>
+                </button>
+              )}
               <button
                 onClick={() => withViewTransition(() => {
                   setShowPublishModal(false);
                   setLinkCopied(false);
                 })}
-                className="flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
+                className="sheet-secondary flex-1 border border-[var(--theme-border)] py-2 md:py-3 rounded hover:bg-[var(--theme-bg-tertiary)] hover:text-white transition-all text-sm"
               >
                 okay
               </button>

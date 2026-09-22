@@ -1,11 +1,12 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { EditorView, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
+import { EditorView, ViewPlugin, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
 import { EditorState, Compartment } from '@codemirror/state';
 import { history, defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
 import { markdownKeymap } from '@codemirror/lang-markdown';
 import { livePreview, richMarkdown } from './livePreview';
 import { strings } from '../strings';
+import { shellScrollMargins } from '../shell';
 
 // Shared extensions: GFM markdown (headings, emphasis, strikethrough, code,
 // quotes, links, lists, task lists, tables, hr, dollar math — no images/mermaid by design)
@@ -54,7 +55,9 @@ const keepCentered = (viewRef) => EditorView.updateListener.of((u) => {
     const scroller = scrollParent(v.dom);
     if (!c || !scroller) return;
     const mid = (c.top + c.bottom) / 2 - scroller.getBoundingClientRect().top;
-    const delta = mid - scroller.clientHeight / 2;
+    // In the iOS shell the keyboard covers the bottom of the scroller (--kb)
+    const kb = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--kb')) || 0;
+    const delta = mid - (scroller.clientHeight - kb) / 2;
     if (Math.abs(delta) < 2) return;
     scroller.scrollTo({ top: scroller.scrollTop + delta, behavior: 'smooth' });
   });
@@ -93,6 +96,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
         doc: lastContentRef.current,
         extensions: [
           ...baseExtensions({ reveal: true }),
+          shellScrollMargins(EditorView, ViewPlugin),
           highlightActiveLine(), // marks the caret's line for line focus (index.css)
           history(),
           drawSelection(),
@@ -152,7 +156,7 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
   return (
     <div
       ref={containerRef}
-      className={`wysiwyg-editor w-full max-w-3xl p-8 ${puntoClass} ${className}`}
+      className={`wysiwyg-editor writer-column w-full max-w-3xl p-8 ${puntoClass} ${className}`}
     />
   );
 });

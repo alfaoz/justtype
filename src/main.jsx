@@ -6,6 +6,7 @@ import './motion'; // mark the document with the device preferences before first
 import './scale';
 import './reading';
 import './cues';
+import './shell'; // the iOS shell's keyboard inset and page mark, a no-op in a browser
 import { applyThemeVariables, themeExists, deviceDefaultTheme } from './themes';
 
 // The theme's variables and body class before anything renders, so the
@@ -20,7 +21,7 @@ try {
 // The loader appends this bundle after the manifest fetch, so on a real
 // network the load event has usually fired already: register now in that
 // case, otherwise wait for it so the first paint is not competing with it.
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+if (import.meta.env.PROD && !import.meta.env.VITE_APP && 'serviceWorker' in navigator) {
   // This page is the app's, so the worker may open it from cache next time
   const claim = () => {
     const say = () => navigator.serviceWorker.controller?.postMessage({ type: 'app-route', path: window.location.pathname });

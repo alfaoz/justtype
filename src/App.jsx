@@ -8,8 +8,6 @@ import { ManageSubscription } from './components/ManageSubscription';
 import { NotFound } from './components/NotFound';
 import { WhatsNewModal } from './components/WhatsNewModal';
 import { CommandPalette } from './components/CommandPalette';
-import { CliPair } from './components/CliPair';
-import { Cli } from './components/Cli';
 import { DevPortal } from './components/DevPortal';
 import { AuthorizeShare } from './components/AuthorizeShare';
 import { Feedback } from './components/Feedback';
@@ -37,14 +35,38 @@ import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
 import { Ico, PenIcon, SlatesIcon, UserIcon } from './components/icons';
 import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
+import { inShell } from './shell';
+import { leftyMode } from './lefty';
+import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, restoreNativePill, startGoogleSignIn } from './shellMenu';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
 // Per release: a device that dismissed the last card must not silence this one
 const WHATS_NEW_SEEN_KEY = `justtype-whats-new-seen-${strings.whatsNewModal.version}`;
 
+
+// In the app the writer eases in like the other pages, so trading places with
+// my slates glides both ways. The writer is heavy to mount, and a CSS entrance
+// would spend itself before the first paint, so it starts two frames in. The
+// web keeps its writer as it was.
+function ShellWriterEnter({ children }) {
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    let second;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setEntered(true)); });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, []);
+  return <div className={`h-full writer-enter${entered ? ' writer-entered' : ''}`}>{children}</div>;
+}
+const WriterEnter = inShell ? ShellWriterEnter : ({ children }) => children;
+
 export default function App() {
-  const [view, setView] = useState('writer'); // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
+  // Every view change tells the phone's dock first (dockAheadRef, below): the
+  // page's own effects only run once the next view has rendered, and the
+  // writer takes long enough to render that the dock would change late.
+  const dockAheadRef = useRef(null);
+  const [view, setViewState] = useState('writer');
+  const setView = (next) => { dockAheadRef.current?.(next); setViewState(next); }; // 'writer' | 'slates' | 'account' | 'manage-subscription' | 'public' | 'notfound'
 
   // The tab title follows the view. The server puts the same words in the
   // html on first load (server/seo.js); the public viewer names its slate.
@@ -132,6 +154,77 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  // The iOS shell's keyboard: up or not (src/shell.js says)
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  // The writer holds a new slate with words and no first save yet
+  const [unsavedDraft, setUnsavedDraft] = useState(false);
+  const lefty = leftyMode.use();
+  useEffect(() => {
+    if (!inShell) return undefined;
+    const on = (e) => setKeyboardUp(e.detail.height > 0);
+    window.addEventListener('shell:keyboard', on);
+    return () => window.removeEventListener('shell:keyboard', on);
+  }, []);
+  // The phone's own bar at the bottom left (ShellBarPlugin): the header's
+  // words, or `done` while the keyboard is up; taps come back as shell:nav
+  const wordsFor = (view) => !canNativeBar ? null : keyboardUp
+    ? [{ id: 'done', label: strings.app.keyboardDone, active: true }]
+    // The feedback page's back takes the bar (its send takes the pill)
+    : view === 'feedback'
+      ? [{ id: 'back', label: strings.feedback.cancel, active: false }]
+    : token
+      // my slates sits next to the pill; lefty mirrors the pair
+      ? [
+        { id: 'account', label: strings.app.tabs.account, active: view === 'account' },
+        { id: 'toggle', label: view === 'writer' || view === 'shared' ? strings.app.tabs.slates : strings.app.tabs.writer, active: false },
+      ][lefty === 'on' ? 'reverse' : 'slice']()
+      : [{ id: 'login', label: strings.app.tabs.login, active: false }];
+  const barWords = wordsFor(view);
+  // A new slate's first save: its own pill beside done, on the inner side
+  // (after it, saves are automatic)
+  const companionFor = (view) => (keyboardUp && view === 'writer' && unsavedDraft ? { id: 'save', label: strings.writer.buttons.save } : null);
+  const barCompanion = companionFor(view);
+  const barKey = barWords ? JSON.stringify([barWords, barCompanion]) : '';
+  useEffect(() => { if (barWords) setNativeBar(barWords, lefty === 'on', barCompanion); }, [barKey, lefty]);
+  // The list has no writing menu: its `+ new slate` takes the pill's place.
+  // The feedback page keeps its own send there (Feedback.jsx).
+  useEffect(() => {
+    if (view === 'feedback') return;
+    setNativePillAction(view === 'slates' ? { id: 'new', label: strings.slates.newSlate } : {});
+  }, [view]);
+  // The same, sent the moment the view is set; the effects above repeat it
+  // once the page has rendered, which the phone takes as no change
+  dockAheadRef.current = (next) => {
+    if (next === view) return;
+    const words = wordsFor(next);
+    if (words) setNativeBar(words, lefty === 'on', companionFor(next));
+    if (next === 'feedback') return;
+    setNativePillAction(next === 'slates' ? { id: 'new', label: strings.slates.newSlate } : {});
+    // The writing menu takes the pill back straight away, as it last was
+    if (next === 'writer' || next === 'shared') restoreNativePill();
+  };
+  const navRef = useRef(null);
+  navRef.current = (id) => {
+    if (id === 'done') document.activeElement?.blur?.();
+    else if (id === 'toggle') handleToggleView();
+    else if (id === 'account') handleAccountToggle();
+    else if (id === 'login') setShowAuthModal(true);
+    else if (id === 'new') handleNewSlate();
+    // The same save as the writing menu's
+    else if (id === 'save') window.dispatchEvent(new CustomEvent('shell:pick', { detail: { id: 'save' } }));
+    else if (id === 'back') { window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }
+    else if (id === 'updates') markNotificationsRead();
+    else if (id.startsWith('update:')) {
+      const n = notifications.find(x => String(x.id) === id.slice(7));
+      if (n) openNotificationLink(n.link);
+    }
+  };
+  useEffect(() => {
+    if (!canNativeBar) return undefined;
+    const on = (e) => { const id = e.detail?.id ?? e.id; if (id) navRef.current(id); };
+    window.addEventListener('shell:nav', on);
+    return () => window.removeEventListener('shell:nav', on);
+  }, []);
   const notificationRef = useRef(null);
 
   // Initialize theme on mount - this ensures CSS variables are set for all pages
@@ -382,22 +475,48 @@ export default function App() {
     }
   }, [showNotifications]);
 
-  // Mark all as read when opening notifications
-  const handleOpenNotifications = async () => {
+  // Opening the list marks everything in it read
+  const markNotificationsRead = async () => {
+    const unread = notifications.filter(n => !n.is_read);
+    if (!unread.length) return;
+    await Promise.all(unread.map(n =>
+      fetch(`${API_URL}/notifications/${n.id}/read`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+    ));
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+    setUnreadCount(0);
+  };
+
+  const handleOpenNotifications = () => {
     setShowNotifications(!showNotifications);
-    if (!showNotifications && unreadCount > 0) {
-      // Mark all unread as read
-      const unread = notifications.filter(n => !n.is_read);
-      await Promise.all(unread.map(n =>
-        fetch(`${API_URL}/notifications/${n.id}/read`, {
-          method: 'POST',
-          credentials: 'include'
-        })
-      ));
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
-      setUnreadCount(0);
+    if (!showNotifications) markNotificationsRead();
+  };
+
+  const openNotificationLink = (link) => {
+    if (!link) return;
+    if (link.startsWith('/')) {
+      window.history.pushState({}, '', link);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } else {
+      window.open(link, '_blank');
     }
   };
+
+  // The pill's tray keeps its own copy of the list, so it opens at once
+  useEffect(() => {
+    if (!canNativePill) return;
+    setNativeUpdates({
+      title: token ? strings.notifications.title : '',
+      empty: strings.notifications.empty,
+      unread: unreadCount > 0,
+      items: notifications.map(n => ({
+        id: n.id, title: n.title, message: n.message, link: n.link || '',
+        date: new Date(n.created_at).toLocaleDateString(),
+      })),
+    });
+  }, [notifications, unreadCount, token]);
 
   // Check if viewing public slate or admin console or specific slate
   useEffect(() => {
@@ -464,10 +583,6 @@ export default function App() {
         }
       } else if (path === '/manage-subscription') {
         setView('manage-subscription');
-      } else if (path === '/pair') {
-        setView('cli-pair');
-      } else if (path === '/cli') {
-        setView('cli-info');
       } else if (path === '/authorize/share') {
         setView('authorize-share');
       } else if (path === '/login') {
@@ -1090,40 +1205,6 @@ export default function App() {
     return <NotFound />;
   }
 
-  // CLI Pair
-  if (view === 'cli-pair') {
-    return (
-      <div className="h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white flex flex-col overflow-hidden">
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
-          html, body, #root {
-            height: 100%;
-            overflow: hidden;
-          }
-          body {
-            font-family: 'IBM Plex Mono', monospace;
-            background-color: #111111;
-            margin: 0;
-            padding: 0;
-          }
-        `}</style>
-
-        <CliPair token={token} username={username} onLogin={() => setShowAuthModal(true)} />
-        {showAuthModal && (
-          <AuthModal
-            onClose={() => setShowAuthModal(false)}
-            onAuth={handleAuth}
-          />
-        )}
-      </div>
-    );
-  }
-
-  // CLI Info
-  if (view === 'cli-info') {
-    return <Cli />;
-  }
-
   // Consent-time share-all wrapping handoff (from /oauth/authorize/decide)
   if (view === 'authorize-share') {
     return <AuthorizeShare />;
@@ -1174,6 +1255,87 @@ export default function App() {
       </>
     );
   }
+
+  // Account: open it, or from it go back to the writer
+  const handleAccountToggle = async () => {
+    // Toggle: if already on account, go back to writer
+    if (view === 'account') {
+      if (lastSlateRef.current) {
+        setCurrentSlate(lastSlateRef.current);
+        window.history.pushState({}, '', `/slate/${lastSlateRef.current.slate_number}`);
+      } else {
+        window.history.pushState({}, '', '/');
+      }
+      setView('writer');
+      return;
+    }
+
+    // Save scroll position before switching
+    if (view === 'writer') {
+      const textarea = document.querySelector('textarea');
+      if (textarea) {
+        writerScrollRef.current = textarea.scrollTop;
+      }
+    }
+
+    if (writerRef.current) {
+      if (currentSlate) {
+        await writerRef.current.saveBeforeNavigate();
+      } else {
+        // Preserve blank slate content
+        const content = writerRef.current.getContent();
+        if (content) {
+          blankSlateContentRef.current = content;
+        }
+      }
+    }
+
+    // Remember current slate for returning
+    if (view === 'writer') {
+      lastSlateRef.current = currentSlate;
+    }
+
+    setView('account');
+    setZenMode(false);
+    window.history.pushState({}, '', '/account');
+  };
+
+  // The words that move between the views: writer/slates (one word that
+  // flips) and account, or login. The header carries them in a browser; in
+  // the iOS shell the header steps aside and they sit in the bar at the
+  // bottom, so both render this one piece.
+  const navWords = (
+    <>
+      {/* Toggle button for writer/slates */}
+      <button
+        onClick={handleToggleView}
+        className={`relative h-5 w-[calc(9ch+0.5rem)] ${icons === 'on' ? 'md:w-28' : 'md:w-24'} overflow-hidden hover:text-white transition-colors flex-shrink-0`}
+      >
+        <div
+          className={`absolute inset-0 flex flex-col transition-transform duration-150 ease-out ${
+            view === 'writer' || view === 'shared' ? '-translate-y-5' : 'translate-y-0'
+          }`}
+        >
+          <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={PenIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.writer}</span>
+          <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={SlatesIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
+        </div>
+      </button>
+      <button
+        onClick={handleAccountToggle}
+        className={`hover:text-white transition-colors ${view === 'account' ? 'text-white' : ''}`}
+      >
+        <Ico of={UserIcon} className="w-3.5 h-3.5 hidden md:inline-block mr-1.5 align-[-2px]" />{strings.app.tabs.account}
+      </button>
+    </>
+  );
+  const loginWord = (
+    <button
+      onClick={() => setShowAuthModal(true)}
+      className="hover:text-white transition-colors duration-200"
+    >
+      {strings.app.tabs.login}
+    </button>
+  );
 
   return (
     <div
@@ -1244,7 +1406,7 @@ export default function App() {
       `}</style>
 
       {/* HEADER */}
-      <header className={`p-4 md:p-8 flex justify-between items-center border-b border-[var(--theme-border-light)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
+      <header className={`app-header p-4 md:p-8 flex justify-between items-center border-b border-[var(--theme-border-light)] transition-opacity duration-500 ${zenMode ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
         <div className="flex items-center select-none">
           <button type="button" onClick={handleNewSlate} className="text-lg md:text-xl font-medium text-[var(--theme-text-muted)] hover:text-white transition-colors">
             {strings.app.logo}
@@ -1282,12 +1444,7 @@ export default function App() {
                             className={`p-3 border-b border-[var(--theme-border-light)] last:border-b-0 hover:bg-[var(--theme-bg-tertiary)] transition-colors ${n.link ? 'cursor-pointer' : ''}`}
                             onClick={() => {
                               if (n.link) {
-                                if (n.link.startsWith('/')) {
-                                  window.history.pushState({}, '', n.link);
-                                  window.dispatchEvent(new PopStateEvent('popstate'));
-                                } else {
-                                  window.open(n.link, '_blank');
-                                }
+                                openNotificationLink(n.link);
                                 setShowNotifications(false);
                               }
                             }}
@@ -1307,67 +1464,7 @@ export default function App() {
               </div>
               <span className="text-[var(--theme-text-muted)] hidden sm:inline">{strings.app.welcome(username)}</span>
               <span className="text-[var(--theme-border)] hidden sm:inline">|</span>
-              {/* Toggle button for writer/slates */}
-              <button
-                onClick={handleToggleView}
-                className={`relative h-5 w-[68px] ${icons === 'on' ? 'md:w-28' : 'md:w-24'} overflow-hidden hover:text-white transition-colors flex-shrink-0`}
-              >
-                <div
-                  className={`absolute inset-0 flex flex-col transition-transform duration-150 ease-out ${
-                    view === 'writer' || view === 'shared' ? '-translate-y-5' : 'translate-y-0'
-                  }`}
-                >
-                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={PenIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.writer}</span>
-                  <span className="h-5 flex items-center justify-center gap-1.5 whitespace-nowrap px-1 leading-5"><Ico of={SlatesIcon} className="w-3.5 h-3.5 hidden md:block" />{strings.app.tabs.slates}</span>
-                </div>
-              </button>
-              <button
-                onClick={async () => {
-                  // Toggle: if already on account, go back to writer
-                  if (view === 'account') {
-                    if (lastSlateRef.current) {
-                      setCurrentSlate(lastSlateRef.current);
-                      window.history.pushState({}, '', `/slate/${lastSlateRef.current.slate_number}`);
-                    } else {
-                      window.history.pushState({}, '', '/');
-                    }
-                    setView('writer');
-                    return;
-                  }
-
-                  // Save scroll position before switching
-                  if (view === 'writer') {
-                    const textarea = document.querySelector('textarea');
-                    if (textarea) {
-                      writerScrollRef.current = textarea.scrollTop;
-                    }
-                  }
-
-                  if (writerRef.current) {
-                    if (currentSlate) {
-                      await writerRef.current.saveBeforeNavigate();
-                    } else {
-                      // Preserve blank slate content
-                      const content = writerRef.current.getContent();
-                      if (content) {
-                        blankSlateContentRef.current = content;
-                      }
-                    }
-                  }
-
-                  // Remember current slate for returning
-                  if (view === 'writer') {
-                    lastSlateRef.current = currentSlate;
-                  }
-
-                  setView('account');
-                  setZenMode(false);
-                  window.history.pushState({}, '', '/account');
-                }}
-                className={`hover:text-white transition-colors ${view === 'account' ? 'text-white' : ''}`}
-              >
-                <Ico of={UserIcon} className="w-3.5 h-3.5 hidden md:inline-block mr-1.5 align-[-2px]" />{strings.app.tabs.account}
-              </button>
+              {navWords}
             </>
           ) : (
             <div className="flex items-center gap-3 md:gap-4">
@@ -1386,20 +1483,29 @@ export default function App() {
                   {strings.nudges.loginHeader}
                 </span>
               )}
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="hover:text-white transition-colors duration-200"
-              >
-                {strings.app.tabs.login}
-              </button>
+              {loginWord}
             </div>
           )}
         </div>
       </header>
 
+      {/* In the iOS shell the header's words live down here, at the thumb,
+          in the same capsule as the writer's pill; the pill sits to its right */}
+      {inShell && (
+        <div className="shell-bar fixed left-4 z-40 flex items-center gap-4 h-11 px-4 rounded-full bg-[var(--theme-bg-secondary)]/90 backdrop-blur border border-[var(--theme-border)] text-sm text-[var(--theme-text-muted)] shadow-lg">
+          {/* While the keyboard is up the capsule is the way to put it away */}
+          {keyboardUp ? (
+            <button onClick={() => document.activeElement?.blur?.()} className="hover:text-white transition-colors">
+              {strings.app.keyboardDone}
+            </button>
+          ) : (token ? navWords : loginWord)}
+        </div>
+      )}
+
       {/* MAIN CONTENT */}
-      <main className="flex-grow overflow-hidden">
+      <main className="app-main flex-grow overflow-hidden">
         {view === 'writer' && (
+          <WriterEnter>
           <Writer
             ref={writerRef}
             token={token}
@@ -1410,7 +1516,9 @@ export default function App() {
             onZenModeChange={setZenMode}
             onOpenAuthModal={() => setShowAuthModal(true)}
             onOpenAsNewSlate={handleOpenAsNewSlate}
+            onUnsavedDraft={setUnsavedDraft}
           />
+          </WriterEnter>
         )}
         {view === 'slates' && (
           <div className="h-full animate-slide-down">
@@ -1441,6 +1549,7 @@ export default function App() {
           </div>
         )}
         {view === 'shared' && sharedSlateId && (
+          <WriterEnter>
           <Writer
             key={`shared-${sharedSlateId}`}
             token={token}
@@ -1453,6 +1562,7 @@ export default function App() {
             sharedSlateId={sharedSlateId}
             onOpenAsNewSlate={handleOpenAsNewSlate}
           />
+          </WriterEnter>
         )}
         {view === 'account' && (
           <div className="h-full animate-slide-down">
@@ -1710,7 +1820,7 @@ export default function App() {
             <p className="text-sm text-[var(--theme-text-muted)] mb-6">{strings.pin.googleReauth.message}</p>
             <div className="flex gap-3">
               <button
-                onClick={() => { window.location.href = '/auth/google'; }}
+                onClick={startGoogleSignIn}
                 className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium"
               >
                 {strings.pin.googleReauth.button}

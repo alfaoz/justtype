@@ -19,7 +19,7 @@ export function PageHeader({ label, right, onHome, sticky = false }) {
 
   return (
     <header
-      className={`px-4 md:px-8 h-16 md:h-20 flex justify-between items-center border-b border-[var(--theme-border-light)] bg-[var(--theme-bg)] ${
+      className={`page-header px-4 md:px-8 h-16 md:h-20 flex justify-between items-center border-b border-[var(--theme-border-light)] bg-[var(--theme-bg)] ${
         sticky ? 'sticky top-0 z-30' : ''
       }`}
     >

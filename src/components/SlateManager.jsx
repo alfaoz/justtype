@@ -22,6 +22,7 @@ import { ChoiceRow } from './ChoiceRow';
 import { ScrollRow } from './ScrollRow';
 import { burnAway } from '../burn';
 import { fileAway } from '../archiveMotion';
+import { nativeMenu, canNativeMenu } from '../shellMenu';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -153,11 +154,20 @@ const menuItemCls = (danger) =>
 // The icon before a menu word: a shade quieter than the word itself
 const menuIcon = 'w-3.5 h-3.5 shrink-0 opacity-60';
 
+// The same icons as SF Symbols, for the menu the phone draws
+const menuSymbols = new Map([
+  [PinIcon, 'pin'], [UnpinIcon, 'pin.slash'], [ArrowUpIcon, 'arrow.up'], [ArrowDownIcon, 'arrow.down'],
+  [TagIcon, 'tag'], [CloudOffIcon, 'icloud.slash'], [CloudDownIcon, 'icloud.and.arrow.down'],
+  [GlobeIcon, 'globe'], [EyeOffIcon, 'eye.slash'], [LockIcon, 'lock'], [UnlockIcon, 'lock.open'],
+  [ArchiveIcon, 'archivebox'], [UnarchiveIcon, 'arrow.uturn.backward'], [TrashIcon, 'trash'],
+  [LeaveIcon, 'rectangle.portrait.and.arrow.right'],
+]);
+
 /**
  * Three dots that open a small menu: the slate rows have one, and in edit
  * mode every tag does.
  */
-function DotMenu({ isOpen, onToggle, children, small = false }) {
+function DotMenu({ isOpen, onToggle, items, small = false }) {
   // Near the bottom of the window the menu opens upward instead of running
   // off the page. Measured before paint, so it never shows in the wrong place.
   const wrapRef = useRef(null);
@@ -169,10 +179,18 @@ function DotMenu({ isOpen, onToggle, children, small = false }) {
     const h = menuRef.current.offsetHeight + 8;
     setOpenUp(window.innerHeight - r.bottom < h && r.top > h);
   }, [isOpen]);
+  // In the iOS shell the phone draws the menu: the same words, off the dots
+  const openNative = async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const id = await nativeMenu(wrapRef.current, items.map(({ id, label, danger, icon }) => ({ id, label, danger: Boolean(danger), symbol: menuSymbols.get(icon) || null })));
+    const hit = id && items.find(i => i.id === id);
+    if (hit) hit.onClick({ stopPropagation() {}, preventDefault() {} });
+  };
   return (
     <div ref={wrapRef} className="relative flex items-center flex-shrink-0">
       <button
-        onClick={onToggle}
+        onClick={canNativeMenu ? openNative : onToggle}
         className={`${small ? 'p-0.5' : 'p-1'} rounded hover:bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] transition-colors`}
         title={strings.slates.menu.more}
       >
@@ -205,17 +223,30 @@ function DotMenu({ isOpen, onToggle, children, small = false }) {
 
       {isOpen && (
         <div ref={menuRef} data-dropdown className={`absolute right-0 ${openUp ? 'bottom-full mb-1 origin-bottom-right animate-[menuInUp_0.15s_ease-out]' : 'top-full mt-1 origin-top-right animate-[menuInDown_0.15s_ease-out]'} bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded shadow-2xl overflow-hidden min-w-[200px] flex flex-col z-10`}>
-          {children}
+          {items.map((it) => (
+            <button key={it.id} onClick={it.onClick} className={menuItemCls(Boolean(it.danger))}>
+              {it.icon && <Ico of={it.icon} className={menuIcon} />}
+              {it.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-// The red line through a title: drawn when the slate goes to the trash,
-// lying across it while it is there, rubbed out when it comes back. The
-// wrapper around the title carries the row's text size so `top` lands on
-// the middle of the first line.
+// Select mode's circle: the device mark's size and pen, so the two stack in
+// one column down the row's left edge
+function SelectMark({ selected }) {
+  return (
+    <span className={`flex-shrink-0 flex items-center text-xs ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">
+      <MarkGlyph kind={selected ? 'chosen' : 'open'} className="w-[1em] h-[1em]" />
+    </span>
+  );
+}
+
+// Every row and card renders this marker, even outside the trash. Keep it
+// mounted so the strike can animate when a slate is deleted or restored.
 function Strike({ on, top }) {
   return (
     <span
@@ -233,83 +264,29 @@ function Strike({ on, top }) {
  */
 function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
-  return (
-    <DotMenu isOpen={isOpen} onToggle={onToggle}>
-          {slate.deleted_at ? (
-            <>
-              <button onClick={onRestore} className={menuItemCls(false)}>
-                <Ico of={UnarchiveIcon} className={menuIcon} />
-                {strings.slates.menu.restore}
-              </button>
-              <button onClick={onDeleteForever} className={menuItemCls(true)}>
-                <Ico of={TrashIcon} className={menuIcon} />
-                {strings.slates.menu.deleteForever}
-              </button>
-            </>
-          ) : slate.shared ? (
-            <button onClick={onLeave} className={menuItemCls(true)}>
-              <Ico of={LeaveIcon} className={menuIcon} />
-              {leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave}
-            </button>
-          ) : (
-            <>
-              <button onClick={onPin} className={menuItemCls(false)}>
-                {isPinned ? <Ico of={UnpinIcon} className={menuIcon} /> : <Ico of={PinIcon} className={menuIcon} />}
-                {isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin}
-              </button>
-              {/* A pinned slate can change places with its pinned neighbours */}
-              {onMoveUp && (
-                <button onClick={onMoveUp} className={menuItemCls(false)}>
-                  <Ico of={ArrowUpIcon} className={menuIcon} />
-                  {strings.slates.pin.moveUp}
-                </button>
-              )}
-              {onMoveDown && (
-                <button onClick={onMoveDown} className={menuItemCls(false)}>
-                  <Ico of={ArrowDownIcon} className={menuIcon} />
-                  {strings.slates.pin.moveDown}
-                </button>
-              )}
-              <button onClick={onTags} className={menuItemCls(false)}>
-                <Ico of={TagIcon} className={menuIcon} />
-                {strings.slates.menu.tags}
-              </button>
-              {/* This device's copy: let it go, or get it. Keeping it past
-                  the budget is the check mark's job. A copy with an edit
-                  still on its way stays put. */}
-              {!slate.local && !slate.pending && (
-                <button onClick={slate.available ? onOffload : onCopyToDevice} className={menuItemCls(false)}>
-                  {slate.available ? <Ico of={CloudOffIcon} className={menuIcon} /> : <Ico of={CloudDownIcon} className={menuIcon} />}
-                  {slate.available ? strings.slates.offline.offload : strings.slates.offline.copy}
-                </button>
-              )}
-              {!slate.is_locked && (
-                <button onClick={onPublish} className={menuItemCls(false)}>
-                  {slate.is_published ? <Ico of={EyeOffIcon} className={menuIcon} /> : <Ico of={GlobeIcon} className={menuIcon} />}
-                  {slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic}
-                </button>
-              )}
-              {/* A private, non-collab slate can lock; a locked one unlocks */}
-              {onLock && !slate.is_published && !slate.is_collab && !slate.local && (
-                <button onClick={onLock} className={menuItemCls(false)}>
-                  {slate.is_locked ? <Ico of={UnlockIcon} className={menuIcon} /> : <Ico of={LockIcon} className={menuIcon} />}
-                  {slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock}
-                </button>
-              )}
-              {!slate.local && (
-                <button onClick={onArchive} className={menuItemCls(false)}>
-                  {slate.archived_at ? <Ico of={UnarchiveIcon} className={menuIcon} /> : <Ico of={ArchiveIcon} className={menuIcon} />}
-                  {slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive}
-                </button>
-              )}
-              <button onClick={onDelete} className={menuItemCls(true)}>
-                <Ico of={TrashIcon} className={menuIcon} />
-                {strings.slates.menu.delete}
-              </button>
-            </>
-          )}
-    </DotMenu>
-  );
+  const items = slate.deleted_at ? [
+    { id: 'restore', label: strings.slates.menu.restore, icon: UnarchiveIcon, onClick: onRestore },
+    { id: 'forever', label: strings.slates.menu.deleteForever, icon: TrashIcon, danger: true, onClick: onDeleteForever },
+  ] : slate.shared ? [
+    { id: 'leave', label: leaveArmed ? strings.collab.shared.leaveConfirm : strings.collab.shared.leave, icon: LeaveIcon, danger: true, onClick: onLeave },
+  ] : [
+    { id: 'pin', label: isPinned ? strings.slates.pin.unpin : strings.slates.pin.pin, icon: isPinned ? UnpinIcon : PinIcon, onClick: onPin },
+    // A pinned slate can change places with its pinned neighbours
+    onMoveUp && { id: 'up', label: strings.slates.pin.moveUp, icon: ArrowUpIcon, onClick: onMoveUp },
+    onMoveDown && { id: 'down', label: strings.slates.pin.moveDown, icon: ArrowDownIcon, onClick: onMoveDown },
+    { id: 'tags', label: strings.slates.menu.tags, icon: TagIcon, onClick: onTags },
+    // This device's copy: let it go, or get it. Keeping it past the budget
+    // is the check mark's job. A copy with an edit still on its way stays put.
+    !slate.local && !slate.pending && (slate.available
+      ? { id: 'offload', label: strings.slates.offline.offload, icon: CloudOffIcon, onClick: onOffload }
+      : { id: 'copy', label: strings.slates.offline.copy, icon: CloudDownIcon, onClick: onCopyToDevice }),
+    !slate.is_locked && { id: 'publish', label: slate.is_published ? strings.slates.menu.makePrivate : strings.slates.menu.makePublic, icon: slate.is_published ? EyeOffIcon : GlobeIcon, onClick: onPublish },
+    // A private, non-collab slate can lock; a locked one unlocks
+    onLock && !slate.is_published && !slate.is_collab && !slate.local && { id: 'lock', label: slate.is_locked ? strings.slates.menu.unlock : strings.slates.menu.lock, icon: slate.is_locked ? UnlockIcon : LockIcon, onClick: onLock },
+    !slate.local && { id: 'archive', label: slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive, icon: slate.archived_at ? UnarchiveIcon : ArchiveIcon, onClick: onArchive },
+    { id: 'delete', label: strings.slates.menu.delete, icon: TrashIcon, danger: true, onClick: onDelete },
+  ].filter(Boolean);
+  return <DotMenu isOpen={isOpen} onToggle={onToggle} items={items} />;
 }
 
 /**
@@ -420,7 +397,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
             three stray lines. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2 min-w-0 flex-1">
-            {selecting && <span className={`text-lg leading-none w-5 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
+            {selecting && <SelectMark selected={selected} />}
             {isPinned && <span className="flex-shrink-0 mt-1"><PinGlyph /></span>}
             <div className="relative min-w-0 text-sm md:text-base">
               <h3 className={`text-[var(--theme-text)] font-medium line-clamp-2 break-words${struckCls}`}>{title}</h3>
@@ -462,7 +439,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {selecting && <span className={`text-lg leading-none w-5 text-center flex-shrink-0 ${selected ? 'text-[var(--theme-accent)]' : 'text-[var(--theme-text-dim)]'}`} aria-hidden="true">{selected ? '●' : '○'}</span>}
+          {selecting && <SelectMark selected={selected} />}
           {isPinned && <PinGlyph />}
           <div className="relative min-w-0 text-sm md:text-base">
             <h3 className={`text-[var(--theme-text)] font-medium truncate min-w-0${struckCls}`}>{title}</h3>
@@ -687,11 +664,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   }, [slates, sharedSlates]);
   const allTags = useMemo(() => tagCounts.map(([t]) => t), [tagCounts]);
   const [visibilityFilter, setVisibilityFilter] = useState(() => remembered?.visibilityFilter ?? 'all'); // 'all' | 'public' | 'private' | 'archived'
-  const [collabFilter, setCollabFilter] = useState(() => remembered?.collabFilter ?? false); // true = only collaborative slates
   // The list as it was left: filters, search and scroll come back when the
   // writer hands back to it (see `remembered` at the top of the file)
   const rememberRef = useRef(null);
-  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter, collabFilter };
+  rememberRef.current = { searchQuery, sortBy, visibilityFilter, tagFilter };
   useEffect(() => () => { remembered = { ...rememberRef.current, scrollTop: scrollRef.current?.scrollTop || 0 }; }, []);
   // Coming back from the writer, the list opens on the slate that was
   // being written: it sits in the middle of the screen, wherever it has
@@ -1711,10 +1687,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       if (visibilityFilter === 'public' && !slate.is_published) return false;
       if (visibilityFilter === 'private' && slate.is_published) return false;
 
-      if (collabFilter && !slate.is_collab) {
-        return false;
-      }
-
       if (activeTag && !tags.includes(activeTag)) {
         return false;
       }
@@ -1760,7 +1732,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
       return compareBySort(a, b);
     });
-  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, collabFilter, visibilityFilter, sortBy]);
+  }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, visibilityFilter, sortBy]);
 
   if (loading) {
     return (
@@ -1771,7 +1743,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   }
 
   const hasAnySlates = slates.length > 0 || sharedSlates.length > 0;
-  const hasCollabSlates = slates.some(s => s.is_collab) || sharedSlates.length > 0;
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
@@ -1780,7 +1751,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
           <h1 className="text-xl md:text-2xl text-[var(--theme-text)]">{strings.slates.title}</h1>
           <button
             onClick={onNewSlate}
-            className="border border-[var(--theme-border)] text-[var(--theme-text)] px-4 md:px-6 py-2 rounded hover:bg-[var(--theme-accent)] hover:text-[var(--theme-bg)] hover:border-[var(--theme-accent)] transition-all duration-300 text-xs md:text-sm"
+            className="new-slate-button border border-[var(--theme-border)] text-[var(--theme-text)] px-4 md:px-6 py-2 rounded hover:bg-[var(--theme-accent)] hover:text-[var(--theme-bg)] hover:border-[var(--theme-accent)] transition-all duration-300 text-xs md:text-sm"
           >
             {strings.slates.newSlate}
           </button>
@@ -1895,18 +1866,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 value={visibilityFilter}
                 onChange={setVisibilityFilter}
               />
-              {hasCollabSlates && (
-                <ChoiceRow
-                  swipe
-                  label={strings.collab.filter.label}
-                  options={[
-                    { id: 'all', label: strings.collab.filter.all },
-                    { id: 'collab', label: strings.collab.filter.collab },
-                  ]}
-                  value={collabFilter ? 'collab' : 'all'}
-                  onChange={(id) => setCollabFilter(id === 'collab')}
-                />
-              )}
             </div>
             {/* Every tag in the library, a row of its own under sort and show.
                 Editing adds a small menu after each tag (rename in place, or
@@ -1955,14 +1914,15 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                         transition: 'width 250ms ease-out, margin-left 250ms ease-out, opacity 250ms ease-out',
                       }}
                     >
-                      <DotMenu small isOpen={openMenuId === `tag:${o.id}`} onToggle={(e) => toggleMenu(`tag:${o.id}`, e)}>
-                        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag: o.id, draft: o.id }); }} className={menuItemCls(false)}>
-                          {strings.slates.tags.rename}
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); removeTagEverywhere(o.id); }} className={menuItemCls(true)}>
-                          {strings.slates.tags.remove}
-                        </button>
-                      </DotMenu>
+                      <DotMenu
+                        small
+                        isOpen={openMenuId === `tag:${o.id}`}
+                        onToggle={(e) => toggleMenu(`tag:${o.id}`, e)}
+                        items={[
+                          { id: 'rename', label: strings.slates.tags.rename, onClick: (e) => { e.stopPropagation(); setOpenMenuId(null); setTagEdit({ tag: o.id, draft: o.id }); } },
+                          { id: 'remove', label: strings.slates.tags.remove, danger: true, onClick: (e) => { e.stopPropagation(); setOpenMenuId(null); removeTagEverywhere(o.id); } },
+                        ]}
+                      />
                     </span>
                   )}
                 />
@@ -2018,7 +1978,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         </div>
       ) : (
         <div
-          key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}:${collabFilter}`}
+          key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}`}
           className={`animate-[fadeIn_0.3s_ease-out] ${
             effectiveViewMode === 'list'
               ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'

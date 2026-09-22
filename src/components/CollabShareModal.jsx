@@ -286,7 +286,7 @@ export function CollabShareModal({ slateNumber, userId, username, docKey, getCur
               <button
                 onClick={handleEnable}
                 disabled={busy}
-                className="flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium disabled:opacity-50"
+                className="sheet-primary flex-1 bg-white text-black py-2 md:py-3 rounded hover:bg-[#e5e5e5] transition-all text-sm font-medium disabled:opacity-50"
               >
                 {busy ? strings.collab.modal.enabling : strings.collab.modal.enableButton}
               </button>

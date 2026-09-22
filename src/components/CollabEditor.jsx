@@ -2,12 +2,13 @@ import React, { useRef, useEffect, useState } from 'react';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { EditorView, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
+import { EditorView, ViewPlugin, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
 import { markdownKeymap } from '@codemirror/lang-markdown';
 import { livePreview, richMarkdown } from './livePreview';
+import { shellScrollMargins } from '../shell';
 import { strings } from '../strings';
 import { wrapKey, unwrapKey } from '../crypto';
 import { subscribeCollab, sendCollabUpdate, sendCollabAwareness, fetchCollabUpdates, requestCollabJoin } from '../collabSync';
@@ -414,6 +415,7 @@ export default function CollabEditor({
           ...(mode === 'wysiwyg' ? [richMarkdown(), livePreview({ reveal: true })] : []),
           EditorView.lineWrapping,
           indentUnit.of('    '),
+          shellScrollMargins(EditorView, ViewPlugin),
           highlightActiveLine(), // marks the caret's line for line focus (index.css)
           drawSelection(),
           placeholder(strings.writer.contentPlaceholder),
@@ -438,14 +440,14 @@ export default function CollabEditor({
   return (
     <>
       {!ready && (
-        <div className={`w-full max-w-3xl p-8 text-sm ${offlineUnavailable ? '' : 'animate-pulse'}`} style={{ color: 'var(--theme-text-dim)' }}>
+        <div className={`writer-column w-full max-w-3xl p-8 text-sm ${offlineUnavailable ? '' : 'animate-pulse'}`} style={{ color: 'var(--theme-text-dim)' }}>
           {offlineUnavailable ? strings.writer.connectivity.notAvailableOffline : strings.collab.viewer.loading}
         </div>
       )}
       <div
         ref={containerRef}
         style={ready ? undefined : { display: 'none' }}
-        className={`${mode === 'wysiwyg' ? 'wysiwyg-editor' : 'wysiwyg-editor collab-plain'} w-full max-w-3xl p-8 ${puntoClass}`}
+        className={`${mode === 'wysiwyg' ? 'wysiwyg-editor' : 'wysiwyg-editor collab-plain'} writer-column w-full max-w-3xl p-8 ${puntoClass}`}
       />
     </>
   );

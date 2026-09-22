@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useEscape } from '../useEscape';
+import { useSheetDrag, SheetBackdrop } from '../sheetDrag';
 import * as Y from 'yjs';
 import { strings } from '../strings';
 import { fetchCheckpoints, fetchCheckpointState, labelCheckpoint } from '../collab';
@@ -327,7 +328,7 @@ function HistoryTab({ source, currentText, onRestore, onOpenAsNewSlate }) {
             </div>
 
             <div
-              className="flex-1 min-h-0 overflow-y-auto text-xs font-mono rounded border p-3 whitespace-pre-wrap"
+              className="history-preview flex-1 min-h-0 overflow-y-auto text-xs font-mono rounded border p-3 whitespace-pre-wrap"
               style={{ background: 'var(--theme-bg)', borderColor: 'var(--theme-border)', color: 'var(--theme-text-muted)' }}
             >
               {view === 'text' ? (
@@ -449,6 +450,8 @@ export default function CollabPanel({
   // shared hook keeps the stack, so a modal opened over the panel takes it
   // first and the panel stays put.
   useEscape(!closing, requestClose);
+  const sheetRef = useRef(null);
+  useSheetDrag(sheetRef, onClose);
 
   // The history tab mounts on first use and then stays mounted, so flipping
   // tabs never refetches the checkpoint list or drops a decrypted preview.
@@ -470,60 +473,64 @@ export default function CollabPanel({
   );
 
   return (
-    <aside
-      className="collab-panel fixed inset-0 z-50 md:static md:z-auto md:flex-shrink-0 flex flex-col border-l"
-      data-closing={closing ? 'true' : 'false'}
-      style={{ background: 'var(--theme-bg-secondary)', borderColor: 'var(--theme-border)' }}
-    >
-      <div className="collab-panel-inner">
-        <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
-          <div className="flex items-center gap-4">
-            {!solo && <Tab id="people" label={p.tabPeople} />}
-            <Tab id="history" label={p.tabHistory} disabled={!canHistory} />
-            {!solo && <Tab id="nearby" label={strings.collab.nearby.tab} disabled={!canHistory} />}
+    <>
+      <SheetBackdrop closing={closing} onClose={requestClose} />
+      <aside
+        ref={sheetRef}
+        className="collab-panel fixed inset-0 z-50 md:static md:z-auto md:flex-shrink-0 flex flex-col border-l"
+        data-closing={closing ? 'true' : 'false'}
+        style={{ background: 'var(--theme-bg-secondary)', borderColor: 'var(--theme-border)' }}
+      >
+        <div className="collab-panel-inner">
+          <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-shrink-0">
+            <div className="flex items-center gap-4">
+              {!solo && <Tab id="people" label={p.tabPeople} />}
+              <Tab id="history" label={p.tabHistory} disabled={!canHistory} />
+              {!solo && <Tab id="nearby" label={strings.collab.nearby.tab} disabled={!canHistory} />}
+            </div>
+            <button
+              onClick={requestClose}
+              aria-label={p.close}
+              className="sheet-close text-[var(--theme-text-dim)] hover:text-white transition-colors text-lg leading-none px-1"
+            >
+              &times;
+            </button>
           </div>
-          <button
-            onClick={requestClose}
-            aria-label={p.close}
-            className="text-[var(--theme-text-dim)] hover:text-white transition-colors text-lg leading-none px-1"
-          >
-            &times;
-          </button>
-        </div>
 
-        <div className="collab-tabstack">
-          {!solo && (
-            <div className={`collab-tabpanel ${tab === 'people' ? 'is-active' : ''}`}>
-              <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-                <CollabShareModal embedded {...shareProps} />
+          <div className="collab-tabstack">
+            {!solo && (
+              <div className={`collab-tabpanel ${tab === 'people' ? 'is-active' : ''}`}>
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+                  <CollabShareModal embedded {...shareProps} />
+                </div>
               </div>
-            </div>
-          )}
-
-          {!solo && (
-            <div className={`collab-tabpanel ${tab === 'nearby' ? 'is-active' : ''}`}>
-              {canHistory && getDoc
-                ? (tab === 'nearby' && <NearbyTab slateId={slateId} getDoc={getDoc} />)
-                : <p className="text-sm text-[var(--theme-text-muted)] p-4">{strings.collab.nearby.unavailable}</p>}
-            </div>
-          )}
-
-          <div className={`collab-tabpanel ${tab === 'history' ? 'is-active' : ''}`}>
-            {canHistory ? (
-              historyMounted && (
-                <HistoryTab
-                  source={source}
-                  currentText={currentText}
-                  onRestore={onRestore}
-                  onOpenAsNewSlate={onOpenAsNewSlate}
-                />
-              )
-            ) : (
-              <p className="text-sm text-[var(--theme-text-muted)] p-4">{p.historyUnavailable}</p>
             )}
+
+            {!solo && (
+              <div className={`collab-tabpanel ${tab === 'nearby' ? 'is-active' : ''}`}>
+                {canHistory && getDoc
+                  ? (tab === 'nearby' && <NearbyTab slateId={slateId} getDoc={getDoc} />)
+                  : <p className="text-sm text-[var(--theme-text-muted)] p-4">{strings.collab.nearby.unavailable}</p>}
+              </div>
+            )}
+
+            <div className={`collab-tabpanel ${tab === 'history' ? 'is-active' : ''}`}>
+              {canHistory ? (
+                historyMounted && (
+                  <HistoryTab
+                    source={source}
+                    currentText={currentText}
+                    onRestore={onRestore}
+                    onOpenAsNewSlate={onOpenAsNewSlate}
+                  />
+                )
+              ) : (
+                <p className="text-sm text-[var(--theme-text-muted)] p-4">{p.historyUnavailable}</p>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -4,7 +4,7 @@
 // doc key is the caller's job (see src/collab.js for the key handling).
 //
 // subscribeCollab(slateId, onEvent) joins the slate's room (auth rides on the
-// session cookie) and delivers every server frame for that slate to onEvent:
+// session cookie; in the iOS app, on a one-use ticket, see wsUrl) and delivers every server frame for that slate to onEvent:
 //   {type:'joined', version, snapshotVersion}
 //   {type:'update', version, payload, authorId, seq?}
 //   {type:'updates', updates:[{version,payload}], more}   (fetch reply)
@@ -16,7 +16,11 @@
 //   {type:'reconnected'}   socket re-established (synthetic, local)
 // Returns an unsubscribe function; the socket closes when no rooms remain.
 
+import { API_URL } from './config';
+import { inShell } from './shell';
+
 let socket = null;
+let opening = false;
 let openPromise = null;
 let backoffMs = 1000;
 let reconnectTimer = null;
@@ -25,7 +29,18 @@ let intentionallyClosed = false;
 // Map<slateId, Set<fn>>
 const listeners = new Map();
 
-const wsUrl = () => `${window.location.origin.replace(/^http/, 'ws')}/collab/ws`;
+// The socket lives where the API does: the page's own origin on the web, the
+// API's host in the iOS app (whose page is capacitor://, not https). The app's
+// session cookie sits in the phone's native store, out of a WebSocket's
+// reach, so the app first asks for a one-use ticket over its native HTTP.
+async function wsUrl() {
+  const base = `${new URL(API_URL, window.location.href).origin.replace(/^http/, 'ws')}/collab/ws`;
+  if (!inShell) return base;
+  const response = await fetch(`${API_URL}/collab/ticket`, { method: 'POST', credentials: 'include' });
+  if (!response.ok) throw new Error('no ticket');
+  const { ticket } = await response.json();
+  return `${base}?ticket=${encodeURIComponent(ticket)}`;
+}
 
 function dispatch(slateId, event) {
   const set = listeners.get(slateId);
@@ -56,18 +71,21 @@ function scheduleReconnect() {
 }
 
 function connect(isReconnect = false) {
-  if (socket && (socket.readyState === 0 || socket.readyState === 1)) return openPromise;
+  if (opening || (socket && (socket.readyState === 0 || socket.readyState === 1))) return openPromise;
   intentionallyClosed = false;
-  openPromise = new Promise((resolve) => {
+  opening = true;
+  openPromise = new Promise((resolve) => (async () => {
     let ws;
     try {
-      ws = new WebSocket(wsUrl());
+      ws = new WebSocket(await wsUrl());
     } catch (e) {
       console.warn('collab socket failed to open', e);
+      opening = false;
       scheduleReconnect();
       resolve(false);
       return;
     }
+    opening = false;
     socket = ws;
     ws.onopen = () => {
       backoffMs = 1000;
@@ -88,7 +106,7 @@ function connect(isReconnect = false) {
       resolve(false);
     };
     ws.onerror = () => { /* onclose follows and schedules the retry */ };
-  });
+  })());
   return openPromise;
 }
 

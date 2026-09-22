@@ -2,7 +2,9 @@ import React from 'react';
 
 // The device mark's four glyphs, shared by the slate list and the what's new
 // demo so the two never drift: cloud (not on this device), check (a copy is
-// here), alert (saved here, not in the account yet), spin (syncing).
+// here), alert (saved here, not in the account yet), spin (syncing). Select
+// mode's circle is drawn from the same pen, so it stacks on the device mark
+// in one column: open (not chosen), chosen (filled, the check cut out).
 const paths = {
   cloud: (
     <>
@@ -25,6 +27,13 @@ const paths = {
     </>
   ),
   spin: <path d="M21 12a9 9 0 1 1-6.219-8.56" />,
+  open: <circle cx="12" cy="12" r="10" />,
+  chosen: (
+    <>
+      <circle cx="12" cy="12" r="10" fill="currentColor" />
+      <path d="m8 12 3 3 5-6" stroke="var(--theme-bg)" />
+    </>
+  ),
 };
 
 export function MarkGlyph({ kind, ...props }) {

@@ -15,6 +15,7 @@ import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
 import { SCROLL_MODES, useScroll, setScroll } from '../typewriter';
 import { SWIPE_MODES, useSwipe, setSwipe } from '../swipe';
 import { ICON_MODES, useIcons, setIcons } from '../iconsPref';
+import { leftyMode } from '../lefty';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { rewrapLockRecovery } from '../slateLock';
@@ -197,6 +198,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const scroll = useScroll();
   const swipe = useSwipe();
   const icons = useIcons();
+  const lefty = leftyMode.use();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -1246,7 +1248,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {!storageInfo.supporterTier && (
                   <button
                     onClick={() => window.location.href = '/?donate=quarterly'}
-                    className="text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
+                    className="mobile-hidden text-[var(--theme-text-dim)] hover:text-[var(--theme-accent)] transition-colors text-xs"
                   >
                     upgrade
                   </button>
@@ -1284,7 +1286,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
         {/* Upgrade prompt for free users */}
         {!loadingStorage && storageInfo && !storageInfo.supporterTier && (
-          <div className="mb-6 border border-[var(--theme-border)] rounded-lg px-4 py-4 bg-[var(--theme-bg-secondary)]">
+          <div className="mobile-hidden mb-6 border border-[var(--theme-border)] rounded-lg px-4 py-4 bg-[var(--theme-bg-secondary)]">
             <p className="text-xs text-[var(--theme-text-dim)] leading-relaxed mb-4">
               {strings.writer.about.support.body}{' '}
               <a href="/limits" target="_blank" rel="noopener noreferrer" className="text-[var(--theme-text-muted)] hover:text-[var(--theme-accent)] underline underline-offset-2 transition-colors">
@@ -1369,7 +1371,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     <button
                       type="submit"
                       disabled={changingPassword}
-                      className="px-4 py-2 bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                      className="px-4 py-2 sheet-primary bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
                     >
                       {changingPassword ? 'changing...' : 'change password'}
                     </button>
@@ -1410,7 +1412,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     <button
                       type="submit"
                       disabled={regeneratingRecovery}
-                      className="px-4 py-2 bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                      className="px-4 py-2 sheet-primary bg-white text-black rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
                     >
                       {regeneratingRecovery ? 'regenerating...' : strings.auth.recoveryKey.regenerate.submit}
                     </button>
@@ -1513,31 +1515,50 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             />
             <Collapse className="relative" open={showAccessibility}>
               <div className="border-t border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
-          <InfoRow label={strings.account.accessibility.motion}>
-            <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
-          </InfoRow>
-          <InfoRow label={strings.account.accessibility.size}>
-            <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
-          </InfoRow>
-          <InfoRow label={strings.account.accessibility.font}>
-            <ChoiceRow options={wordOptions(readableFont.values)} value={readable} onChange={readableFont.set} />
-          </InfoRow>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.motion}>
+              <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
+            </InfoRow>
+          </div>
+          <div className="native-hidden">
+            <InfoRow label={strings.account.accessibility.size}>
+              <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
+            </InfoRow>
+          </div>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.font}>
+              <ChoiceRow options={wordOptions(readableFont.values)} value={readable} onChange={readableFont.set} />
+            </InfoRow>
+          </div>
           <InfoRow label={strings.account.accessibility.lineFocus}>
             <ChoiceRow options={wordOptions(lineFocus.values)} value={focusLine} onChange={lineFocus.set} />
           </InfoRow>
-          <InfoRow label={strings.account.accessibility.scroll}>
-            <ChoiceRow options={wordOptions(SCROLL_MODES)} value={scroll} onChange={setScroll} />
-          </InfoRow>
-          <InfoRow label={strings.account.accessibility.swipe}>
-            <ChoiceRow options={wordOptions(SWIPE_MODES)} value={swipe} onChange={setSwipe} />
-          </InfoRow>
-          <InfoRow label={strings.account.accessibility.icons}>
-            <ChoiceRow options={wordOptions(ICON_MODES)} value={icons} onChange={setIcons} />
-          </InfoRow>
-          <InfoRow label={strings.account.accessibility.sounds}>
-            {/* Turning it on plays the save tick, so you hear what you chose */}
-            <ChoiceRow options={wordOptions(soundsPref.values)} value={sounds} onChange={(v) => { soundsPref.set(v); if (v === 'on') cue('save'); }} />
-          </InfoRow>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.scroll}>
+              <ChoiceRow options={wordOptions(SCROLL_MODES)} value={scroll} onChange={setScroll} />
+            </InfoRow>
+          </div>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.swipe}>
+              <ChoiceRow options={wordOptions(SWIPE_MODES)} value={swipe} onChange={setSwipe} />
+            </InfoRow>
+          </div>
+          <div className="native-only">
+            <InfoRow label="lefty mode">
+              <ChoiceRow options={wordOptions(leftyMode.values)} value={lefty} onChange={leftyMode.set} />
+            </InfoRow>
+          </div>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.icons}>
+              <ChoiceRow options={wordOptions(ICON_MODES)} value={icons} onChange={setIcons} />
+            </InfoRow>
+          </div>
+          <div className="mobile-hidden">
+            <InfoRow label={strings.account.accessibility.sounds}>
+              {/* Turning it on plays the save tick, so you hear what you chose */}
+              <ChoiceRow options={wordOptions(soundsPref.values)} value={sounds} onChange={(v) => { soundsPref.set(v); if (v === 'on') cue('save'); }} />
+            </InfoRow>
+          </div>
           {canVibrate && (
             <InfoRow label={strings.account.accessibility.haptics}>
               <ChoiceRow options={wordOptions(hapticsPref.values)} value={haptics} onChange={(v) => { hapticsPref.set(v); if (v === 'on') cue('save'); }} />
@@ -1626,7 +1647,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             href="/dev"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-between gap-4 px-4 py-3.5 text-sm hover:bg-[var(--theme-bg-secondary)] transition-colors"
+            className="mobile-hidden flex items-center justify-between gap-4 px-4 py-3.5 text-sm hover:bg-[var(--theme-bg-secondary)] transition-colors"
           >
             <span>{strings.account.devPortal}</span>
             <span className="text-[var(--theme-text-dim)]">↗</span>
@@ -1649,7 +1670,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   onClick={showDeleteAccountConfirmation}
                   disabled={deleting}
-                  className="px-4 py-2 bg-red-600 text-[var(--theme-accent)] rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
+                  className="px-4 py-2 sheet-danger bg-red-600 text-[var(--theme-accent)] rounded hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
                 >
                   {deleting ? 'deleting...' : 'delete account'}
                 </button>
@@ -1659,11 +1680,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         </Section>
 
         {/* Account-level actions, kept apart from the settings lists above */}
-        <div className="flex flex-wrap items-center gap-3 pt-2 pb-10 text-sm">
+        <div className="account-actions flex flex-wrap items-center gap-3 pt-2 pb-10 text-sm">
           <button
             onClick={exportSlates}
             disabled={exportingSlates}
-            className="px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors disabled:opacity-50"
+            className="px-4 py-2 sheet-secondary border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors disabled:opacity-50"
           >
             {exportingSlates
               ? strings.account.export.exporting
@@ -1672,7 +1693,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
           </button>
           <button
             onClick={onLogout}
-            className="px-4 py-2 border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors ml-auto"
+            className="px-4 py-2 sheet-secondary border border-[var(--theme-border)] rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors ml-auto"
           >
             sign out
           </button>
@@ -1710,7 +1731,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   <button
                     type="submit"
                     disabled={changingEmail}
-                    className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                    className="flex-1 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
                   >
                     {changingEmail ? strings.account.emailChange.submittingSend : strings.account.emailChange.submitSend}
                   </button>
@@ -1722,7 +1743,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       setNewEmail('');
                       setEmailError('');
                     }}
-                    className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                    className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                   >
                     {strings.account.emailChange.cancel}
                   </button>
@@ -1748,7 +1769,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   <button
                     type="submit"
                     disabled={changingEmail}
-                    className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                    className="flex-1 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
                   >
                     {changingEmail ? strings.account.emailChange.submittingVerify : strings.account.emailChange.submitVerify}
                   </button>
@@ -1762,7 +1783,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                       setEmailError('');
                       setEmailSuccess('');
                     }}
-                    className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                    className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                   >
                     {strings.account.emailChange.cancel}
                   </button>
@@ -1811,7 +1832,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   type="submit"
                   disabled={changingUsername || !newUsername.trim() || usernameAvailable === false || checkingUsername}
-                  className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
+                  className="flex-1 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-50 text-sm"
                 >
                   {changingUsername ? strings.account.usernameChange.submitting : strings.account.usernameChange.submit}
                 </button>
@@ -1824,7 +1845,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     setUsernameAvailable(null);
                     setUsernameCheckReason('');
                   }}
-                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                  className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   cancel
                 </button>
@@ -1845,13 +1866,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             <div className="flex gap-3">
               <button
                 onClick={confirmLogoutEverywhere}
-                className="flex-1 bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
+                className="flex-1 sheet-danger bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm"
               >
                 {strings.account.sessions.everywhereModal.confirm}
               </button>
               <button
                 onClick={cancelLogoutEverywhere}
-                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.sessions.everywhereModal.cancel}
               </button>
@@ -1885,13 +1906,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   onClick={confirmDeleteAccount}
                   disabled={!deleteConfirmation}
-                  className="flex-1 bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 sheet-danger bg-red-600 text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-red-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {strings.account.danger.submit}
                 </button>
                 <button
                   onClick={cancelDeleteAccount}
-                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                  className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   {strings.account.danger.modal.cancel}
                 </button>
@@ -1912,13 +1933,13 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             <div className="flex gap-3">
               <button
                 onClick={handleLinkGoogle}
-                className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+                className="flex-1 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
               >
                 {strings.account.googleAuth.link.modal.continue}
               </button>
               <button
                 onClick={() => setShowLinkGoogleModal(false)}
-                className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
               >
                 {strings.account.googleAuth.link.modal.cancel}
               </button>
@@ -1940,7 +1961,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 setShowLinkSuccessModal(false);
                 window.location.reload();
               }}
-              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+              className="w-full sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
             >
               {strings.account.googleAuth.link.success.button}
             </button>
@@ -1961,7 +1982,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 setShowLinkErrorModal(false);
                 setLinkErrorMessage('');
               }}
-              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+              className="w-full sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
             >
               {strings.account.googleAuth.link.errors.button}
             </button>
@@ -1996,7 +2017,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   type="submit"
                   disabled={unlinkingGoogle || unlinkCode.length !== 6}
-                  className="flex-1 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {unlinkingGoogle ? strings.account.googleAuth.unlink.modal.submitting : strings.account.googleAuth.unlink.modal.submit}
                 </button>
@@ -2008,7 +2029,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     setUnlinkError('');
                     setUnlinkSuccess('');
                   }}
-                  className="flex-1 border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
+                  className="flex-1 sheet-secondary border border-[var(--theme-border)] text-[var(--theme-accent)] px-6 py-3 rounded hover:bg-[var(--theme-bg-tertiary)] transition-colors text-sm"
                 >
                   {strings.account.googleAuth.unlink.modal.cancel}
                 </button>
@@ -2031,7 +2052,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 setShowUnlinkSuccessModal(false);
                 window.location.reload();
               }}
-              className="w-full bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
+              className="w-full sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors text-sm"
             >
               {strings.account.googleAuth.unlink.success.button}
             </button>
@@ -2067,7 +2088,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 <button
                   onClick={handleVerifyPin}
                   disabled={settingPassword || setPasswordPin.join('').length !== 6}
-                  className="w-full mt-6 bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-30 text-sm"
+                  className="w-full mt-6 sheet-primary bg-white text-black px-6 py-3 rounded hover:bg-[#e5e5e5] transition-colors disabled:opacity-30 text-sm"
                 >
                   {settingPassword ? strings.account.googleAuth.setPassword.modal.pinVerifying : strings.account.googleAuth.setPassword.modal.pinVerify}
                 </button>
@@ -2108,7 +2129,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     <button
                       type="submit"
                       disabled={settingPassword}
-                      className="flex-1 bg-white text-black px-4 py-2 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50"
+                      className="flex-1 sheet-primary bg-white text-black px-4 py-2 rounded hover:bg-[#e5e5e5] transition-colors text-sm disabled:opacity-50"
                     >
                       {settingPassword ? strings.account.googleAuth.setPassword.modal.submitting : strings.account.googleAuth.setPassword.modal.submit}
                     </button>

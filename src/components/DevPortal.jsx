@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PageHeader } from './PageHeader';
-import { API_URL } from '../config';
+import { API_URL, PUBLIC_URL } from '../config';
 import { strings } from '../strings';
 
 const SCOPE_OPTIONS = [
@@ -23,7 +23,8 @@ const LANGUAGES = [
 ];
 
 // ---- code generators (filled with the user's real client) ----------------
-const origin = typeof window !== 'undefined' ? window.location.origin : 'https://justtype.io';
+// The site's own address (in the app the page origin is capacitor://)
+const origin = PUBLIC_URL;
 
 function genNode(clientId, redirectUri, scope) {
   return `const crypto = require('crypto');

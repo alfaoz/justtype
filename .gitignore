@@ -48,3 +48,6 @@ backups/
 # Incident-recovery working data (encrypted user blobs, manifests)
 recovery/
 *.bak-*
+
+# iOS app web build
+dist-app/

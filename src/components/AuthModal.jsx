@@ -3,6 +3,8 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { VERSION } from '../version';
+import { inShell } from '../shell';
+import { startGoogleSignIn } from '../shellMenu';
 import { generateSlateKey, generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, encryptContent, decryptContent } from '../crypto';
 import { saveSlateKey, getSlateKey } from '../keyStore';
 import { ensureLockRecovery, rewrapLockRecovery } from '../slateLock';
@@ -765,20 +767,20 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   // Show forgot password form
   if (showForgotPassword) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="auth-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="auth-card relative bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">forgot password</h2>
 
           <form onSubmit={handleForgotPassword} className="space-y-4">
             <div>
-              <label className="block text-sm opacity-70 mb-2">email address</label>
+              <label className="auth-label block text-sm opacity-70 mb-2">email address</label>
               <input
                 type="email"
                 name="email"
                 required
                 autoComplete="email"
                 defaultValue={resetEmail || ''}
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder="your@email.com"
               />
               <p className="text-xs opacity-50 mt-1">we'll send you a 6-digit reset code</p>
@@ -859,8 +861,8 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
     };
 
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="auth-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="auth-card relative bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
           <div key={resetStep} className={`transition-opacity duration-300 ${stepPhase === 'out' ? 'opacity-0' : 'opacity-100 animate-[fadeIn_0.4s_ease-out]'}`}>
 
           {/* Step 1: OTP entry */}
@@ -868,7 +870,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             <div className="space-y-4">
               <h2 className="text-xl text-white mb-6">{strings.auth.resetPassword.otpStep.title}</h2>
               <div>
-                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.code}</label>
+                <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.resetPassword.code}</label>
                 <input
                     type="text"
                     value={resetOtp}
@@ -1021,25 +1023,25 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               <p className="text-sm text-[var(--theme-text-muted)]">{strings.auth.resetPassword.withRecovery.description}</p>
 
               <div>
-                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
+                <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
                 <input
                     id="reset-new-password"
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                     autoFocus
                   />
               </div>
               <div>
-                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
+                <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
                 <input
                     id="reset-new-password-confirm"
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.confirmPlaceholder}
                   />
               </div>
@@ -1083,25 +1085,25 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
               </div>
 
               <div>
-                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
+                <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.resetPassword.newPassword}</label>
                 <input
                     id="reset-new-password"
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.newPasswordPlaceholder}
                     autoFocus
                   />
               </div>
               <div>
-                <label className="block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
+                <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.resetPassword.confirmPassword}</label>
                 <input
                     id="reset-new-password-confirm"
                     type="password"
                     minLength={6}
                     autoComplete="new-password"
-                    className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                    className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                     placeholder={strings.auth.resetPassword.confirmPlaceholder}
                   />
               </div>
@@ -1135,13 +1137,13 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   // Show verification form if needed
   if (showVerification) {
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
-        <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="auth-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="auth-card relative bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl" onClick={e => e.stopPropagation()}>
           <h2 className="text-xl text-white mb-6">{strings.auth.verify.title}</h2>
 
           <form onSubmit={handleVerify} className="space-y-4">
             <div>
-              <label className="block text-sm opacity-70 mb-2">{strings.auth.verify.label}</label>
+              <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.verify.label}</label>
                 <input
                   type="text"
                   name="code"
@@ -1193,8 +1195,11 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
   }
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto animate-modal-overlay" onClick={onClose}>
-      <div className="bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
+    <div className="auth-overlay fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto animate-modal-overlay" onClick={onClose}>
+      <div className="auth-card relative bg-[var(--theme-bg-secondary)] border border-[var(--theme-border)] rounded-lg p-6 md:p-8 max-w-md w-full my-auto shadow-2xl animate-modal-content" onClick={e => e.stopPropagation()}>
+        {inShell && (
+          <button type="button" onClick={onClose} aria-label="close" className="sheet-close absolute text-lg leading-none">&times;</button>
+        )}
         <h2 className={`text-xl text-white ${oauthGate ? 'mb-2' : 'mb-6'}`}>{isLogin ? strings.auth.login.title : strings.auth.signup.title}</h2>
         {oauthGate && (
           <p className="text-sm opacity-60 mb-6">
@@ -1204,7 +1209,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.username : strings.auth.signup.username}</label>
+            <label className="auth-label block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.username : strings.auth.signup.username}</label>
               <input
                 type="text"
                 name="username"
@@ -1223,34 +1228,34 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
                     ? e.target.value.toLowerCase().trim()
                     : e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '');
                 }}
-              className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+              className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
               placeholder={isLogin ? strings.auth.login.usernamePlaceholder : strings.auth.signup.usernamePlaceholder}
             />
           </div>
 
           {!isLogin && (
             <div>
-              <label className="block text-sm opacity-70 mb-2">{strings.auth.signup.email}</label>
+              <label className="auth-label block text-sm opacity-70 mb-2">{strings.auth.signup.email}</label>
                 <input
                   type="email"
                   name="email"
                   required
                   autoComplete="email"
-                  className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                  className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                   placeholder={strings.auth.signup.emailPlaceholder}
                 />
             </div>
           )}
 
           <div>
-            <label className="block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.password : strings.auth.signup.password}</label>
+            <label className="auth-label block text-sm opacity-70 mb-2">{isLogin ? strings.auth.login.password : strings.auth.signup.password}</label>
               <input
                 type="password"
                 name="password"
                 required
                 minLength={6}
                 autoComplete={isLogin ? 'current-password' : 'new-password'}
-                className="w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
+                className="auth-input w-full bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-4 py-3 text-white focus:border-[var(--theme-text-dim)] focus:outline-none transition-colors"
                 placeholder={isLogin ? strings.auth.login.passwordPlaceholder : strings.auth.signup.passwordPlaceholder}
               />
           </div>
@@ -1317,7 +1322,7 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
           <button
             type="submit"
             disabled={loading}
-            className={`w-full border py-2 transition-all duration-300 mt-6 ${
+            className={`sheet-primary w-full border py-2 transition-all duration-300 mt-6 ${
               showLoadingAnimation
                 ? 'auth-button-loading border-transparent text-white cursor-wait'
                 : 'border-[var(--theme-border)] hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5]'
@@ -1342,13 +1347,13 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
             <div className="w-full border-t border-[var(--theme-border)]"></div>
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-[var(--theme-bg-secondary)] text-[var(--theme-text-dim)]">or</span>
+            <span className="auth-or px-2 bg-[var(--theme-bg-secondary)] text-[var(--theme-text-dim)]">or</span>
           </div>
         </div>
 
         <button
-          onClick={() => window.location.href = '/auth/google'}
-          className="mt-4 w-full border border-[var(--theme-border)] rounded py-3 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
+          onClick={startGoogleSignIn}
+          className="sheet-secondary mt-4 w-full border border-[var(--theme-border)] rounded py-3 hover:bg-[#e5e5e5] hover:text-black hover:border-[#e5e5e5] transition-all duration-300 flex items-center justify-center gap-2"
         >
           <svg className="w-5 h-5" viewBox="0 0 24 24">
             <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1368,15 +1373,17 @@ export function AuthModal({ onClose, onAuth, oauthGate = null, oauthAppName = ''
 
         <button
           onClick={onClose}
-          className="mt-2 w-full py-2 opacity-50 hover:opacity-100 transition-opacity text-sm"
+          className="native-hidden mt-2 w-full py-2 opacity-50 hover:opacity-100 transition-opacity text-sm"
         >
           cancel
         </button>
 
         <div className="mt-4 pt-3 border-t border-[var(--theme-border)] text-center text-xs text-[var(--theme-text-dim)]">
           {strings.verify.authFooter(VERSION)}
-          <span className="mx-1">·</span>
-          <VerifyBadge className="text-[var(--theme-text-dim)]">{strings.verify.authFooterVerify}</VerifyBadge>
+          <span className="native-hidden">
+            <span className="mx-1">·</span>
+            <VerifyBadge className="text-[var(--theme-text-dim)]">{strings.verify.authFooterVerify}</VerifyBadge>
+          </span>
         </div>
       </div>
     </div>

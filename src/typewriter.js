@@ -44,7 +44,9 @@ export function centerTextareaCaret(scroller, ta) {
   const inner = ta.scrollHeight > ta.clientHeight + 1;
   const el = inner ? ta : scroller;
   if (!el) return;
-  const target = Math.max(0, (inner ? caret : ta.offsetTop + caret) - el.clientHeight / 2);
+  // In the iOS shell the keyboard covers the bottom of the scroller (--kb)
+  const kb = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--kb')) || 0;
+  const target = Math.max(0, (inner ? caret : ta.offsetTop + caret) - (el.clientHeight - kb) / 2);
   if (Math.abs(el.scrollTop - target) < 2) return;
   el.scrollTo({ top: target, behavior: 'smooth' });
 }

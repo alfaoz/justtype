@@ -5,7 +5,7 @@
 import { makePref } from './pref';
 
 export const SWIPE_MODES = ['natural', 'flipped'];
-const pref = makePref({ key: 'justtype-swipe', values: SWIPE_MODES, fallback: 'natural' });
+const pref = makePref({ key: 'justtype-swipe', values: SWIPE_MODES, fallback: 'natural', inApp: false });
 export const readSwipe = pref.get;
 export const setSwipe = pref.set;
 export const useSwipe = pref.use;

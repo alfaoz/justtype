@@ -32,11 +32,6 @@ class RateLimiter {
     // Admin and public operations (IP-based)
     adminAuth: { max: 5, windowMs: 15 * 60 * 1000 }, // 5 attempts per 15 minutes (IP-based)
     viewPublicSlate: { max: 100, windowMs: 60 * 1000 }, // 100 per minute per IP (generous for normal viewing)
-    // CLI operations
-    approveDevice: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 approvals per 15 minutes
-    requestDeviceCode: { max: 10, windowMs: 15 * 60 * 1000 }, // 10 device code requests per 15 minutes (IP-based)
-    pollToken: { max: 120, windowMs: 15 * 60 * 1000 }, // 120 polls per 15 minutes (CLI polls every 5s for max 10 min)
-
     // Collaborative slates
     collabLookup: { max: 30, windowMs: 15 * 60 * 1000 }, // username -> public key lookups (enumeration guard)
     collabEnable: { max: 40, windowMs: 60 * 60 * 1000 }, // enable/disable collab (re-uploads the blob)
@@ -209,7 +204,6 @@ function createRateLimitMiddleware(operation) {
     'resendVerification',
     'adminAuth',
     'viewPublicSlate',
-    'requestDeviceCode',
   ]);
 
   return (req, res, next) => {

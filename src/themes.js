@@ -435,6 +435,7 @@ export const removeCustomTheme = (id) => {
 // ============================================================================
 
 import { API_URL } from './config';
+import { setNativeAppearance } from './shellMenu';
 
 // Fetch preferences from server and merge with local
 // The preferences, fetched once: callers within a few seconds of each
@@ -602,6 +603,17 @@ export const applyThemeVariables = async (themeId) => {
     document.head.appendChild(meta);
   }
   meta.setAttribute('content', theme.colors.bg);
+  // Inside the iOS shell the status bar sits over the page: its clock and
+  // icons follow the theme the way the tab colour does above. Nothing here
+  // runs in a browser, where window.Capacitor does not exist.
+  const statusBar = typeof window !== 'undefined' && window.Capacitor?.Plugins?.StatusBar;
+  if (statusBar) {
+    const hex = theme.colors.bg.replace('#', '');
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const dark = (0.299 * r + 0.587 * g + 0.114 * b) < 128;
+    statusBar.setStyle({ style: dark ? 'DARK' : 'LIGHT' }).catch(() => {});
+    setNativeAppearance(dark);
+  }
 
   // Load fonts asynchronously (don't block theme application)
   loadThemeFonts(theme);

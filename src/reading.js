@@ -7,5 +7,5 @@
 //                                               the one with the caret dims
 import { makePref } from './pref';
 
-export const readableFont = makePref({ key: 'justtype-readable-font', values: ['off', 'on'], fallback: 'off', attr: 'readable' });
+export const readableFont = makePref({ key: 'justtype-readable-font', values: ['off', 'on'], fallback: 'off', attr: 'readable', inApp: false });
 export const lineFocus = makePref({ key: 'justtype-line-focus', values: ['off', 'on'], fallback: 'off', attr: 'linefocus' });

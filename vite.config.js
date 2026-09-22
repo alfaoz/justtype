@@ -8,8 +8,14 @@ import { join } from 'path'
 function buildManifestPlugin() {
   return {
     name: 'build-manifest',
+    // App build only: the web view runs edge to edge under the status bar, so
+    // the safe-area insets the app already uses need viewport-fit=cover
+    transformIndexHtml(html) {
+      if (process.env.VITE_APP !== '1') return html
+      return html.replace('initial-scale=1.0" />', 'initial-scale=1.0, viewport-fit=cover" />')
+    },
     closeBundle() {
-      const distDir = join(process.cwd(), 'dist')
+      const distDir = join(process.cwd(), process.env.VITE_APP === '1' ? 'dist-app' : 'dist')
       const assetsDir = join(distDir, 'assets')
       const allFiles = readdirSync(assetsDir)
 
@@ -17,10 +23,14 @@ function buildManifestPlugin() {
       // loader is byte-stable across releases (nothing version-specific baked
       // in): it fetches the manifest at runtime, checks its signature on
       // production, and loads the bundles with SRI. See loader/template.html.
+      // The app build (VITE_APP=1, the iOS shell) keeps vite's own index.html:
+      // the bundle is inside a signed app, so there is no loader, no manifest
+      // signature and no offline worker. Everything else below still runs.
       const template = readFileSync(join(process.cwd(), 'loader/template.html'), 'utf-8')
       const isBeta = process.env.VITE_BETA === '1'
+      const isApp = process.env.VITE_APP === '1'
       const loaderHtml = template.replace('__JT_BETA__', String(isBeta))
-      writeFileSync(join(distDir, 'index.html'), loaderHtml)
+      if (!isApp) writeFileSync(join(distDir, 'index.html'), loaderHtml)
 
       // Hash every js/css chunk (lazy-loaded chunks included), not just the entry
       const hashable = allFiles.filter(f => f.endsWith('.js') || f.endsWith('.css')).sort()
@@ -79,7 +89,7 @@ function buildManifestPlugin() {
 export default defineConfig({
   plugins: [react(), tailwindcss(), buildManifestPlugin()],
   build: {
-    outDir: 'dist',
+    outDir: process.env.VITE_APP === '1' ? 'dist-app' : 'dist',
     emptyOutDir: true,
     rollupOptions: {
       output: {

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { strings } from '../strings';
 import { NearbyPeer, decodeCode } from '../nearby';
 import { getNearbySession, onNearbyChange } from '../nearbySession';
+import { canNativeScan, nativeScan, canShareLink, shareText } from '../shellMenu';
 
 // The nearby tab of the collab panel: connect this device to another one on
 // the same network with no server, by showing a code and reading the reply.
@@ -30,8 +31,46 @@ function QrCode({ text }) {
   return <canvas ref={ref} className="nearby-qr" aria-label={t().qrLabel} />;
 }
 
+// On the phone: its own camera sheet reads the code, opened at once and again
+// from `scan`; pasting stays for when there is no camera
+function NativeCodeReader({ expect, onCode }) {
+  const [pasted, setPasted] = useState('');
+  const [bad, setBad] = useState(false);
+  const scan = async () => {
+    setBad(false);
+    const text = await nativeScan(t().pointCamera);
+    if (!text) return;
+    if (decodeCode(text)?.kind === expect) onCode(text); else setBad(true);
+  };
+  useEffect(() => { scan(); }, [expect]);
+  const usePasted = () => {
+    const d = decodeCode(pasted);
+    if (d?.kind === expect) onCode(pasted.trim()); else setBad(true);
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <button onClick={scan} className="sheet-primary py-2">{t().scan}</button>
+      {bad && <p className="text-[var(--theme-red)] text-xs">{t().badCode}</p>}
+      <textarea
+        value={pasted}
+        onChange={(e) => { setPasted(e.target.value); setBad(false); }}
+        placeholder={t().pastePlaceholder}
+        rows={2}
+        spellCheck={false}
+        className="w-full text-xs p-2 rounded border bg-[var(--theme-bg)] border-[var(--theme-border)] text-[var(--theme-text)] font-mono"
+      />
+      {pasted.trim() && <button onClick={usePasted} className="sheet-secondary py-2">{t().useCode}</button>}
+    </div>
+  );
+}
+
 // Reads a QR from the camera (BarcodeDetector, else jsQR) or a pasted code
 function CodeReader({ expect, onCode }) {
+  if (canNativeScan) return <NativeCodeReader expect={expect} onCode={onCode} />;
+  return <WebCodeReader expect={expect} onCode={onCode} />;
+}
+
+function WebCodeReader({ expect, onCode }) {
   const videoRef = useRef(null);
   const [pasted, setPasted] = useState('');
   const [cameraError, setCameraError] = useState(false);
@@ -107,14 +146,22 @@ function CodeDisplay({ code, hint }) {
     <div className="flex flex-col gap-3">
       <QrCode text={code} />
       <p className="text-xs text-[var(--theme-text-dim)]">{hint}</p>
-      <textarea readOnly value={code} rows={3} spellCheck={false} onFocus={(e) => e.target.select()}
-        className="w-full text-xs p-2 rounded border bg-[var(--theme-bg)] border-[var(--theme-border)] text-[var(--theme-text-muted)] font-mono" />
-      <button
-        onClick={() => { navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}
-        className="self-start text-sm text-[var(--theme-accent)] hover:opacity-70 transition-opacity"
-      >
-        {copied ? t().copied : t().copy}
-      </button>
+      {/* On a phone the code goes out through the share sheet (airdrop,
+          messages); the raw text and copy are for everywhere else */}
+      {canShareLink ? (
+        <button onClick={(e) => shareText(code, e.currentTarget)} className="sheet-secondary py-2">{t().share}</button>
+      ) : (
+        <>
+          <textarea readOnly value={code} rows={3} spellCheck={false} onFocus={(e) => e.target.select()}
+            className="w-full text-xs p-2 rounded border bg-[var(--theme-bg)] border-[var(--theme-border)] text-[var(--theme-text-muted)] font-mono" />
+          <button
+            onClick={() => { navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}
+            className="self-start text-sm text-[var(--theme-accent)] hover:opacity-70 transition-opacity"
+          >
+            {copied ? t().copied : t().copy}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -208,8 +255,8 @@ export function NearbyTab({ slateId, getDoc }) {
         <>
           <p className="text-[var(--theme-text-muted)]">{s.explainer}</p>
           <div className="flex items-center gap-4">
-            <button onClick={showCode} className="text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.showCode}</button>
-            <button onClick={() => setStep('reading')} className="text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.readCode}</button>
+            <button onClick={showCode} className="nearby-choice text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.showCode}</button>
+            <button onClick={() => setStep('reading')} className="nearby-choice text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.readCode}</button>
           </div>
         </>
       )}
@@ -217,7 +264,7 @@ export function NearbyTab({ slateId, getDoc }) {
       {step === 'showing' && (code
         ? <>
             <CodeDisplay code={code} hint={s.showHint} />
-            <button onClick={() => setStep('readingReply')} className="self-start text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.readReply}</button>
+            <button onClick={() => setStep('readingReply')} className="nearby-next self-start text-[var(--theme-accent)] hover:opacity-70 transition-opacity">{s.readReply}</button>
           </>
         : <p className="text-[var(--theme-text-dim)] animate-pulse">{s.preparing}</p>
       )}

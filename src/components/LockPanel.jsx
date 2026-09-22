@@ -20,6 +20,9 @@ import { Fade, AutoHeight, EASE } from './Reveal';
  *          the password is checked with `onVerify` as soon as it is typed.
  * `gate`   the slate is locked: its secret opens it (onSubmit({ secret })),
  *          or "forgot it?" hands over to `onForgot` (see LockRecoverModal).
+ *          With `device` ('face id', 'touch id') the phone is asked first
+ *          (`onDevice`), once as the gate appears and again from its word;
+ *          typing the secret is always there too.
  *
  * The words stay still; the stars are the motion. A mistake gets its own
  * line under the explanation and clears the row it happened on.
@@ -40,7 +43,7 @@ export const waysWord = ({ logins = [], phrase = false } = {}) => {
   return words.join(strings.writer.lock.loginWords.or);
 };
 
-export function LockPanel({ mode, needsLogin = false, loginKind = 'password', ways: initialWays = null, onVerify, onSubmit, onForgot, onCancel, className = '' }) {
+export function LockPanel({ mode, needsLogin = false, loginKind = 'password', ways: initialWays = null, onVerify, onSubmit, onForgot, onCancel, device = null, onDevice, className = '' }) {
   const s = strings.writer.lock;
   const [stage, setStage] = useState('secret');
   const [secret, setSecret] = useState('');
@@ -117,6 +120,19 @@ export function LockPanel({ mode, needsLogin = false, loginKind = 'password', wa
     secret: normalizeSecret(secret),
     login: needsLogin ? { kind: loginKind, secret: login } : null,
   }));
+
+  // The phone's face (or finger) types the secret: asked once as the gate
+  // appears, the keyboard kept down while its sheet is up
+  const askDevice = () => {
+    document.activeElement?.blur?.();
+    run(onDevice);
+  };
+  const askedDevice = useRef(false);
+  useEffect(() => {
+    if (mode !== 'gate' || !device || askedDevice.current) return;
+    askedDevice.current = true;
+    askDevice();
+  }, [device]);
 
   // With nothing left to type, the panel itself takes the enter key
   useEffect(() => {
@@ -196,6 +212,9 @@ export function LockPanel({ mode, needsLogin = false, loginKind = 'password', wa
         <div className="mt-6 flex items-center gap-5 text-xs text-[var(--theme-text-dim)]">
           {onCancel && (
             <button onClick={onCancel} className="text-[var(--theme-red)] hover:opacity-70 transition-opacity">{s.cancel}</button>
+          )}
+          {mode === 'gate' && device && (
+            <button onClick={askDevice} disabled={busy} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">{s.useDevice(device)}</button>
           )}
           {mode === 'gate' && onForgot && (
             <button onClick={onForgot} disabled={busy} className="hover:text-[var(--theme-text)] transition-colors disabled:opacity-40">{s.forgot}</button>

@@ -72,10 +72,11 @@ export function attachHoverNote(el, note, { copy = true, title = null, tone = nu
       saidTimer = setTimeout(() => { if (hintEl) { hintEl.textContent = copyHint ? copyHint(copyKey()) : copyKey(); hintEl.style.color = ''; } }, 1200);
     }).catch(() => {});
   };
-  const onEnter = (e) => { x = e.clientX; y = e.clientY; clearTimeout(timer); timer = setTimeout(show, 200); };
+  // A finger has no hover: a tap never opens the card
+  const onEnter = (e) => { if (e.pointerType !== 'mouse') return; x = e.clientX; y = e.clientY; clearTimeout(timer); timer = setTimeout(show, 200); };
   const onMove = (e) => { x = e.clientX; y = e.clientY; place(); };
-  el.addEventListener('mouseenter', onEnter);
-  el.addEventListener('mousemove', onMove);
-  el.addEventListener('mouseleave', hide);
-  return () => { hide(); el.removeEventListener('mouseenter', onEnter); el.removeEventListener('mousemove', onMove); el.removeEventListener('mouseleave', hide); };
+  el.addEventListener('pointerenter', onEnter);
+  el.addEventListener('pointermove', onMove);
+  el.addEventListener('pointerleave', hide);
+  return () => { hide(); el.removeEventListener('pointerenter', onEnter); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerleave', hide); };
 }

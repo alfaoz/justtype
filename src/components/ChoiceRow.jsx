@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { readSwipe } from '../swipe';
 import { Ico } from './icons';
+import { tap } from '../cues';
 
 /**
  * A row of words to pick one from (`sort: recent oldest ...`), with one
@@ -75,7 +76,7 @@ export function ChoiceRow({ label, options, value, onChange, className = '', aft
           {option.node || (
             <button
               data-choice={option.id}
-              onClick={() => onChange(option.id)}
+              onClick={() => { if (option.id !== value) tap(); onChange(option.id); }}
               title={option.title}
               className={`transition-colors duration-300 max-w-[12rem] truncate ${
                 option.tone === 'danger'

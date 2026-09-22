@@ -5,13 +5,27 @@
 // browser has seen a gesture.
 import { makePref } from './pref';
 import { onLockChange } from './slateLock';
+import { inShell } from './shell';
 
 export const soundsPref = makePref({ key: 'justtype-sounds', values: ['off', 'on'], fallback: 'off' });
-export const hapticsPref = makePref({ key: 'justtype-haptics', values: ['off', 'on'], fallback: 'off' });
+// In the app the phone's own haptics answer, and they start on, as a phone
+// app's do; the web's buzz stays off until asked for
+export const hapticsPref = makePref({ key: 'justtype-haptics', values: ['off', 'on'], fallback: inShell ? 'on' : 'off' });
 // Desktop Chrome exposes vibrate() and does nothing with it; the row is only
 // worth showing where there is a hand on the glass
-export const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
-  && typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+export const canVibrate = inShell || (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function'
+  && typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches);
+
+// The app's haptics (ShellBar.haptic): kinds are the phone's own, selection,
+// light, soft, medium, rigid, success, warning, error
+const nativeHaptic = (kind) => window.Capacitor?.nativePromise?.('ShellBar', 'haptic', { kind })?.catch?.(() => {});
+const nativeKinds = { save: 'success', unlock: 'success', lock: 'medium' };
+
+// A touch of feedback for the page's own controls (a choice made); only in
+// the app, where it feels like the rest of the phone
+export function tap(kind = 'selection') {
+  if (inShell && hapticsPref.get() === 'on') nativeHaptic(kind);
+}
 
 let ctx = null;
 function audio() {
@@ -52,8 +66,16 @@ export function cue(name) {
     if (c) sounds[name]?.(c);
   }
   if (hapticsPref.get() === 'on' && canVibrate) {
-    try { navigator.vibrate(buzz[name] || 10); } catch {}
+    if (inShell) nativeHaptic(nativeKinds[name] || 'light');
+    else { try { navigator.vibrate(buzz[name] || 10); } catch {} }
   }
+}
+
+// The native controls (dock, pill, menus) follow the same setting
+if (inShell) {
+  const sync = (v) => window.Capacitor?.nativePromise?.('ShellBar', 'haptics', { on: v === 'on' })?.catch?.(() => {});
+  sync(hapticsPref.get());
+  hapticsPref.subscribe(sync);
 }
 
 if (typeof window !== 'undefined') {
