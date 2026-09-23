@@ -26,6 +26,7 @@
 //   s->c  {type:'peer_left', slateId, authorId} -> user's last socket left the room
 //   s->c  {type:'error', error, code?, slateId?}
 
+const { SESSION_MATCH } = require('./sessionMatch');
 const WS_PATH = '/collab/ws';
 const MAX_FRAME_BYTES = 512 * 1024;      // hard cap on any inbound frame
 const MAX_PAYLOAD_CHARS = 300 * 1024;    // base64 chars per update/awareness
@@ -89,8 +90,34 @@ function broadcast(slateId, obj, exceptWs = null) {
   }
 }
 
-// Cookie header -> value of justtype_token (no cookie-parser at upgrade time)
+// The iOS app's web view cannot hand its session cookie to a WebSocket (the
+// cookie lives in the phone's native store, and its page is capacitor://).
+// It asks POST /api/collab/ticket over its authenticated HTTP instead and
+// opens the socket with ?ticket=: one use, thirty seconds, standing in for
+// the session it was issued under. The session token never enters a URL.
+const TICKET_MS = 30 * 1000;
+const tickets = new Map(); // ticket -> { token, expires }
+function issueTicket(token) {
+  const now = Date.now();
+  for (const [key, t] of tickets) if (t.expires < now) tickets.delete(key);
+  const ticket = require('crypto').randomBytes(24).toString('hex');
+  tickets.set(ticket, { token, expires: now + TICKET_MS });
+  return ticket;
+}
+function redeemTicket(req) {
+  let ticket = null;
+  try { ticket = new URL(req.url, 'http://localhost').searchParams.get('ticket'); } catch { return null; }
+  if (!ticket) return null;
+  const t = tickets.get(ticket);
+  tickets.delete(ticket);
+  return t && t.expires > Date.now() ? t.token : null;
+}
+
+// Cookie header -> value of justtype_token (no cookie-parser at upgrade time),
+// or the session a ticket stands for
 function tokenFromRequest(req) {
+  const ticketed = redeemTicket(req);
+  if (ticketed) return ticketed;
   const cookieHeader = req.headers.cookie || '';
   for (const part of cookieHeader.split(';')) {
     const eq = part.indexOf('=');
@@ -116,7 +143,7 @@ function verifyUser(req) {
   if (!user || user.oauth) return null;
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const result = deps.db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
+    const result = deps.db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
     if (result.changes === 0) return null;
   } catch {
     return null;
@@ -128,7 +155,7 @@ function membership(slateId, userId) {
   return deps.db.prepare(`
     SELECT m.status, m.role FROM collab_members m
     JOIN slates s ON s.id = m.slate_id
-    WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1
+    WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1 AND s.deleted_at IS NULL
   `).get(slateId, userId);
 }
 
@@ -315,4 +342,4 @@ function closeRoom(slateId) {
   }
 }
 
-module.exports = { attach, notifySlateChanged, notifyRekeyed, kickMember, closeRoom };
+module.exports = { attach, issueTicket, notifySlateChanged, notifyRekeyed, kickMember, closeRoom };

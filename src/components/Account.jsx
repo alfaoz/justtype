@@ -5,8 +5,19 @@ import { API_URL } from '../config';
 import { strings } from '../strings';
 import { RecoveryKeyModal } from './RecoveryKeyModal';
 import { ShareSlates } from './ShareSlates';
-import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle } from '../crypto';
+import { SupportButtons } from './SupportButtons';
+import { Collapse } from './Reveal';
+import { ChoiceRow, wordOptions } from './ChoiceRow';
+import { useMotion, setMotion } from '../motion';
+import { SCALES, useScale, setScale } from '../scale';
+import { readableFont, lineFocus } from '../reading';
+import { soundsPref, hapticsPref, canVibrate, cue } from '../cues';
+import { SCROLL_MODES, useScroll, setScroll } from '../typewriter';
+import { SWIPE_MODES, useSwipe, setSwipe } from '../swipe';
+import { ICON_MODES, useIcons, setIcons } from '../iconsPref';
+import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
+import { rewrapLockRecovery } from '../slateLock';
 import { wordlist } from '../bip39-wordlist';
 import { useToast } from './Toast';
 
@@ -15,7 +26,8 @@ import { useToast } from './Toast';
  * settings block on this page uses it, so the page reads as three short lists
  * instead of a stack of loose look-alike cards.
  */
-function Section({ title, tone, children }) {
+/** `note` is a quiet line under the box, for a remark that is not a row. */
+function Section({ title, tone, note, children }) {
   const border = tone === 'danger' ? 'border-red-900/50' : 'border-[var(--theme-border)]';
   const divide = tone === 'danger' ? 'divide-red-900/50' : 'divide-[var(--theme-border)]';
   return (
@@ -24,6 +36,7 @@ function Section({ title, tone, children }) {
         <h2 className="text-[11px] uppercase tracking-wider text-[var(--theme-text-dim)] mb-2 px-1">{title}</h2>
       )}
       <div className={`border ${border} rounded-lg overflow-hidden divide-y ${divide}`}>{children}</div>
+      {note && <p className="mt-2 px-1 text-xs text-[var(--theme-text-dim)]">{note}</p>}
     </section>
   );
 }
@@ -38,17 +51,27 @@ function InfoRow({ label, children }) {
   );
 }
 
-/** The header of an expandable row inside a Section. */
+/** The header of an expandable row inside a Section. While the row is open,
+ * the hover tint leaks down into the box below it and fades out; the box is
+ * positioned after it, so the tint stays behind what the box says. */
 function DisclosureHeader({ label, open, onToggle, tone }) {
+  const tint = tone === 'danger' ? 'rgba(127, 29, 29, 0.1)' : 'var(--theme-bg-secondary)';
   return (
     <button
       onClick={onToggle}
-      className={`w-full flex items-center justify-between gap-4 px-4 py-3.5 text-sm transition-colors ${
+      className={`group relative w-full flex items-center justify-between gap-4 px-4 py-3.5 text-sm transition-colors ${
         tone === 'danger'
           ? 'text-red-400 hover:bg-red-900/10'
           : 'hover:bg-[var(--theme-bg-secondary)]'
       }`}
     >
+      {open && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-full h-28 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+          style={{ background: `linear-gradient(to bottom, ${tint}, transparent)` }}
+        />
+      )}
       <span className="text-left">{label}</span>
       <span
         className={`shrink-0 transition-transform duration-200 ${open ? 'rotate-45' : ''} ${
@@ -163,6 +186,17 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   // Collapsible sections state
   const [showSessions, setShowSessions] = useState(false);
   const [showPasswordSection, setShowPasswordSection] = useState(false);
+  // Device preferences shown under accessibility, shared with the writer's settings row
+  const [showAccessibility, setShowAccessibility] = useState(false);
+  const motion = useMotion();
+  const scale = useScale();
+  const readable = readableFont.use();
+  const focusLine = lineFocus.use();
+  const sounds = soundsPref.use();
+  const haptics = hapticsPref.use();
+  const scroll = useScroll();
+  const swipe = useSwipe();
+  const icons = useIcons();
   const [showDangerZone, setShowDangerZone] = useState(false);
 
   // Connected (authorized third-party) apps
@@ -495,7 +529,12 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
           const createdAt = formatExportDate(data.created_at);
           const updatedAt = formatExportDate(data.updated_at);
-          const header = `Title: ${exportTitle || 'Untitled'}\nCreated: ${createdAt}\nLast Updated: ${updatedAt}\n\n`;
+          let tagLine = '';
+          const encTags = data.encrypted_tags || slateMeta.encrypted_tags;
+          if (encTags && slateKey) {
+            try { const tags = await decryptTags(encTags, slateKey); if (Array.isArray(tags) && tags.length) tagLine = `Tags: ${tags.join(', ')}\n`; } catch { /* tags stay out */ }
+          }
+          const header = `Title: ${exportTitle || 'Untitled'}\nCreated: ${createdAt}\nLast Updated: ${updatedAt}\n${tagLine}\n`;
 
           zip.file(filename, `${header}${content}`);
           exported++;
@@ -636,6 +675,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         body.newRecoverySalt = newRecoverySalt;
       }
 
+      // Lock-recovery keypairs the password opens get the new phrase too
+      const followUp = () => (clientRecoveryPhrase ? rewrapLockRecovery({
+        via: { kind: 'password', secret: recoveryPassword },
+        add: [{ kind: 'phrase', secret: clientRecoveryPhrase, check: { recoverySalt: body.newRecoverySalt, recoveryWrappedKey: body.newRecoveryWrappedKey } }],
+      }).catch(() => {}) : null);
       const response = await fetch(`${API_URL}/account/regenerate-recovery-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -646,6 +690,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       const data = await response.json();
 
       if (response.ok) {
+        followUp();
         setRecoveryPhrase(clientRecoveryPhrase || data.recoveryPhrase);
         setRecoveryPassword('');
       } else {
@@ -700,6 +745,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       const recoveryPhraseToShow = body._recoveryPhrase;
       delete body._recoveryPhrase;
+      // Lock-recovery keypairs the old password opens get the new password
+      // and the new phrase
+      const followUp = () => (slateKey ? rewrapLockRecovery({
+        via: { kind: 'password', secret: currentPassword },
+        add: [
+          { kind: 'password', secret: newPassword },
+          { kind: 'phrase', secret: recoveryPhraseToShow, check: { recoverySalt: body.newRecoverySalt, recoveryWrappedKey: body.newRecoveryWrappedKey } },
+        ],
+      }).catch(() => {}) : null);
 
       const response = await fetch(`${API_URL}/account/change-password`, {
         method: 'POST',
@@ -711,6 +765,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       const data = await response.json();
 
       if (response.ok) {
+        followUp();
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
@@ -984,6 +1039,15 @@ export function Account({ token, username, userId, email, emailVerified, authPro
 
       const data = await response.json();
       if (response.ok) {
+        // Lock-recovery keypairs the pin opens get the password and the
+        // new phrase
+        rewrapLockRecovery({
+          via: { kind: 'pin', secret: setPasswordPin.join('') },
+          add: [
+            { kind: 'password', secret: setPasswordNew },
+            { kind: 'phrase', secret: newRecoveryPhrase, check: { recoverySalt, recoveryWrappedKey } },
+          ],
+        }).catch(() => {});
         setSetPasswordRecoveryPhrase(newRecoveryPhrase);
         setShowSetPasswordModal(false);
         setShowSetPasswordSuccess(true);
@@ -1227,22 +1291,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 {strings.writer.about.support.limits}
               </a>.
             </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => window.location.href = '/?donate=one_time'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.donate}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.donateHint}</span>
-              </button>
-              <button
-                onClick={() => window.location.href = '/?donate=quarterly'}
-                className="flex-1 border border-[var(--theme-border)] rounded px-3 py-2.5 hover:bg-[var(--theme-bg-tertiary)] hover:text-[var(--theme-accent)] transition-colors"
-              >
-                <span className="block text-xs">{strings.writer.about.support.subscribe}</span>
-                <span className="block text-[10px] text-[var(--theme-text-dim)] mt-0.5">{strings.writer.about.support.subscribeHint}</span>
-              </button>
-            </div>
+            <SupportButtons
+              disabled
+              onDonate={() => window.location.href = '/?donate=one_time'}
+              onSubscribe={() => window.location.href = '/?donate=quarterly'}
+            />
           </div>
         )}
 
@@ -1284,8 +1337,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showPasswordSection}
                 onToggle={() => setShowPasswordSection(!showPasswordSection)}
               />
-              {showPasswordSection && (
-                <div className="px-4 pb-4 -mt-1">
+              <Collapse className="relative" open={showPasswordSection}>
+                <div className="px-4 pb-4">
                   <form onSubmit={handleChangePassword} className="space-y-3">
                     <input
                       type="password"
@@ -1322,7 +1375,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1341,8 +1394,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showRecoverySection}
                 onToggle={() => setShowRecoverySection(!showRecoverySection)}
               />
-              {showRecoverySection && (
-                <div className="px-4 pb-4 -mt-1">
+              <Collapse className="relative" open={showRecoverySection}>
+                <div className="px-4 pb-4">
                   <p className="text-[var(--theme-text-muted)] text-xs mb-3">{strings.auth.recoveryKey.regenerate.description}</p>
                   <form onSubmit={handleRegenerateRecoveryKey} className="space-y-3">
                     <input
@@ -1363,7 +1416,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                     </button>
                   </form>
                 </div>
-              )}
+              </Collapse>
             </div>
           )}
 
@@ -1394,8 +1447,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showSessions}
                 onToggle={() => setShowSessions(!showSessions)}
               />
-            {showSessions && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse className="relative" open={showSessions}>
+              <div className="px-4 pb-4">
                 {loadingSessions ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">loading...</p>
                 ) : (
@@ -1446,9 +1499,53 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
+        </Section>
+
+        <Section title={strings.account.sections.accessibility} note={showAccessibility ? strings.account.accessibility.note : null}>
+          <div>
+            <DisclosureHeader
+              label={strings.account.accessibility.title}
+              open={showAccessibility}
+              onToggle={() => setShowAccessibility(!showAccessibility)}
+            />
+            <Collapse className="relative" open={showAccessibility}>
+              <div className="border-t border-[var(--theme-border)] divide-y divide-[var(--theme-border)]">
+          <InfoRow label={strings.account.accessibility.motion}>
+            <ChoiceRow options={wordOptions(['on', 'off'])} value={motion} onChange={setMotion} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.size}>
+            <ChoiceRow options={wordOptions(SCALES)} value={scale} onChange={setScale} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.font}>
+            <ChoiceRow options={wordOptions(readableFont.values)} value={readable} onChange={readableFont.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.lineFocus}>
+            <ChoiceRow options={wordOptions(lineFocus.values)} value={focusLine} onChange={lineFocus.set} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.scroll}>
+            <ChoiceRow options={wordOptions(SCROLL_MODES)} value={scroll} onChange={setScroll} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.swipe}>
+            <ChoiceRow options={wordOptions(SWIPE_MODES)} value={swipe} onChange={setSwipe} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.icons}>
+            <ChoiceRow options={wordOptions(ICON_MODES)} value={icons} onChange={setIcons} />
+          </InfoRow>
+          <InfoRow label={strings.account.accessibility.sounds}>
+            {/* Turning it on plays the save tick, so you hear what you chose */}
+            <ChoiceRow options={wordOptions(soundsPref.values)} value={sounds} onChange={(v) => { soundsPref.set(v); if (v === 'on') cue('save'); }} />
+          </InfoRow>
+          {canVibrate && (
+            <InfoRow label={strings.account.accessibility.haptics}>
+              <ChoiceRow options={wordOptions(hapticsPref.values)} value={haptics} onChange={(v) => { hapticsPref.set(v); if (v === 'on') cue('save'); }} />
+            </InfoRow>
+          )}
+              </div>
+            </Collapse>
+          </div>
         </Section>
 
         <Section title={strings.account.sections.connections}>
@@ -1459,8 +1556,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showConnectedApps}
                 onToggle={() => setShowConnectedApps(!showConnectedApps)}
               />
-            {showConnectedApps && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse className="relative" open={showConnectedApps}>
+              <div className="px-4 pb-4">
                 {loadingApps ? (
                   <p className="text-[var(--theme-text-dim)] text-sm">{strings.account.connectedApps.loading}</p>
                 ) : connectedApps.length === 0 ? (
@@ -1512,7 +1609,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   </div>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
 
           {shareApp && (
@@ -1544,8 +1641,8 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                 open={showDangerZone}
                 onToggle={() => setShowDangerZone(!showDangerZone)} tone="danger"
               />
-            {showDangerZone && (
-              <div className="px-4 pb-4 -mt-1">
+            <Collapse className="relative" open={showDangerZone}>
+              <div className="px-4 pb-4">
                 <p className="text-xs text-[var(--theme-text-dim)] mb-3">
                   permanently delete your account and all data. this cannot be undone.
                 </p>
@@ -1557,7 +1654,7 @@ export function Account({ token, username, userId, email, emailVerified, authPro
                   {deleting ? 'deleting...' : 'delete account'}
                 </button>
               </div>
-            )}
+            </Collapse>
           </div>
         </Section>
 
@@ -2028,9 +2125,16 @@ export function Account({ token, username, userId, email, emailVerified, authPro
         <RecoveryKeyModal
           recoveryPhrase={setPasswordRecoveryPhrase}
           subtitle={strings.account.googleAuth.setPassword.success.subtitle}
-          onAcknowledge={() => {
+          onAcknowledge={async () => {
             setShowSetPasswordSuccess(false);
             setSetPasswordRecoveryPhrase(null);
+            if (onRecoveryKeyAcknowledged) onRecoveryKeyAcknowledged();
+            // The key was shown and promised safe: tell the server before the
+            // reload asks it, or the page comes back warning it was never shown
+            await fetch(`${API_URL}/account/acknowledge-recovery-key`, {
+              method: 'POST',
+              credentials: 'include'
+            }).catch(() => {});
             window.location.reload();
           }}
         />

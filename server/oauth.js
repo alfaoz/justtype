@@ -11,6 +11,7 @@
 // slates:read:private scope returns the stored ciphertext + metadata only.
 // The server never brokers plaintext or encryption keys to third parties.
 
+const { SESSION_MATCH } = require('./sessionMatch');
 const express = require('express');
 const cors = require('cors');
 const { resolveUserTheme } = require('./themeTokens');
@@ -92,7 +93,7 @@ function mountOAuth(app, deps) {
       const payload = jwt.verify(token, JWT_SECRET);
       if (payload.oauth) return null; // an OAuth token is not a session
       const hash = sha256(token);
-      const session = db.prepare('SELECT 1 FROM sessions WHERE token_hash = ?').get(hash);
+      const session = db.prepare(`SELECT 1 FROM sessions WHERE ${SESSION_MATCH}`).get(hash, hash);
       if (!session) return null;
       return { id: payload.id, username: payload.username };
     } catch {
@@ -1045,7 +1046,7 @@ function mountOAuth(app, deps) {
   app.get('/api/oauth/slates', publicCors, authenticateOAuth('slates:read:meta'), (req, res) => {
     const rows = db.prepare(`SELECT slate_number, is_published, share_id, word_count, char_count,
       created_at, updated_at, published_at, title, encrypted_title
-      FROM slates WHERE user_id = ? ORDER BY updated_at DESC`).all(req.oauth.userId);
+      FROM slates WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`).all(req.oauth.userId);
     res.json(rows.map(s => ({
       slate_number: s.slate_number,
       is_published: !!s.is_published,
@@ -1085,9 +1086,9 @@ function mountOAuth(app, deps) {
       const cols = `slate_number, is_published, share_id, word_count, char_count,
         created_at, updated_at, published_at, title, encrypted_title`;
       const changedRows = since
-        ? db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND updated_at > datetime(?)
+        ? db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND deleted_at IS NULL AND updated_at > datetime(?)
             ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, since, SYNC_CAP)
-        : db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ?
+        : db.prepare(`SELECT ${cols} FROM slates WHERE user_id = ? AND deleted_at IS NULL
             ORDER BY updated_at ASC LIMIT ?`).all(req.oauth.userId, SYNC_CAP);
       const has_more = changedRows.length === SYNC_CAP;
 
@@ -1124,7 +1125,7 @@ function mountOAuth(app, deps) {
     try {
       const rows = db.prepare(`SELECT slate_number, title, share_id, word_count, char_count,
         created_at, updated_at, published_at, b2_public_file_id, b2_file_id
-        FROM slates WHERE user_id = ? AND is_published = 1 ORDER BY published_at DESC`).all(req.oauth.userId);
+        FROM slates WHERE user_id = ? AND is_published = 1 AND deleted_at IS NULL ORDER BY published_at DESC`).all(req.oauth.userId);
       const out = [];
       for (const s of rows) {
         let content = null;
@@ -2062,7 +2063,7 @@ function mountOAuth(app, deps) {
     }
     // Collab slates are excluded like unowned ones: skipped, not errored (see
     // the single-grant endpoint for the rule).
-    const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND COALESCE(is_collab, 0) = 0').all(req.user.id).map(r => r.slate_number));
+    const owned = new Set(db.prepare('SELECT slate_number FROM slates WHERE user_id = ? AND COALESCE(is_collab, 0) = 0 AND COALESCE(is_locked, 0) = 0').all(req.user.id).map(r => r.slate_number));
     const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
     const run = db.transaction((rows) => {
       let saved = 0;
@@ -2091,12 +2092,13 @@ function mountOAuth(app, deps) {
     if (!grantableClient(req.user.id, client_id)) {
       return res.status(403).json({ error: 'client not authorized for private slates' });
     }
-    const slate = db.prepare('SELECT slate_number, is_collab FROM slates WHERE slate_number = ? AND user_id = ?')
+    const slate = db.prepare('SELECT slate_number, is_collab, is_locked FROM slates WHERE slate_number = ? AND user_id = ?')
       .get(slate_number, req.user.id);
     if (!slate) return res.status(404).json({ error: 'slate not found' });
     // Collaborative slates are multi-writer under a shared doc key; the grant
     // sync model assumes a single-writer owner-canonical slate. One or the other.
     if (slate.is_collab) return res.status(409).json({ error: 'collaborative slates cannot be shared with apps' });
+    if (slate.is_locked) return res.status(409).json({ error: 'locked slates cannot be shared with apps' });
 
     const validDeviceIds = new Set(activeDeviceKeys(req.user.id, client_id).map(d => d.device_id));
     db.transaction(() => writeGrant(client_id, req.user.id,
