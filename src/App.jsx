@@ -37,7 +37,7 @@ import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
 import { inShell } from './shell';
 import { leftyMode } from './lefty';
-import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, hideNativePill, restoreNativePill, startGoogleSignIn } from './shellMenu';
+import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, hideNativePill, nativeNewSettled, restoreNativePill, startGoogleSignIn } from './shellMenu';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -214,7 +214,7 @@ export default function App() {
     else if (id === 'toggle') handleToggleView();
     else if (id === 'account') handleAccountToggle();
     else if (id === 'login') setShowAuthModal(true);
-    else if (id === 'new') handleNewSlate();
+    else if (id === 'new') handleNewSlate().finally(nativeNewSettled);
     // The same save as the writing menu's
     else if (id === 'save') window.dispatchEvent(new CustomEvent('shell:pick', { detail: { id: 'save' } }));
     else if (id === 'back') { window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }

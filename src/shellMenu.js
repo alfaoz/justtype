@@ -47,6 +47,8 @@ export const restoreNativePill = () => setNativePill({ ...lastPill, status: '' }
 export const setNativeUpdates = (data) => (canNativePill ? cap.nativePromise('ShellPill', 'updates', data).catch(() => {}) : Promise.resolve());
 // One word in the pill's place for a page with no writing menu ({} gives it back)
 export const setNativePillAction = (data) => (canNativePill ? cap.nativePromise('ShellPill', 'action', data).catch(() => {}) : Promise.resolve());
+// A new slate is up after a quick new from the pill: its cover can lift
+export const nativeNewSettled = () => (canNativePill ? cap.nativePromise('ShellPill', 'settled', {}).catch(() => {}) : Promise.resolve());
 export const hideNativePill = () => (canNativePill ? cap.nativePromise('ShellPill', 'hide', {}).catch(() => {}) : Promise.resolve());
 
 // The words at the bottom left, drawn by the phone (ShellBarPlugin): the page
