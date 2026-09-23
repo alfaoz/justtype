@@ -1205,6 +1205,9 @@ html[data-shell] .page-header + * {
 /* The app's web view does not scroll the page itself: what's new scrolls
    in its own box */
 html[data-shell] .wn-page { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; }
+/* The slate rows' three dots stand the row's height on the phone, a bigger
+   target and centred on the row */
+html[data-shell] .dot-menu-icon { width: 1.5rem; height: 1.5rem; }
 /* Overlays keep clear of the status bar and the keyboard */
 html[data-shell] .fixed.inset-0.p-4 {
   padding-top: calc(1rem + env(safe-area-inset-top));

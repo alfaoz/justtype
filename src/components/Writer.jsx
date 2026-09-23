@@ -2955,7 +2955,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => { onUnsavedDraft?.(unsavedDraft); }, [unsavedDraft]);
   useEffect(() => () => onUnsavedDraft?.(false), []);
   // Every render that changes what the pill says or offers reaches the phone
-  const shellPillState = canNativePill ? JSON.stringify({ label: showCounter ? strings.writer.mobile.words(wordCount) : '', dirty: Boolean(hasUnsavedChanges && token), status: status !== 'ready' ? status : '', statusColor: nativeStatusColor(statusTone(status)), items: shellMenuItems() }) : '';
+  const shellPillState = canNativePill ? JSON.stringify({ label: showCounter ? strings.writer.mobile.words(wordCount) : '', dirty: Boolean(hasUnsavedChanges && token), status: status !== 'ready' ? status : '', statusColor: nativeStatusColor(statusTone(status)), items: shellMenuItems(), quick: currentSlate && !isShared ? strings.slates.newSlate : '' }) : '';
   useEffect(() => {
     if (!canNativePill) return;
     setNativePill(JSON.parse(shellPillState));

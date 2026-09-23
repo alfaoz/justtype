@@ -199,7 +199,7 @@ function DotMenu({ isOpen, onToggle, items, small = false }) {
             and the line grows from the middle. Splitting is not: the line
             fades where it is and the dots fade back in at their own places
             (the line's geometry snaps only after its fade is done). */}
-        <svg className={small ? 'w-3 h-3' : 'w-4 h-4'} fill="currentColor" viewBox="0 0 16 16">
+        <svg className={small ? 'w-3 h-3' : 'dot-menu-icon w-4 h-4'} fill="currentColor" viewBox="0 0 16 16">
           {[2, 8, 14].map((cy) => (
             <circle
               key={cy}
