@@ -1195,7 +1195,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     caretRestoreRef.current = null;
   }, [isLoading, editorMode, contentFadeKey]);
 
-  const loadSlate = async (id) => {
+  const loadSlate = async (id, { network = false } = {}) => {
     relockOthers(id);
     saveCaret();
     caretSlateRef.current = id;
@@ -1209,8 +1209,17 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       let data = null;
       let fromCache = false;
       let gone = false;
+      // In the app the device copy opens at once and the server is asked
+      // after, in the background (checkServerCopy): the wait for the network
+      // was most of the time it took a slate to appear. Live collab slates
+      // keep their own path.
+      const copyFirst = inShell && !network && isOnline() && Boolean(cached?.data?.encryptedContent)
+        && !cached.data.is_collab && !cached.data.deleted_at;
       if (isLocalSlateNumber(id) || pending) {
         if (!cached?.data?.encryptedContent) throw new Error('local copy missing');
+        data = cached.data;
+        fromCache = true;
+      } else if (copyFirst) {
         data = cached.data;
         fromCache = true;
       } else {
@@ -1363,18 +1372,56 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       loadedHadTextRef.current = !!(slateContent || '').trim();
       setHasUnsavedChanges(false);
       setContentFadeKey(prev => prev + 1);
-      if (openingLoadRef.current) {
+      // From the device copy there was hardly a wait: no fade to sit through
+      if (openingLoadRef.current || copyFirst) {
         openingLoadRef.current = false;
         setIsLoading(false);
       } else {
         setLoadingFadeOut(true);
         setTimeout(() => { setIsLoading(false); setLoadingFadeOut(false); }, 300);
       }
+      if (copyFirst) checkServerCopy(id, data, slateContent);
     } catch (err) {
       console.error('Failed to load slate:', err);
       setIsLoading(false);
       setLoadingFadeOut(false);
     }
+  };
+
+  // After a slate opened from the device copy: the server's copy, fetched
+  // quietly. Nearly always the same, and only the device copy's bookkeeping
+  // changes. Newer, it takes the page's place while nothing has been typed
+  // yet; once something has, the next save meets the change the usual way
+  // (409, then the merge). A connected app's edit is pulled the same way.
+  const checkServerCopy = async (id, shown, shownContent) => {
+    const stillHere = () => String(currentSlateRef.current?.slate_number ?? '') === String(id);
+    const untouched = () => stillHere() && contentRef.current === shownContent;
+    try {
+      const response = await fetch(`${API_URL}/slates/${id}`, { credentials: 'include' });
+      if (response.status === 401) {
+        const body = await response.json().catch(() => ({}));
+        if (body.code === 'ENCRYPTION_KEY_MISSING' && stillHere()) onLogin();
+        return;
+      }
+      if (response.status === 404 || response.status === 410) {
+        if (stillHere()) { leaveGoneSlate(id); setContent(''); setTitle(''); setStatus('ready'); }
+        return;
+      }
+      if (!response.ok) return;
+      const data = await response.json();
+      const same = (data.updated_at ?? null) === (shown.updated_at ?? null) && data.encryptedContent === shown.encryptedContent;
+      if (!same) {
+        if (untouched()) loadSlate(id, { network: true });
+        return;
+      }
+      if (userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
+      if (stillHere()) setTrashedSlate(data.deleted_at ? id : null);
+      if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && userId) {
+        const slateKey = await getSlateKey(userId);
+        const merged = slateKey ? await pullAppEdits(id, slateKey) : null;
+        if (merged && untouched()) loadSlate(id, { network: true });
+      }
+    } catch { /* offline again: the device copy stands */ }
   };
 
   const handleStripeCheckout = async (tier, amount, email) => {
@@ -1634,7 +1681,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // Offline, or the network fell over mid-save: the edit stays on this
   // device and syncs later. A new slate gets a local number until then.
   // Collab slates persist through the relay and are not queued here.
-  const saveOffline = async (body) => {
+  const saveOffline = async (body, loud = true) => {
     if (!userId || collabDocKey || !body.encryptedContent) return false;
     if (currentSlate) {
       await queueOfflineSave(userId, currentSlate.slate_number, body, loadedSlateRef.current ? { data: loadedSlateRef.current } : null);
@@ -1654,7 +1701,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     loadedHadTextRef.current = !!((content) || '').trim();
     setHasUnsavedChanges(false);
     dropDraft();
-    setStatus(strings.writer.connectivity.savedLocally);
+    // On the phone a standing status covers the dock: a save the owner asked
+    // for says it briefly, autosaves stay quiet
+    if (!inShell) setStatus(strings.writer.connectivity.savedLocally);
+    else if (loud) announceStatus(strings.writer.connectivity.savedLocally, 2000);
     return true;
   };
 
@@ -1744,7 +1794,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // Collab slates persist through the Yjs document, which lives on this
     // device too; the canonical blob catches up when the network is back
     if (collabDocKey && !isOnline()) {
-      setStatus(strings.writer.connectivity.savedLocally);
+      if (!inShell) setStatus(strings.writer.connectivity.savedLocally);
+      else if (explicit) announceStatus(strings.writer.connectivity.savedLocally, 2000);
       return null;
     }
 
@@ -1781,7 +1832,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (currentSlate && loadedSlateRef.current?.updated_at) body.baseUpdatedAt = loadedSlateRef.current.updated_at;
       if (!currentSlate) body.clientRef = (newSlateRefRef.current ||= newLocalSlateNumber());
 
-      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
+      if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body, loud)) { if (loud && !inShell) holdAnnouncement(3000); return { local: true }; }
 
       const send = (payload) => fetch(url, {
         method,
@@ -1794,7 +1845,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         response = await send(body);
       } catch (netErr) {
         reportNetworkFailure();
-        if (await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
+        if (await saveOffline(body, loud)) { if (loud && !inShell) holdAnnouncement(3000); return { local: true }; }
         throw netErr;
       }
 
@@ -1834,7 +1885,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       // The server would not take it: the text is kept on this device and
       // the queued write retries when things are better
       if (!response.ok) {
-        if (await saveOffline(body)) { if (loud) holdAnnouncement(3000); return { local: true }; }
+        if (await saveOffline(body, loud)) { if (loud && !inShell) holdAnnouncement(3000); return { local: true }; }
         endAnnouncement();
         setStatus(saveFailedStatus());
         return null;

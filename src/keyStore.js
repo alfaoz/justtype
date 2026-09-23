@@ -74,10 +74,19 @@ export async function saveSlateKey(userId, keyBytes) {
   await idbDelete(userId).catch(() => {});
 }
 
+// One keychain read at a time per account: a caller arriving while it runs
+// waits for the same answer (main.jsx starts it before the first slate asks)
+const reading = new Map();
 export async function getSlateKey(userId) {
   if (!inKeychain) return idbGet(userId);
   const id = String(userId);
   if (held.has(id)) return held.get(id);
+  if (!reading.has(id)) reading.set(id, readKeychainKey(userId).finally(() => reading.delete(id)));
+  return reading.get(id);
+}
+
+async function readKeychainKey(userId) {
+  const id = String(userId);
   const r = await keychain('keyGet', { account: account(userId) }).catch(() => null);
   if (r?.value) { const bytes = fromB64(r.value); held.set(id, bytes); return bytes; }
   // Left by an older build: into the keychain, out of IndexedDB

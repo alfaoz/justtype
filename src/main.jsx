@@ -8,6 +8,14 @@ import './reading';
 import './cues';
 import './shell'; // the iOS shell's keyboard inset and page mark, a no-op in a browser
 import { applyThemeVariables, themeExists, deviceDefaultTheme } from './themes';
+import { getSlateKey } from './keyStore';
+import { inShell } from './shell';
+
+// The app reads the slate key from the keychain: started now, it is in hand
+// by the time the first slate needs it
+if (inShell) {
+  try { const id = localStorage.getItem('justtype-user-id'); if (id) getSlateKey(id).catch(() => {}); } catch { /* storage unavailable */ }
+}
 
 // The theme's variables and body class before anything renders, so the
 // first frame is the theme, not the stylesheet's light defaults
