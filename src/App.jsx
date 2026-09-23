@@ -37,7 +37,7 @@ import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
 import { inShell } from './shell';
 import { leftyMode } from './lefty';
-import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, restoreNativePill, startGoogleSignIn } from './shellMenu';
+import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, hideNativePill, restoreNativePill, startGoogleSignIn } from './shellMenu';
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -172,6 +172,8 @@ export default function App() {
     // The feedback page's back takes the bar (its send takes the pill)
     : view === 'feedback'
       ? [{ id: 'back', label: strings.feedback.cancel, active: false }]
+    : view === 'whats-new'
+      ? [{ id: 'back', label: strings.whatsNew.back, active: false }]
     : token
       // my slates sits next to the pill; lefty mirrors the pair
       ? [
@@ -191,6 +193,8 @@ export default function App() {
   useEffect(() => {
     if (view === 'feedback') return;
     setNativePillAction(view === 'slates' ? { id: 'new', label: strings.slates.newSlate } : {});
+    // What's new has nothing for the pill to do: only back, in the bar
+    if (view === 'whats-new') hideNativePill();
   }, [view]);
   // The same, sent the moment the view is set; the effects above repeat it
   // once the page has rendered, which the phone takes as no change
@@ -200,6 +204,7 @@ export default function App() {
     if (words) setNativeBar(words, lefty === 'on', companionFor(next));
     if (next === 'feedback') return;
     setNativePillAction(next === 'slates' ? { id: 'new', label: strings.slates.newSlate } : {});
+    if (next === 'whats-new') hideNativePill();
     // The writing menu takes the pill back straight away, as it last was
     if (next === 'writer' || next === 'shared') restoreNativePill();
   };

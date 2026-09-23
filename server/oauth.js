@@ -11,6 +11,7 @@
 // slates:read:private scope returns the stored ciphertext + metadata only.
 // The server never brokers plaintext or encryption keys to third parties.
 
+const { SESSION_MATCH } = require('./sessionMatch');
 const express = require('express');
 const cors = require('cors');
 const { resolveUserTheme } = require('./themeTokens');
@@ -92,7 +93,7 @@ function mountOAuth(app, deps) {
       const payload = jwt.verify(token, JWT_SECRET);
       if (payload.oauth) return null; // an OAuth token is not a session
       const hash = sha256(token);
-      const session = db.prepare('SELECT 1 FROM sessions WHERE token_hash = ?').get(hash);
+      const session = db.prepare(`SELECT 1 FROM sessions WHERE ${SESSION_MATCH}`).get(hash, hash);
       if (!session) return null;
       return { id: payload.id, username: payload.username };
     } catch {

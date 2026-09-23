@@ -314,7 +314,7 @@ export function WhatsNew() {
   const shareCss = walk(d.share.words, 'share', 0);
 
   return (
-    <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
+    <div className="wn-page min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono selection:bg-[var(--theme-border)] selection:text-white">
       <style>{`
         body { font-family: 'IBM Plex Mono', monospace; background-color: var(--theme-bg, #111111); margin: 0; }
 

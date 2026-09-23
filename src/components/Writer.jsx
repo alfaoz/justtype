@@ -28,10 +28,11 @@ import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { canNativeMenu, canNativePill, setNativePill, hideNativePill, nativeStatusColor, nativeExportText, nativeExportPDF, canShareLink, shareLink } from '../shellMenu';
 import { inShell } from '../shell';
-import { biometry, hasSecret, readSecret, forgetSecret } from '../deviceUnlock';
+import { biometry, hasSecret, readSecret, forgetSecret, rememberSecret, deviceUnlockAsked, turnOnDeviceUnlock, turnOffDeviceUnlock } from '../deviceUnlock';
 import { SunIcon, SizeIcon, EyeIcon, HashIcon, PenIcon, PeopleIcon, ClockIcon, LinkIcon } from './icons';
 import { LockPanel } from './LockPanel';
 import { LockRecoverModal } from './LockRecoverModal';
+import { DeviceUnlockAsk } from './DeviceUnlockAsk';
 import { SharePanel } from './SharePanel';
 import { makeShareKey, fragmentOf, encryptShare, wrapForPassphrase, expiryAt, expiryChoice } from '../share';
 import { openDocKey, onLockChange, relock, relockOthers, touchLock, fetchLockRecovery, currentRecoveryKey, ensureLockRecovery, loginKind, loginKindsOf, waysOf, recoveryWaysFor, verifyLogin, verifyRecoveryWay, unlockSlate, recoverSlate, saveLockChange } from '../slateLock';
@@ -444,6 +445,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const threeDotsRef = useRef(null);
   const draftRestoredRef = useRef(false);
   const localDraftTimeoutRef = useRef(null);
+  const draftSeqRef = useRef(0);
+  // Gone for good: a seal still running must not write it back
+  const dropDraft = () => { draftSeqRef.current++; localStorage.removeItem('justtype-draft'); };
+  // The unsaved draft is kept sealed under the account's key when there is
+  // one: { sealed } instead of { content, title }. Signed out it stays as
+  // typed, and a sealed draft waits for the key.
+  const sealDraft = async (draft) => {
+    const key = userId ? await getSlateKey(userId).catch(() => null) : null;
+    if (!key) return draft;
+    try { return { sealed: await encryptContent(JSON.stringify(draft), key) }; } catch { return draft; }
+  };
+  const openDraft = async (stored) => {
+    if (!stored?.sealed) return stored;
+    const key = userId ? await getSlateKey(userId).catch(() => null) : null;
+    if (!key) return null;
+    return JSON.parse(await decryptContent(stored.sealed, key));
+  };
   // Settings strip overflow: fades apply only where more content hides, and a
   // slim thumb under the strip hints that it scrolls. The thumb is driven
   // through refs so scrolling never re-renders the component.
@@ -499,10 +517,15 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (!currentSlate && !sharedSlateId && !content) {
       // The draft's editor mode too
       setEditorModeState(draftMode());
-      try {
-        const savedDraft = localStorage.getItem('justtype-draft');
-        if (savedDraft) {
-          const draft = JSON.parse(savedDraft);
+      (async () => {
+        try {
+          const savedDraft = localStorage.getItem('justtype-draft');
+          if (!savedDraft) return;
+          const draft = await openDraft(JSON.parse(savedDraft));
+          // Not readable here (signed out): it waits for the account's key
+          if (!draft) return;
+          // Typing started while the key was fetched: that wins
+          if (contentRef.current) return;
           if (draft.content && draft.content.trim()) {
             setContent(draft.content);
             contentRef.current = draft.content;
@@ -514,11 +537,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               setTimeout(() => setStatus('ready'), 3000);
             }
           }
+        } catch (e) {
+          // Ignore invalid draft data
+          dropDraft();
         }
-      } catch (e) {
-        // Ignore invalid draft data
-        localStorage.removeItem('justtype-draft');
-      }
+      })();
     }
   }, []); // Only run on mount
 
@@ -542,16 +565,16 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
 
     // Debounce localStorage writes
-    localDraftTimeoutRef.current = setTimeout(() => {
+    localDraftTimeoutRef.current = setTimeout(async () => {
       if (content.trim()) {
-        localStorage.setItem('justtype-draft', JSON.stringify({
-          content,
-          title,
-          timestamp: Date.now()
-        }));
+        const seq = ++draftSeqRef.current;
+        const sealed = await sealDraft({ content, title });
+        // A later keystroke's write has started: this one is stale
+        if (seq !== draftSeqRef.current) return;
+        localStorage.setItem('justtype-draft', JSON.stringify({ ...sealed, timestamp: Date.now() }));
       } else {
         // Clear draft if content is empty
-        localStorage.removeItem('justtype-draft');
+        dropDraft();
       }
     }, 500);
 
@@ -1414,7 +1437,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       setTitle('');
       setHasUnsavedChanges(false);
       lastSavedContentRef.current = '';
-      localStorage.removeItem('justtype-draft');
+      dropDraft();
       setEditorModeState(draftMode());
       setCollabDocKey(null);
       setCollabSlateDbId(null);
@@ -1630,7 +1653,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     lastSavedContentRef.current = JSON.stringify({ content });
     loadedHadTextRef.current = !!((content) || '').trim();
     setHasUnsavedChanges(false);
-    localStorage.removeItem('justtype-draft');
+    dropDraft();
     setStatus(strings.writer.connectivity.savedLocally);
     return true;
   };
@@ -1651,7 +1674,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const leaveGoneSlate = (n) => {
     deleteCachedSlate(userId, n).catch(() => {});
     forgetHistory(userId, n);
-    localStorage.removeItem('justtype-draft');
+    dropDraft();
     lastSavedContentRef.current = '';
     loadedSlateRef.current = null;
     setHasUnsavedChanges(false);
@@ -1880,7 +1903,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
 
       // Clear local draft since content is now saved to server
-      localStorage.removeItem('justtype-draft');
+      dropDraft();
 
       // Check if we should show support nudge (slate count is 3, 6, or 9)
       if (data.slateCount && (data.slateCount === 3 || data.slateCount === 6 || data.slateCount === 9)) {
@@ -2629,17 +2652,37 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const handleLockPromptSubmit = async ({ secret, login }) => {
     let recoveryKey = lockPrompt?.recoveryKey || null;
     if (login) recoveryKey = await ensureLockRecovery({ login, info: lockPrompt?.info || null });
+    const n = currentSlate?.slate_number;
     setLockPrompt(null);
     await onSaveChain(() => rekeyForLock(true, { secret, recoveryKey }));
+    if (n) askDeviceUnlock(n, secret);
   };
   // The gate on a locked slate: open it with its secret, then load it again
-  const handleLockGateSubmit = async ({ secret }) => {
+  const handleLockGateSubmit = async ({ secret, typed = true }) => {
     const gate = lockGateRef.current;
     if (!gate) return;
     await unlockSlate(gate.id, secret, gate.slate);
     lockGateRef.current = null;
     setLockGate(null);
     await loadSlate(gate.id);
+    if (typed) askDeviceUnlock(gate.id, secret);
+  };
+  // The first lock set or opened on this phone asks, once, whether face id
+  // (or touch id) may open locked slates here (account > security keeps it)
+  const [deviceAsk, setDeviceAsk] = useState(null); // { word, slateNumber, secret }
+  const askDeviceUnlock = async (slateNumber, secret) => {
+    if (deviceUnlockAsked()) return;
+    const kind = await biometry();
+    if (kind === 'none') return;
+    setDeviceAsk({ word: strings.writer.lock.device[kind], slateNumber, secret });
+  };
+  const answerDeviceAsk = async (yes) => {
+    const ask = deviceAsk;
+    setDeviceAsk(null);
+    if (!ask) return;
+    if (!yes) { turnOffDeviceUnlock(); return; }
+    if (await turnOnDeviceUnlock(strings.writer.lock.deviceTurnOnReason)) rememberSecret(ask.slateNumber, ask.secret);
+    else turnOffDeviceUnlock();
   };
   // On the phone, face id (or touch id) can type the gate's secret when this
   // phone holds a copy of it (src/deviceUnlock.js)
@@ -2659,7 +2702,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const secret = await readSecret(gate.id, strings.writer.lock.deviceReason);
     if (!secret) return;
     try {
-      await handleLockGateSubmit({ secret });
+      await handleLockGateSubmit({ secret, typed: false });
     } catch (err) {
       // The secret was changed elsewhere: the copy goes, typing is the way in
       if (err?.message === 'wrong') { forgetSecret(gate.id); setGateDevice(null); }
@@ -2977,6 +3020,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           onClose={() => setLockRecover(null)}
         />
       )}
+
+      {deviceAsk && <DeviceUnlockAsk word={deviceAsk.word} onAnswer={answerDeviceAsk} />}
 
       {sharePanel && currentSlate && !isShared && (
         <SharePanel

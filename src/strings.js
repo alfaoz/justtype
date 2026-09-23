@@ -112,6 +112,13 @@ const strings = {
       device: { face: 'face id', touch: 'touch id' },
       useDevice: (word) => `use ${word}`,
       deviceReason: 'open this slate',
+      // Asked once per phone (DeviceUnlockAsk), kept in account > security
+      deviceAskTitle: (word) => `open locked slates with ${word}?`,
+      deviceAskBody: (word) => `on this phone, ${word} can open your locked slates instead of typing the pin or passphrase. you can change this in account, under security.`,
+      deviceAskYes: (word) => `use ${word}`,
+      deviceAskNo: 'not now',
+      deviceTurnOnReason: 'open your locked slates',
+      deviceSetting: (word) => `${word} for locks`,
       next: 'next',
       wrong: 'that did not open it',
       wrongPhrase: 'that is not the recovery key of this account',
@@ -1594,6 +1601,7 @@ take care!
 
   whatsNew: {
     pageTitle: "what's new",
+    back: 'back',
     versionTag: 'v4',
     heroEyebrow: 'v4 is here.',
     heroTitle: 'write together. write it better.',

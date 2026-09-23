@@ -26,6 +26,7 @@
 //   s->c  {type:'peer_left', slateId, authorId} -> user's last socket left the room
 //   s->c  {type:'error', error, code?, slateId?}
 
+const { SESSION_MATCH } = require('./sessionMatch');
 const WS_PATH = '/collab/ws';
 const MAX_FRAME_BYTES = 512 * 1024;      // hard cap on any inbound frame
 const MAX_PAYLOAD_CHARS = 300 * 1024;    // base64 chars per update/awareness
@@ -142,7 +143,7 @@ function verifyUser(req) {
   if (!user || user.oauth) return null;
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const result = deps.db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
+    const result = deps.db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
     if (result.changes === 0) return null;
   } catch {
     return null;

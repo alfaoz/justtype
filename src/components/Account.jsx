@@ -19,6 +19,7 @@ import { leftyMode } from '../lefty';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { rewrapLockRecovery } from '../slateLock';
+import { biometry, deviceUnlockPref, turnOnDeviceUnlock, turnOffDeviceUnlock } from '../deviceUnlock';
 import { wordlist } from '../bip39-wordlist';
 import { useToast } from './Toast';
 
@@ -195,6 +196,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
   const focusLine = lineFocus.use();
   const sounds = soundsPref.use();
   const haptics = hapticsPref.use();
+  // Face id (or touch id) for locked slates, where this phone has one
+  const deviceUnlock = deviceUnlockPref.use();
+  const [deviceWord, setDeviceWord] = useState(null);
+  useEffect(() => { biometry().then(kind => setDeviceWord(kind === 'none' ? null : strings.writer.lock.device[kind])); }, []);
+  const setDeviceUnlock = (v) => (v === 'on' ? turnOnDeviceUnlock(strings.writer.lock.deviceTurnOnReason) : turnOffDeviceUnlock());
   const scroll = useScroll();
   const swipe = useSwipe();
   const icons = useIcons();
@@ -1504,6 +1510,11 @@ export function Account({ token, username, userId, email, emailVerified, authPro
             </Collapse>
           </div>
 
+          {deviceWord && (
+            <InfoRow label={strings.writer.lock.deviceSetting(deviceWord)}>
+              <ChoiceRow options={wordOptions(['on', 'off'])} value={deviceUnlock} onChange={setDeviceUnlock} />
+            </InfoRow>
+          )}
         </Section>
 
         <Section title={strings.account.sections.accessibility} note={showAccessibility ? strings.account.accessibility.note : null}>

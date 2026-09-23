@@ -109,7 +109,7 @@ export async function unlockSlate(slateNumber, secret, slate) {
     throw new Error('wrong');
   }
   hold(slateNumber, docKey);
-  // Typed on the phone: face id can type it next time
+  // Typed on the phone: face id can type it next time (when it is on)
   rememberSecret(slateNumber, secret);
   return docKey;
 }

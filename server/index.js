@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { customAlphabet } = require('nanoid');
 const db = require('./database');
+const { SESSION_MATCH } = require('./sessionMatch');
 const b2Storage = require('./b2Storage');
 const b2Monitor = require('./b2Monitor');
 const { mountOAuth } = require('./oauth');
@@ -1037,10 +1038,14 @@ const checkStorageLimit = (userId, newContentSize) => {
   }
 };
 
+// A session in use renews its token once the token is this old
+const SESSION_RENEW_AFTER_S = 7 * 24 * 60 * 60;
+
 // Middleware to verify JWT token (checks HttpOnly cookie first, then Authorization header)
 const authenticateToken = (req, res, next) => {
   // Check HttpOnly cookie first (more secure), then fall back to Authorization header
   let token = req.cookies?.justtype_token;
+  const fromCookie = Boolean(token);
 
   if (!token) {
     const authHeader = req.headers['authorization'];
@@ -1067,12 +1072,27 @@ const authenticateToken = (req, res, next) => {
     // Check if session exists in database and update last activity
     try {
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      const result = db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE token_hash = ?').run(tokenHash);
+      const result = db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
 
       // If no rows were updated, the session doesn't exist (was deleted)
       if (result.changes === 0) {
         res.clearCookie('justtype_token', { path: '/' });
         return res.status(401).json({ error: 'Session expired or logged out' });
+      }
+
+      // In use, the session keeps going: a cookie token older than a week is
+      // swapped for a fresh 30-day one on the same session row. It carries
+      // who the user is and nothing else; slate keys never touch it.
+      if (fromCookie && user.iat && Date.now() / 1000 - user.iat > SESSION_RENEW_AFTER_S) {
+        const { iat, exp, ...claims } = user;
+        const fresh = jwt.sign(claims, JWT_SECRET, { expiresIn: '30d' });
+        const freshHash = crypto.createHash('sha256').update(fresh).digest('hex');
+        const renewed = db.prepare('UPDATE sessions SET prev_token_hash = token_hash, token_hash = ?, rotated_at = CURRENT_TIMESTAMP WHERE token_hash = ?')
+          .run(freshHash, tokenHash);
+        if (renewed.changes) {
+          res.cookie('justtype_token', fresh, getAuthCookieOptions());
+          token = fresh;
+        }
       }
     } catch (err) {
       console.error('Session update error:', err);
@@ -1407,7 +1427,7 @@ app.post('/api/auth/logout', authenticateToken, async (req, res) => {
     const tokenHash = crypto.createHash('sha256').update(req.token).digest('hex');
 
     // Delete the current session from database
-    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+    db.prepare(`DELETE FROM sessions WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
 
     // Clear HttpOnly cookie
     res.clearCookie('justtype_token', { path: '/' });

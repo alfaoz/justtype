@@ -1202,6 +1202,9 @@ html[data-shell] .page-header + * {
   padding-top: env(safe-area-inset-top);
   padding-bottom: calc(max(var(--kb, 0px), env(safe-area-inset-bottom)) + 5rem);
 }
+/* The app's web view does not scroll the page itself: what's new scrolls
+   in its own box */
+html[data-shell] .wn-page { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; }
 /* Overlays keep clear of the status bar and the keyboard */
 html[data-shell] .fixed.inset-0.p-4 {
   padding-top: calc(1rem + env(safe-area-inset-top));

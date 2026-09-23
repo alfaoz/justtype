@@ -102,6 +102,14 @@ try {
     console.log('✓ Database migrated: Added code expiry columns');
   }
 
+  // Sessions renew their token; the one replaced answers briefly (sessionMatch.js)
+  const sessionColumns = db.pragma('table_info(sessions)');
+  if (!sessionColumns.some(col => col.name === 'prev_token_hash')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN prev_token_hash TEXT;`);
+    db.exec(`ALTER TABLE sessions ADD COLUMN rotated_at DATETIME;`);
+    console.log('✓ Database migrated: sessions can renew their token');
+  }
+
   // Add size_bytes column to slates if it doesn't exist
   const slateColumns = db.pragma('table_info(slates)');
   const hasSizeBytes = slateColumns.some(col => col.name === 'size_bytes');
