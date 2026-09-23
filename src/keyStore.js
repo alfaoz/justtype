@@ -93,6 +93,8 @@ async function readKeychainKey(userId) {
   const old = await idbGet(userId).catch(() => null);
   if (!old) return null;
   if (await keychainSave(userId, old)) await idbDelete(userId).catch(() => {});
+  // A keychain that refused is not asked again this launch
+  else held.set(id, old);
   return old;
 }
 

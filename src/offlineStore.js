@@ -12,12 +12,15 @@
 //   pending  one queued write per slate: a POST for a local slate, or a PUT
 //            with the base the edits started from, for three-way merging.
 //   history  safety copies taken before a merge overwrites local work.
+import { inShell } from './shell';
+
 const DB_NAME = 'justtype-offline';
 const DB_VERSION = 1;
 // Every slate gets a copy on the device (see copyPlan); copies the app made
 // on its own are evicted, least recently opened first, only past this budget.
 // Kept slates and slates with a queued write are never evicted.
-export const DEVICE_COPY_BUDGET = 64 * 1024 * 1024;
+// The app keeps its copies in its own files and can afford more
+export const DEVICE_COPY_BUDGET = (inShell ? 256 : 64) * 1024 * 1024;
 const HISTORY_PER_SLATE = 20;
 
 let dbPromise = null;
@@ -63,6 +66,75 @@ const uid = (userId) => String(userId);
 const byUser = (index, userId) => Promise.all([all(index, uid(userId)), all(index, Number(userId))])
   .then(([a, b]) => { const seen = new Set(a.map(r => r.key)); return [...a, ...b.filter(r => !seen.has(r.key))]; });
 
+// ---- where the records live ------------------------------------------------
+//
+// In a browser: the IndexedDB above. In the iOS app: the app's own files
+// (ShellStorePlugin.swift), which iOS never clears the way it may clear a web
+// view's storage. The first time the app runs this, everything the web
+// view's database held moves over (unsynced edits included), is read back,
+// and only then is that database deleted. Records are the same objects
+// either way; the app keys them by the same fields.
+const cap = inShell ? window.Capacitor : null;
+const onDevice = Boolean(cap?.isPluginAvailable?.('ShellStore'));
+const shellStore = (method, data) => cap.nativePromise('ShellStore', method, data);
+const keyOf = { slates: r => r.key, lists: r => r.userId, pending: r => r.key, history: r => String(r.id) };
+const parse = (v) => { try { return JSON.parse(v); } catch { return undefined; } };
+
+const MOVED = 'justtype-offline-moved';
+let moving = null;
+function ready() {
+  if (!onDevice) return Promise.resolve();
+  if (!moving) moving = moveOut().catch((err) => { moving = null; throw err; });
+  return moving;
+}
+async function moveOut() {
+  try { if (localStorage.getItem(MOVED) === '1') return; } catch { /* storage unavailable */ }
+  const db = await openDB();
+  for (const store of ['slates', 'lists', 'pending', 'history']) {
+    const recs = await new Promise((resolve, reject) => {
+      const req = db.transaction(store).objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!recs.length) continue;
+    await shellStore('putMany', { store, records: recs.map(r => ({ key: keyOf[store](r), value: JSON.stringify(r) })) });
+    const back = await shellStore('all', { store });
+    const have = new Set((back?.values || []).map(parse).filter(Boolean).map(keyOf[store]));
+    if (recs.some(r => !have.has(keyOf[store](r)))) throw new Error('offline copies did not all move');
+  }
+  try { localStorage.setItem(MOVED, '1'); } catch { /* storage unavailable */ }
+  db.close();
+  dbPromise = null;
+  indexedDB.deleteDatabase(DB_NAME);
+}
+
+const get = async (store, key) => {
+  if (!onDevice) return tx(store, 'readonly', s => s.get(key));
+  await ready();
+  const r = await shellStore('get', { store, key: String(key) });
+  return r?.value ? parse(r.value) : undefined;
+};
+const put = async (store, rec) => {
+  if (!onDevice) return tx(store, 'readwrite', s => s.put(rec));
+  await ready();
+  await shellStore('put', { store, key: keyOf[store](rec), value: JSON.stringify(rec) });
+};
+const del = async (store, keys) => {
+  const list = [].concat(keys);
+  if (!onDevice) return tx(store, 'readwrite', s => { for (const k of list) s.delete(k); });
+  await ready();
+  for (const k of list) await shellStore('remove', { store, key: String(k) });
+};
+const everything = async (store) => {
+  await ready();
+  const r = await shellStore('all', { store });
+  return (r?.values || []).map(parse).filter(Boolean);
+};
+const forUser = async (store, userId) => {
+  if (!onDevice) return openDB().then(db => byUser(db.transaction(store).objectStore(store).index('user'), userId));
+  return (await everything(store)).filter(r => String(r.userId) === uid(userId));
+};
+
 export const slateKeyOf = (userId, slateNumber) => `${uid(userId)}:${slateNumber}`;
 export const isLocalSlateNumber = (n) => typeof n === 'string' && n.startsWith('local-');
 export const newLocalSlateNumber = () => `local-${Math.random().toString(36).slice(2, 10)}`;
@@ -73,7 +145,7 @@ export const newLocalSlateNumber = () => `local-${Math.random().toString(36).sli
 // editor_mode, updated_at, is_published, share_id, is_collab, collab_wrapped_key...)
 export async function cacheSlate(userId, slateNumber, data, { opened = false } = {}) {
   const key = slateKeyOf(userId, slateNumber);
-  const prev = await tx('slates', 'readonly', s => s.get(key));
+  const prev = await get('slates', key);
   // An offloaded slate stays off this device: opening it, saving it or
   // syncing it does not put a copy back. Keep or copy clears the flag first.
   if (prev?.offloaded) return prev;
@@ -84,21 +156,21 @@ export async function cacheSlate(userId, slateNumber, data, { opened = false } =
     cachedAt: Date.now(),
     lastOpenedAt: opened ? Date.now() : (prev?.lastOpenedAt || 0),
   };
-  await tx('slates', 'readwrite', s => s.put(rec));
+  await put('slates', rec);
   return rec;
 }
-export const getCachedSlate = (userId, slateNumber) => tx('slates', 'readonly', s => s.get(slateKeyOf(userId, slateNumber)));
-export const getCachedSlates = (userId) => openDB().then(db => byUser(db.transaction('slates').objectStore('slates').index('user'), userId));
-export const deleteCachedSlate = (userId, slateNumber) => tx('slates', 'readwrite', s => s.delete(slateKeyOf(userId, slateNumber)));
+export const getCachedSlate = (userId, slateNumber) => get('slates', slateKeyOf(userId, slateNumber));
+export const getCachedSlates = (userId) => forUser('slates', userId);
+export const deleteCachedSlate = (userId, slateNumber) => del('slates', slateKeyOf(userId, slateNumber));
 
 export async function setKeepOffline(userId, slateNumber, keep) {
   const key = slateKeyOf(userId, slateNumber);
-  const prev = await tx('slates', 'readonly', s => s.get(key));
+  const prev = await get('slates', key);
   const rec = prev || { key, userId: uid(userId), slateNumber, data: {}, cachedAt: 0, lastOpenedAt: 0 };
   rec.userId = uid(userId);
   rec.keep = keep;
   if (keep) rec.offloaded = false;
-  await tx('slates', 'readwrite', s => s.put(rec));
+  await put('slates', rec);
 }
 
 // Take the copy off this device and remember that the person asked, so the
@@ -106,7 +178,7 @@ export async function setKeepOffline(userId, slateNumber, keep) {
 // slate, or clicking its cloud mark, puts a copy back.
 export async function offloadSlate(userId, slateNumber) {
   const key = slateKeyOf(userId, slateNumber);
-  await tx('slates', 'readwrite', s => s.put({ key, userId: uid(userId), slateNumber, data: {}, keep: false, offloaded: true, cachedAt: 0, lastOpenedAt: 0 }));
+  await put('slates', { key, userId: uid(userId), slateNumber, data: {}, keep: false, offloaded: true, cachedAt: 0, lastOpenedAt: 0 });
 }
 
 // A synced slate replaces its local stand-in under the real number
@@ -133,7 +205,7 @@ export async function pruneCache(userId) {
     drop.push(s);
     total -= copySize(s);
   }
-  if (drop.length) await tx('slates', 'readwrite', s => { for (const d of drop) s.delete(d.key); });
+  if (drop.length) await del('slates', drop.map(d => d.key));
 }
 
 // Copies of slates the server no longer lists (deleted elsewhere) go, unless
@@ -143,7 +215,7 @@ export async function dropStaleCopies(userId, listedNumbers) {
   const [slates, pending] = await Promise.all([getCachedSlates(userId), getPending(userId)]);
   const pendingKeys = new Set(pending.map(p => p.key));
   const stale = slates.filter(s => !isLocalSlateNumber(s.slateNumber) && !listed.has(s.slateNumber) && !pendingKeys.has(s.key));
-  if (stale.length) await tx('slates', 'readwrite', st => { for (const d of stale) st.delete(d.key); });
+  if (stale.length) await del('slates', stale.map(d => d.key));
 }
 
 // Which slates from the server list this device should fetch: kept slates
@@ -172,8 +244,8 @@ export function copyPlan(rows, cached) {
 
 // ---- list ------------------------------------------------------------------
 
-export const cacheList = (userId, rows) => tx('lists', 'readwrite', s => s.put({ userId: uid(userId), rows, cachedAt: Date.now() }));
-export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(uid(userId)));
+export const cacheList = (userId, rows) => put('lists', { userId: uid(userId), rows, cachedAt: Date.now() });
+export const getCachedList = (userId) => get('lists', uid(userId));
 
 // ---- pending writes --------------------------------------------------------
 
@@ -183,7 +255,7 @@ export const getCachedList = (userId) => tx('lists', 'readonly', s => s.get(uid(
 // version the person actually saw.
 export async function queuePending(userId, slateNumber, record) {
   const key = slateKeyOf(userId, slateNumber);
-  const prev = await tx('pending', 'readonly', s => s.get(key));
+  const prev = await get('pending', key);
   // A lock change waiting in the queue rides along under later saves of
   // the same slate: their content is already under the key it switched to
   const carriedLock = record.body && record.body.lock === undefined && prev?.body?.lock !== undefined
@@ -202,21 +274,29 @@ export async function queuePending(userId, slateNumber, record) {
     createdAt: prev?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
-  await tx('pending', 'readwrite', s => s.put(rec));
+  await put('pending', rec);
   return rec;
 }
-export const getPending = (userId) => openDB().then(db => byUser(db.transaction('pending').objectStore('pending').index('user'), userId)).then(r => r.sort((a, b) => a.createdAt - b.createdAt));
-export const getPendingFor = (userId, slateNumber) => tx('pending', 'readonly', s => s.get(slateKeyOf(userId, slateNumber)));
-export const deletePending = (userId, slateNumber) => tx('pending', 'readwrite', s => s.delete(slateKeyOf(userId, slateNumber)));
+export const getPending = (userId) => forUser('pending', userId).then(r => r.sort((a, b) => a.createdAt - b.createdAt));
+export const getPendingFor = (userId, slateNumber) => get('pending', slateKeyOf(userId, slateNumber));
+export const deletePending = (userId, slateNumber) => del('pending', slateKeyOf(userId, slateNumber));
 
 // ---- history ---------------------------------------------------------------
 
 export async function addHistory(userId, slateNumber, encryptedContent, reason) {
   const slateKey = slateKeyOf(userId, slateNumber);
-  await tx('history', 'readwrite', s => s.add({ slateKey, encryptedContent, reason, at: Date.now() }));
-  const rows = await openDB().then(db => all(db.transaction('history').objectStore('history').index('slate'), slateKey));
+  const rec = { slateKey, encryptedContent, reason, at: Date.now() };
+  let rows;
+  if (onDevice) {
+    // The app's files have no counter: the id is made here
+    await put('history', { ...rec, id: `h-${rec.at}-${Math.random().toString(36).slice(2, 8)}` });
+    rows = (await everything('history')).filter(r => r.slateKey === slateKey);
+  } else {
+    await tx('history', 'readwrite', s => s.add(rec));
+    rows = await openDB().then(db => all(db.transaction('history').objectStore('history').index('slate'), slateKey));
+  }
   if (rows.length > HISTORY_PER_SLATE) {
     const extra = rows.sort((a, b) => a.at - b.at).slice(0, rows.length - HISTORY_PER_SLATE);
-    await tx('history', 'readwrite', s => { for (const r of extra) s.delete(r.id); });
+    await del('history', extra.map(r => r.id));
   }
 }
