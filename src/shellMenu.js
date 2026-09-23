@@ -65,6 +65,7 @@ export const setNativeAppearance = (dark) => (canNativeBar ? cap.nativePromise('
 // Hand exports to the system share sheet instead.
 export const nativeExportText = (text, filename) => cap.nativePromise('ShellMenu', 'exportText', { text, filename });
 export const nativeExportPDF = (filename) => cap.nativePromise('ShellMenu', 'exportPDF', { filename });
+export const nativeExportFile = (base64, filename) => cap.nativePromise('ShellMenu', 'exportFile', { base64, filename });
 
 // A link out through the share sheet people know from every app: the phone's
 // own in the shell, the browser's on a touch screen that has one. Resolves

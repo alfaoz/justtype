@@ -907,6 +907,9 @@ const strings = {
       progress: (current, total) => `exporting ${current}/${total}...`,
       preparing: 'preparing download...',
       done: (count) => `export ready (${count} ${count === 1 ? 'slate' : 'slates'}). your download should start automatically.`,
+      // The app hands the file to the share sheet instead of downloading it
+      doneApp: (count) => `exported ${count} ${count === 1 ? 'slate' : 'slates'}.`,
+      skipped: (count) => ` ${count} could not be read and were left out.`,
       noSlates: 'no slates to export',
       cooldown: (time) => `export is limited to once per day. try again in ${time}.`,
       errors: {

@@ -19,6 +19,7 @@ import { leftyMode } from '../lefty';
 import { generateSalt, deriveKey, wrapKey, unwrapKey, generateRecoveryPhrase, decryptContent, decryptTitle, decryptTags } from '../crypto';
 import { getSlateKey } from '../keyStore';
 import { rewrapLockRecovery } from '../slateLock';
+import { canNativeMenu, nativeExportFile } from '../shellMenu';
 import { biometry, deviceUnlockPref, turnOnDeviceUnlock, turnOffDeviceUnlock } from '../deviceUnlock';
 import { wordlist } from '../bip39-wordlist';
 import { useToast } from './Toast';
@@ -565,12 +566,16 @@ export function Account({ token, username, userId, email, emailVerified, authPro
       }
 
       setExportMessage(strings.account.export.preparing);
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
       const yyyyMmDd = new Date().toISOString().split('T')[0];
-      downloadBlob(zipBlob, `justtype-export-${yyyyMmDd}.zip`);
+      const zipName = `justtype-export-${yyyyMmDd}.zip`;
+      // The app's web view cannot download: the phone's share sheet takes it
+      if (canNativeMenu) await nativeExportFile(await zip.generateAsync({ type: 'base64' }), zipName);
+      else downloadBlob(await zip.generateAsync({ type: 'blob' }), zipName);
 
-      setExportMessageKind(skipped > 0 ? 'error' : 'success');
-      setExportMessage(strings.account.export.done(exported));
+      // Some left out is still an export; the line says how many
+      setExportMessageKind('success');
+      setExportMessage((canNativeMenu ? strings.account.export.doneApp(exported) : strings.account.export.done(exported))
+        + (skipped > 0 ? strings.account.export.skipped(skipped) : ''));
     } catch (err) {
       console.error('Export error:', err);
       setExportMessageKind('error');
