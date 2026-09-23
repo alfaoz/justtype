@@ -1,4 +1,4 @@
-// Local copies of slates for offline use, in IndexedDB.
+// Local copies of slates for offline use: IndexedDB in a browser, the app's own files in the iOS app (see "where the records live").
 //
 // Everything stored here is exactly what the server holds: encrypted content
 // and titles under the user's keys, never plaintext. The keys already live in
