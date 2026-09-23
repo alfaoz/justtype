@@ -8,6 +8,7 @@
 import { API_URL } from './config';
 import { sweepDrops } from './dropInbox';
 import { reconcileDeviceWraps } from './shareAll';
+import { inShell } from './shell';
 
 let eventSource = null;
 
@@ -16,7 +17,21 @@ let eventSource = null;
 //   'reconcile' — an app registered a new install key → wrap shared slates to it.
 // The browser's native EventSource handles reconnection. onAdopted bubbles up to
 // refresh the UI after drops adopt.
+// The iOS app's page (capacitor://) cannot hold this stream: the server's
+// CORS refuses its origin and the session cookie does not ride it. There the
+// sweep runs each time the app comes back to the front instead.
+let resumeSweep = null;
 function startSse(userId, masterKey, onAdopted) {
+  if (inShell) {
+    if (resumeSweep) return;
+    resumeSweep = () => {
+      if (document.visibilityState !== 'visible') return;
+      sweepDrops(userId, masterKey, onAdopted);
+      reconcileDeviceWraps(userId);
+    };
+    document.addEventListener('visibilitychange', resumeSweep);
+    return;
+  }
   if (eventSource) return;
   try {
     eventSource = new EventSource(`${API_URL}/account/events`, { withCredentials: true });
@@ -45,5 +60,6 @@ export function startDropRealtime(userId, masterKey, onAdopted) {
 
 // Tear down the SSE stream (on logout).
 export function stopDropRealtime() {
+  if (resumeSweep) { document.removeEventListener('visibilitychange', resumeSweep); resumeSweep = null; }
   if (eventSource) { try { eventSource.close(); } catch {} eventSource = null; }
 }
