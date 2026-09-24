@@ -197,8 +197,9 @@ const menuSymbols = new Map([
 ]);
 
 // The phone's own menu over a list of menu items, from the element given
-async function openNativeItems(anchor, items) {
+async function openNativeItems(anchor, items, onClose) {
   const id = await nativeMenu(anchor, items.map(({ id, label, danger, icon }) => ({ id, label, danger: Boolean(danger), symbol: menuSymbols.get(icon) || null })));
+  onClose?.();
   const hit = id && items.find(i => i.id === id);
   if (hit) hit.onClick({ stopPropagation() {}, preventDefault() {} });
 }
@@ -353,7 +354,15 @@ function useHoldMenu(slate, menuProps, off) {
           press.current = null;
           held.current = true;
           tap('medium');
-          openNativeItems(rowRef.current, slateMenuItems(latest.current.slate, latest.current.menuProps));
+          // The held slate lifts and the rest of the list dims behind it
+          // while its menu is open (index.css, data-held / data-holding)
+          const row = rowRef.current;
+          row.dataset.held = '';
+          document.body.dataset.holding = '';
+          openNativeItems(row, slateMenuItems(latest.current.slate, latest.current.menuProps), () => {
+            delete row.dataset.held;
+            delete document.body.dataset.holding;
+          });
         }, 450),
       };
     },
@@ -472,7 +481,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   if (layout === 'card') {
     return (
       <div
-        ref={rowRef}
+        data-list-part ref={rowRef}
         onClick={open}
         {...holdProps}
         data-slate={slate.slate_number}
@@ -519,7 +528,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   } : {};
   return (
     <div
-      ref={rowRef}
+      data-list-part ref={rowRef}
       onClick={open}
       {...holdProps}
       {...dragProps}
@@ -2090,6 +2099,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   scroll by, until the next day takes over */}
               {ledger && (
                 <div
+                  data-list-part
                   className={`sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-8 pb-2.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-muted)] md:text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
                   style={{ top: inShell ? 'env(safe-area-inset-top)' : 0 }}
                 >
