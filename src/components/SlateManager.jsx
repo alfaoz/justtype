@@ -45,20 +45,26 @@ const ALL_TAGS = '__all__';
 const formatDateShort = (dateString) =>
   new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-// Sorted by date, the list is a ledger: a date column on the left, printed
-// once per day beside that day's first slate, so rows stop repeating it; on a
-// phone the day heads its slates instead. Pinned slates keep their own day
-// (they lead the list, so their days stand apart) and carry the pin on the
-// title. A slate not saved to the account yet has no date and counts as today.
+// Sorted by date, the list files its slates the way Notes does: today,
+// yesterday, the last week, the last month, then by month and by year. The
+// class is printed once, in a column on the left on a wide screen and over
+// its slates on a phone; each row keeps its own date. Pinned slates lead
+// unfiled, the pin on the title says why. A slate not saved to the account
+// yet has no date and counts as today.
 const dayOf = (slate, now) => {
+  if (slate.pinned_at) return { key: 'pinned', label: null };
   const d = slate.updated_at ? new Date(slate.updated_at) : now;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(now) - day(d)) / 86400000);
-  const key = `${slate.pinned_at ? 'pinned:' : ''}${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  if (days <= 0) return { key, label: strings.slates.days.today };
-  if (days === 1) return { key, label: strings.slates.days.yesterday };
-  const date = formatDateShort(d).toLowerCase();
-  return { key, label: d.getFullYear() === now.getFullYear() ? date : `${date} ${d.getFullYear()}` };
+  const { today, yesterday, week, month } = strings.slates.days;
+  if (days <= 0) return { key: 'today', label: today };
+  if (days === 1) return { key: 'yesterday', label: yesterday };
+  if (days < 7) return { key: 'week', label: week };
+  if (days < 30) return { key: 'month', label: month };
+  if (d.getFullYear() === now.getFullYear()) {
+    return { key: `m${d.getMonth()}`, label: d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase() };
+  }
+  return { key: `y${d.getFullYear()}`, label: String(d.getFullYear()) };
 };
 
 // The status vocabulary: one quiet lowercase word per state, coloured the way
@@ -438,7 +444,7 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false, dated = true }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false }) {
   const isPinned = Boolean(slate.pinned_at);
   const { rowRef, held, holdProps } = useHoldMenu(slate, menuProps, selecting);
   const dots = !canNativeMenu && <SlateMenu slate={slate} {...menuProps} />;
@@ -497,7 +503,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
-            {dated && <span>{formatDateShort(slate.updated_at)}</span>}
+            <span>{formatDateShort(slate.updated_at)}</span>
           </div>
         </div>
       </div>
@@ -537,14 +543,14 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
           <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           {stats}
-          {dated && <span>{formatDateShort(slate.updated_at)}</span>}
+          <span>{formatDateShort(slate.updated_at)}</span>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
         <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
         {stats}
-        {dated && <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>}
+        <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
       </div>
 
       {dots}
@@ -2101,7 +2107,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   scroll by, until the next day takes over */}
               {ledger && (
                 <div
-                  className="sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent"
+                  className={`${group.label ? '' : 'max-md:hidden '}sticky z-10 md:z-auto flex-shrink-0 md:w-40 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
                   style={{ top: inShell ? 'env(safe-area-inset-top)' : 0 }}
                 >
                   {group.label}
@@ -2135,7 +2141,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     onCopy={(e) => copySlateNow(slate, e)}
                     onKeep={(e) => toggleKeepOffline(slate, e)}
                     layout={effectiveViewMode === 'list' ? 'row' : 'card'}
-                    dated={!ledger}
                     selecting={selecting && !slate.shared}
                     selected={selected.has(slate.slate_number)}
                     onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}

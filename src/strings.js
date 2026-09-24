@@ -269,8 +269,8 @@ const strings = {
   slates: {
     title: 'my slates',
     newSlate: '+ new slate',
-    // The ledger's date column while the list is sorted by date
-    days: { today: 'today', yesterday: 'yesterday' },
+    // The classes the list is filed under while sorted by date
+    days: { today: 'today', yesterday: 'yesterday', week: 'previous 7 days', month: 'previous 30 days' },
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
     filterVisibility: 'show:',
