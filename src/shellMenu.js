@@ -32,6 +32,20 @@ export async function nativeMenu(anchorEl, items) {
   }
 }
 
+// A slate's tags in the phone's own sheet (ShellMenuPlugin `tags`).
+// Resolves with the tags the slate should carry once the sheet closes, or
+// undefined when this app has no such sheet (an older build): the caller
+// draws its own.
+export async function nativeTags(data) {
+  if (!canNativeMenu) return undefined;
+  try {
+    const res = await cap.nativePromise('ShellMenu', 'tags', data);
+    return Array.isArray(res?.tags) ? res.tags : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // The writer's pill, drawn by the phone (ios/App/App/ShellPillPlugin.swift):
 // the page keeps it current and listens for `shell:pick` on window
 export const canNativePill = Boolean(cap

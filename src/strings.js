@@ -385,6 +385,8 @@ const strings = {
       renamePlaceholder: 'new name',
       needsNetwork: 'tag changes need a connection',
       addPlaceholder: 'add tag...',
+      // The app's tags sheet
+      newPlaceholder: 'new tag',
       addButton: 'add',
       saving: 'saving...',
       save: 'save',

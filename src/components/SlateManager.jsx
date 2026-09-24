@@ -22,7 +22,7 @@ import { ChoiceRow } from './ChoiceRow';
 import { ScrollRow } from './ScrollRow';
 import { burnAway } from '../burn';
 import { fileAway } from '../archiveMotion';
-import { nativeMenu, canNativeMenu } from '../shellMenu';
+import { nativeMenu, canNativeMenu, nativeTags } from '../shellMenu';
 import { tap } from '../cues';
 import { inShell } from '../shell';
 
@@ -1491,10 +1491,32 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     }
   };
 
-  const openTagsEditor = (slate, e) => {
+  const openTagsEditor = async (slate, e) => {
     e.stopPropagation();
     e.preventDefault();
     setOpenMenuId(null);
+    // In the app the phone draws the sheet; what is ticked when it closes is
+    // what the slate keeps
+    if (canNativeMenu) {
+      const current = Array.isArray(slate.tags) ? slate.tags : [];
+      const picked = await nativeTags({
+        title: strings.slates.tags.title,
+        subtitle: slate.title || strings.slates.untitled,
+        placeholder: strings.slates.tags.newPlaceholder,
+        tooMany: strings.slates.tags.tooMany(MAX_TAGS_PER_SLATE),
+        maxTags: MAX_TAGS_PER_SLATE,
+        maxLength: MAX_TAG_LENGTH,
+        tags: current,
+        library: allTags,
+      });
+      if (picked) {
+        if (picked.length !== current.length || picked.some((t, i) => t !== current[i])) {
+          const error = await writeTags(slate.slate_number, picked);
+          if (error) showToast(error);
+        }
+        return;
+      }
+    }
     setTagInput('');
     setTagError('');
     setTagsModal({
@@ -1516,25 +1538,26 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
 
   const normalizeTag = (raw) => raw.trim().toLowerCase();
 
+  // Why a tag cannot join these, or null
+  const tagProblem = (tag, tags) => (
+    !TAG_REGEX.test(tag) ? strings.slates.tags.invalidTag
+      : tag.length > MAX_TAG_LENGTH ? strings.slates.tags.tooLong(MAX_TAG_LENGTH)
+      : tags.length >= MAX_TAGS_PER_SLATE ? strings.slates.tags.tooMany(MAX_TAGS_PER_SLATE)
+      : null
+  );
+
   const addTagFromInput = () => {
     const next = normalizeTag(tagInput);
     setTagError('');
 
     if (!next) return;
-    if (!TAG_REGEX.test(next)) {
-      setTagError(strings.slates.tags.invalidTag);
-      return;
-    }
-    if (next.length > MAX_TAG_LENGTH) {
-      setTagError(strings.slates.tags.tooLong(MAX_TAG_LENGTH));
-      return;
-    }
-    if (tagsModal.tags.length >= MAX_TAGS_PER_SLATE) {
-      setTagError(strings.slates.tags.tooMany(MAX_TAGS_PER_SLATE));
-      return;
-    }
     if (tagsModal.tags.includes(next)) {
       setTagInput('');
+      return;
+    }
+    const problem = tagProblem(next, tagsModal.tags);
+    if (problem) {
+      setTagError(problem);
       return;
     }
 
@@ -1546,25 +1569,19 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setTagsModal(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
   };
 
-  const saveTags = async () => {
-    setTagError('');
-    setTagsSaving(true);
-
+  // Encrypts and saves a slate's tags: null once saved, else what went wrong
+  const writeTags = async (slateId, tags) => {
     try {
       const slateKey = userId ? await getSlateKey(userId) : null;
-      if (!slateKey) {
-        setTagError(strings.slates.tags.unlockRequired);
-        setTagsSaving(false);
-        return;
-      }
+      if (!slateKey) return strings.slates.tags.unlockRequired;
 
-      const normalized = tagsModal.tags
+      const normalized = tags
         .map(t => normalizeTag(t))
         .filter(Boolean);
 
       // Collab slates: tags go under the shared doc key so members see them too.
       let tagsKey = slateKey;
-      const tagSlate = slates.find(s => s.slate_number === tagsModal.slateId);
+      const tagSlate = slates.find(s => s.slate_number === slateId);
       if (tagSlate && tagSlate.is_collab && tagSlate.collab_wrapped_key) {
         try {
           tagsKey = await unwrapKey(tagSlate.collab_wrapped_key, slateKey);
@@ -1577,7 +1594,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
         ? await encryptTags(normalized, tagsKey)
         : null;
 
-      const response = await fetch(`${API_URL}/slates/${tagsModal.slateId}/metadata`, {
+      const response = await fetch(`${API_URL}/slates/${slateId}/metadata`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -1585,27 +1602,43 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        setTagError(data.error || strings.errors.tagsSaveFailed);
-        setTagsSaving(false);
-        return;
-      }
+      if (!response.ok) return data.error || strings.errors.tagsSaveFailed;
 
       setSlates(prevSlates =>
         prevSlates.map(s =>
-          s.slate_number === tagsModal.slateId
+          s.slate_number === slateId
             ? { ...s, tags: normalized, encrypted_tags: encryptedTagsBlob }
             : s
         )
       );
-
-      closeTagsEditor();
+      return null;
     } catch (err) {
       console.error('Failed to save tags:', err);
-      setTagError(strings.errors.tagsSaveFailed);
-      setTagsSaving(false);
+      return strings.errors.tagsSaveFailed;
     }
+  };
+
+  const saveTags = async () => {
+    setTagError('');
+    // A tag still in the field goes with the save, as if added
+    let tags = tagsModal.tags;
+    const typed = normalizeTag(tagInput);
+    if (typed && !tags.includes(typed)) {
+      const problem = tagProblem(typed, tags);
+      if (problem) {
+        setTagError(problem);
+        return;
+      }
+      tags = [...tags, typed];
+    }
+    setTagsSaving(true);
+    const error = await writeTags(tagsModal.slateId, tags);
+    if (error) {
+      setTagError(error);
+      setTagsSaving(false);
+      return;
+    }
+    closeTagsEditor();
   };
 
   const togglePublish = async (slate, e) => {
