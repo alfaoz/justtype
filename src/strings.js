@@ -270,7 +270,7 @@ const strings = {
     title: 'my slates',
     newSlate: '+ new slate',
     // The classes the list is filed under while sorted by date
-    days: { today: 'today', yesterday: 'yesterday', week: 'previous 7 days', month: 'previous 30 days' },
+    days: { today: 'today', yesterday: 'yesterday', week: '7 days', month: '30 days' },
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
     filterVisibility: 'show:',

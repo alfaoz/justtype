@@ -49,10 +49,10 @@ const formatDateShort = (dateString) =>
 // yesterday, the last week, the last month, then by month and by year. The
 // class is printed once, in a column on the left on a wide screen and over
 // its slates on a phone; each row keeps its own date. Pinned slates lead
-// unfiled, the pin on the title says why. A slate not saved to the account
+// under the pin, in the class's place. A slate not saved to the account
 // yet has no date and counts as today.
 const dayOf = (slate, now) => {
-  if (slate.pinned_at) return { key: 'pinned', label: null };
+  if (slate.pinned_at) return { key: 'pinned', pin: true };
   const d = slate.updated_at ? new Date(slate.updated_at) : now;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(now) - day(d)) / 86400000);
@@ -444,7 +444,7 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false, filed = false }) {
   const isPinned = Boolean(slate.pinned_at);
   const { rowRef, held, holdProps } = useHoldMenu(slate, menuProps, selecting);
   const dots = !canNativeMenu && <SlateMenu slate={slate} {...menuProps} />;
@@ -530,7 +530,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           {selecting && <SelectMark selected={selected} />}
-          {isPinned && <PinGlyph />}
+          {isPinned && !filed && <PinGlyph />}
           <div className="relative min-w-0 text-sm md:text-base">
             <h3 className={`text-[var(--theme-text)] font-medium truncate min-w-0${struckCls}`}>{title}</h3>
             <Strike on={Boolean(slate.deleted_at)} top="50%" />
@@ -2107,10 +2107,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   scroll by, until the next day takes over */}
               {ledger && (
                 <div
-                  className={`${group.label ? '' : 'max-md:hidden '}sticky z-10 md:z-auto flex-shrink-0 md:w-40 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
+                  className={`sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
                   style={{ top: inShell ? 'env(safe-area-inset-top)' : 0 }}
                 >
-                  {group.label}
+                  {group.pin ? <span className="flex h-4 md:h-6 items-center"><PinGlyph /></span> : group.label}
                 </div>
               )}
               <div
@@ -2141,6 +2141,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     onCopy={(e) => copySlateNow(slate, e)}
                     onKeep={(e) => toggleKeepOffline(slate, e)}
                     layout={effectiveViewMode === 'list' ? 'row' : 'card'}
+                    filed={ledger}
                     selecting={selecting && !slate.shared}
                     selected={selected.has(slate.slate_number)}
                     onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}
