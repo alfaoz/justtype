@@ -2216,24 +2216,28 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
             <h2 className="text-lg md:text-xl text-[var(--theme-text)] mb-1">{strings.slates.tags.title}</h2>
             <p className="text-xs text-[var(--theme-text-dim)] mb-5 truncate">{tagsModal.slateTitle}</p>
 
-            <div className="flex flex-wrap gap-2 mb-4 min-h-[28px]">
+            {/* The slate's tags as chips (a tap takes one off), then one
+                field that adds on return, then the library's other tags to
+                add with a tap */}
+            <div className="flex flex-wrap gap-2 mb-4 min-h-[30px]">
               {tagsModal.tags.length === 0 ? (
-                <span className="text-xs text-[var(--theme-text-dim)]">{strings.slates.tags.emptyHint}</span>
+                <span className="text-xs leading-[30px] text-[var(--theme-text-dim)]">{strings.slates.tags.emptyHint}</span>
               ) : (
                 tagsModal.tags.map(tag => (
                   <button
                     key={tag}
                     onClick={() => removeTag(tag)}
-                    className="text-xs px-2 py-1 rounded border border-[var(--theme-border)] text-[var(--theme-text-muted)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-colors"
-                    title={tag}
+                    className="group inline-flex items-center gap-1.5 h-[30px] pl-3 pr-2 rounded bg-[var(--theme-bg-tertiary)] text-xs text-[var(--theme-text)] transition-colors"
+                    title={strings.slates.tags.remove}
                   >
-                    {tag} <span className="text-[var(--theme-text-dim)] ml-2">x</span>
+                    {tag}
+                    <svg className="w-3 h-3 text-[var(--theme-text-dim)] group-hover:text-[var(--theme-text)] transition-colors" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
                   </button>
                 ))
               )}
             </div>
 
-            <div className="flex gap-2 mb-3">
+            <div className="relative mb-3">
               <input
                 type="text"
                 value={tagInput}
@@ -2244,16 +2248,39 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     addTagFromInput();
                   }
                 }}
+                enterKeyHint="done"
+                autoCapitalize="none"
+                autoCorrect="off"
                 placeholder={strings.slates.tags.addPlaceholder}
-                className="flex-1 h-10 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded px-3 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
+                className="w-full h-10 bg-[var(--theme-bg)] border border-[var(--theme-border)] rounded pl-3 pr-16 focus:outline-none focus:border-[var(--theme-text-dim)] text-[var(--theme-text)] text-sm placeholder-[var(--theme-text-dim)]"
               />
-              <button
-                onClick={addTagFromInput}
-                className="h-10 px-4 rounded border border-[var(--theme-border)] text-[var(--theme-text)] hover:bg-[var(--theme-bg-tertiary)] hover:border-[var(--theme-text-dim)] transition-colors text-sm"
-              >
-                {strings.slates.tags.addButton}
-              </button>
+              {tagInput.trim() && (
+                <button
+                  onClick={addTagFromInput}
+                  className="absolute right-1 top-1 h-8 px-3 rounded bg-[var(--theme-bg-tertiary)] text-[var(--theme-text)] text-xs animate-[fadeIn_0.15s_ease-out]"
+                >
+                  {strings.slates.tags.addButton}
+                </button>
+              )}
             </div>
+
+            {(() => {
+              const typed = normalizeTag(tagInput);
+              const others = allTags.filter(t => !tagsModal.tags.includes(t) && (!typed || t.includes(typed)));
+              return others.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {others.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => { setTagError(''); setTagInput(''); setTagsModal(prev => (prev.tags.length >= MAX_TAGS_PER_SLATE ? prev : { ...prev, tags: [...prev.tags, tag] })); }}
+                      className="h-[30px] px-3 rounded border border-dashed border-[var(--theme-border)] text-xs text-[var(--theme-text-dim)] hover:text-[var(--theme-text)] hover:border-[var(--theme-text-dim)] transition-colors"
+                    >
+                      + {tag}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
 
             {tagError && (
               <div className="text-xs text-[var(--theme-red)] mb-4">
