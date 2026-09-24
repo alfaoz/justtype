@@ -1702,9 +1702,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     setHasUnsavedChanges(false);
     dropDraft();
     // On the phone a standing status covers the dock: a save the owner asked
-    // for says it briefly, autosaves stay quiet
+    // for says a short word briefly (the list's device mark says where it
+    // is), autosaves stay quiet
     if (!inShell) setStatus(strings.writer.connectivity.savedLocally);
-    else if (loud) announceStatus(strings.writer.connectivity.savedLocally, 2000);
+    else if (loud) announceStatus('saved', 2000);
     return true;
   };
 
@@ -1795,7 +1796,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // device too; the canonical blob catches up when the network is back
     if (collabDocKey && !isOnline()) {
       if (!inShell) setStatus(strings.writer.connectivity.savedLocally);
-      else if (explicit) announceStatus(strings.writer.connectivity.savedLocally, 2000);
+      else if (explicit) announceStatus('saved', 2000);
       return null;
     }
 

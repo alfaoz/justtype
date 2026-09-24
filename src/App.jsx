@@ -183,8 +183,10 @@ export default function App() {
       : [{ id: 'login', label: strings.app.tabs.login, active: false }];
   const barWords = wordsFor(view);
   // A new slate's first save: its own pill beside done, on the inner side
-  // (after it, saves are automatic)
-  const companionFor = (view) => (keyboardUp && view === 'writer' && unsavedDraft ? { id: 'save', label: strings.writer.buttons.save } : null);
+  // (after it, saves are automatic and my slates takes its place)
+  const companionFor = (view) => (!keyboardUp || view !== 'writer' || !token ? null
+    : unsavedDraft ? { id: 'save', label: strings.writer.buttons.save }
+    : { id: 'toggle', label: strings.app.tabs.slates });
   const barCompanion = companionFor(view);
   const barKey = barWords ? JSON.stringify([barWords, barCompanion]) : '';
   useEffect(() => { if (barWords) setNativeBar(barWords, lefty === 'on', barCompanion); }, [barKey, lefty]);
@@ -211,7 +213,8 @@ export default function App() {
   const navRef = useRef(null);
   navRef.current = (id) => {
     if (id === 'done') document.activeElement?.blur?.();
-    else if (id === 'toggle') handleToggleView();
+    // From beside done too: the keyboard goes with the writer
+    else if (id === 'toggle') { document.activeElement?.blur?.(); handleToggleView(); }
     else if (id === 'account') handleAccountToggle();
     else if (id === 'login') setShowAuthModal(true);
     else if (id === 'new') handleNewSlate().finally(nativeNewSettled);
