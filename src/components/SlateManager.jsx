@@ -2078,7 +2078,10 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       ) : (
         <div
           key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}`}
-          className={`animate-[fadeIn_0.3s_ease-out] ${effectiveViewMode === 'list' ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]' : ''}`}
+          className={`animate-[fadeIn_0.3s_ease-out] ${effectiveViewMode !== 'list' ? ''
+            // On a phone each day is its own ruled block under its heading
+            : ledger ? 'md:border-y md:border-[var(--theme-border-light)] md:divide-y md:divide-[var(--theme-border-light)]'
+            : 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'}`}
         >
           {slateGroups.map((group) => (
             <section key={group.key} className={ledger ? 'md:flex md:items-start' : ''}>
@@ -2087,7 +2090,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   scroll by, until the next day takes over */}
               {ledger && (
                 <div
-                  className={`sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
+                  className={`sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-8 pb-2.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-muted)] md:text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
                   style={{ top: inShell ? 'env(safe-area-inset-top)' : 0 }}
                 >
                   {group.label}
@@ -2097,7 +2100,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                 className={effectiveViewMode === 'list'
                   // Each slate ruled off; in the ledger the rule starts after
                   // the date, and a full one marks a new day
-                  ? `divide-y divide-[var(--theme-border-light)] ${ledger ? 'min-w-0 md:flex-1' : ''}`
+                  ? `divide-y divide-[var(--theme-border-light)] ${ledger ? 'min-w-0 md:flex-1 max-md:border-y max-md:border-[var(--theme-border-light)]' : ''}`
                   : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}
               >
                 {group.slates.map((slate) => (
