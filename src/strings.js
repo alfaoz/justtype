@@ -269,8 +269,8 @@ const strings = {
   slates: {
     title: 'my slates',
     newSlate: '+ new slate',
-    // Headings over the list while it is sorted by date
-    groups: { pinned: 'pinned', today: 'today', yesterday: 'yesterday', week: 'previous 7 days', month: 'previous 30 days' },
+    // The ledger's date column while the list is sorted by date
+    days: { today: 'today', yesterday: 'yesterday' },
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
     filterVisibility: 'show:',

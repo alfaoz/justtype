@@ -24,6 +24,8 @@ import { burnAway } from '../burn';
 import { fileAway } from '../archiveMotion';
 import { nativeMenu, canNativeMenu } from '../shellMenu';
 import { tap } from '../cues';
+import { inShell } from '../shell';
+import { Collapse } from './Reveal';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -43,22 +45,20 @@ const ALL_TAGS = '__all__';
 const formatDateShort = (dateString) =>
   new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-// Sorted by date, the list reads in groups: pinned, today, yesterday, the
-// last week, the last month, then month by month. The heading does the
-// dating, so the rows leave their dates out. A slate not saved to the
+// Sorted by date, the list is a ledger: a date column on the left, printed
+// once per day beside that day's first slate, so rows stop repeating it.
+// Pinned slates lead with the pin in that column. A slate not saved to the
 // account yet has no date and counts as today.
-const dateGroupOf = (slate, now) => {
-  const g = strings.slates.groups;
-  if (slate.pinned_at) return { key: 'pinned', label: g.pinned };
+const dayOf = (slate, now) => {
+  if (slate.pinned_at) return { key: 'pinned', pin: true };
   const d = slate.updated_at ? new Date(slate.updated_at) : now;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(now) - day(d)) / 86400000);
-  if (days <= 0) return { key: 'today', label: g.today };
-  if (days === 1) return { key: 'yesterday', label: g.yesterday };
-  if (days < 7) return { key: 'week', label: g.week };
-  if (days < 30) return { key: 'month', label: g.month };
-  const month = d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
-  return { key: `${d.getFullYear()}-${d.getMonth()}`, label: d.getFullYear() === now.getFullYear() ? month : `${month} ${d.getFullYear()}` };
+  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  if (days <= 0) return { key, label: strings.slates.days.today };
+  if (days === 1) return { key, label: strings.slates.days.yesterday };
+  const date = formatDateShort(d).toLowerCase();
+  return { key, label: d.getFullYear() === now.getFullYear() ? date : `${date} ${d.getFullYear()}` };
 };
 
 // The status vocabulary: one quiet lowercase word per state, coloured the way
@@ -77,7 +77,15 @@ const statusFor = (slate) =>
       ? { label: strings.slates.status.public, cls: 'text-[var(--theme-blue)]' }
       : slate.published_at
         ? { label: strings.slates.status.wasPublic, cls: 'text-[var(--theme-orange)]' }
-        : { label: strings.slates.status.private, cls: 'text-[var(--theme-text-dim)]' };
+        : { label: strings.slates.status.private, cls: 'text-[var(--theme-text-dim)]', usual: true };
+
+const VISIBILITY_OPTIONS = () => [
+  { id: 'all', label: strings.slates.filterVisibilityAll },
+  { id: 'public', label: strings.slates.filterVisibilityPublic },
+  { id: 'private', label: strings.slates.filterVisibilityPrivate },
+  { id: 'archived', label: strings.slates.filterVisibilityArchived },
+  { id: 'trash', label: strings.slates.filterVisibilityTrash, tone: 'danger' },
+];
 
 const SORT_OPTIONS = [
   { id: 'recent', label: strings.slates.sortOptions.recent },
@@ -108,7 +116,8 @@ function SlateBadges({ slate, offline = false, onCopy, onKeep, markLast = false 
   return (
     <>
       {!markLast && mark}
-      {slate.is_locked && slate.unlockedHere ? (
+      {/* The app's rows say only what is unusual: private goes unsaid */}
+      {inShell && status.usual ? null : slate.is_locked && slate.unlockedHere ? (
         // The open lock shuts on a click
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); forgetDocKey(slate.slate_number); }}
@@ -385,6 +394,9 @@ const DeviceMark = ({ slate, offline, onCopy, onKeep }) => {
   }
   if (slate.available) {
     const green = slate.kept || slate.justSynced;
+    // In the app a copy on the phone is the usual state and goes unmarked;
+    // one you asked to keep, or a sync landing, still shows
+    if (inShell && !green) return null;
     const note = slate.justSynced ? o.synced : slate.kept ? o.kept : o.auto;
     return (
       <HoverNote plain note={note} className={`device-mark p-1 -m-1 ${slate.justSynced ? 'is-live' : ''} ${green ? 'text-[var(--theme-green)]' : 'text-[var(--theme-text-dim)]'}`}>
@@ -444,10 +456,11 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
   const title = slate.title || strings.slates.untitled;
   const struckCls = slate.deleted_at ? ' opacity-60' : '';
+  // The app keeps the words and leaves the characters out
   const stats = (
     <>
       <span>{strings.slates.stats.wordsShort(slate.word_count)}</span>
-      <span>{strings.slates.stats.charsShort(slate.char_count)}</span>
+      {!inShell && <span>{strings.slates.stats.charsShort(slate.char_count)}</span>}
     </>
   );
 
@@ -511,7 +524,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           {selecting && <SelectMark selected={selected} />}
-          {isPinned && <PinGlyph />}
+          {isPinned && dated && <PinGlyph />}
           <div className="relative min-w-0 text-sm md:text-base">
             <h3 className={`text-[var(--theme-text)] font-medium truncate min-w-0${struckCls}`}>{title}</h3>
             <Strike on={Boolean(slate.deleted_at)} top="50%" />
@@ -673,6 +686,9 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     showToast(strings.writer.lock.recovered);
   };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  // The app's folded sort and show line, open or not
+  const [choicesOpen, setChoicesOpen] = useState(false);
+  const foldChoices = (rows) => (inShell ? <Collapse open={choicesOpen}>{rows}</Collapse> : rows);
   const [sortBy, setSortBy] = useState(() => remembered?.sortBy ?? 'recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
   // Phones always get the list, whatever preference the desktop toggle saved.
@@ -1805,19 +1821,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     });
   }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, visibilityFilter, sortBy]);
 
-  // By date, the list comes in dated groups; any other order is one list
-  const dateSorted = sortBy === 'recent' || sortBy === 'oldest';
+  // By date, the list reads as a ledger of days (the list layout only; the
+  // grid's cards keep their own dates)
+  const ledger = (sortBy === 'recent' || sortBy === 'oldest') && effectiveViewMode === 'list';
   const slateGroups = useMemo(() => {
-    if (!dateSorted) return [{ key: 'all', label: null, slates: filteredAndSortedSlates }];
+    if (!ledger) return [{ key: 'all', slates: filteredAndSortedSlates }];
     const now = new Date();
     const groups = [];
     for (const slate of filteredAndSortedSlates) {
-      const { key, label } = dateGroupOf(slate, now);
-      if (groups.at(-1)?.key !== key) groups.push({ key, label, slates: [] });
+      const day = dayOf(slate, now);
+      if (groups.at(-1)?.key !== day.key) groups.push({ ...day, slates: [] });
       groups.at(-1).slates.push(slate);
     }
     return groups;
-  }, [filteredAndSortedSlates, dateSorted]);
+  }, [filteredAndSortedSlates, ledger]);
 
   if (loading) {
     return (
@@ -1928,30 +1945,41 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
-              <ChoiceRow
-                swipe
-                icon={SortIcon}
-                label={strings.slates.sortLabel}
-                options={SORT_OPTIONS}
-                value={sortBy}
-                onChange={setSortBy}
-              />
-              <ChoiceRow
-                swipe
-                icon={EyeIcon}
-                label={strings.slates.filterVisibility}
-                options={[
-                  { id: 'all', label: strings.slates.filterVisibilityAll },
-                  { id: 'public', label: strings.slates.filterVisibilityPublic },
-                  { id: 'private', label: strings.slates.filterVisibilityPrivate },
-                  { id: 'archived', label: strings.slates.filterVisibilityArchived },
-                  { id: 'trash', label: strings.slates.filterVisibilityTrash, tone: 'danger' },
-                ]}
-                value={visibilityFilter}
-                onChange={setVisibilityFilter}
-              />
-            </div>
+            {/* The app folds sort and show into one line of what is chosen;
+                a tap opens the two rows under it */}
+            {inShell && (
+              <button
+                type="button"
+                onClick={() => { tap(); setChoicesOpen(v => !v); }}
+                aria-expanded={choicesOpen}
+                className="flex items-center gap-2 text-xs text-[var(--theme-text-dim)]"
+              >
+                <Ico of={SortIcon} className="w-3.5 h-3.5" />
+                <span className="text-[var(--theme-text)]">{SORT_OPTIONS.find(o => o.id === sortBy)?.label}</span>
+                <span className="opacity-30">·</span>
+                <span className={visibilityFilter === 'trash' ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text)]'}>{VISIBILITY_OPTIONS().find(o => o.id === visibilityFilter)?.label}</span>
+              </button>
+            )}
+            {foldChoices(
+              <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm ${inShell ? 'pt-3' : ''}`}>
+                <ChoiceRow
+                  swipe
+                  icon={SortIcon}
+                  label={strings.slates.sortLabel}
+                  options={SORT_OPTIONS}
+                  value={sortBy}
+                  onChange={setSortBy}
+                />
+                <ChoiceRow
+                  swipe
+                  icon={EyeIcon}
+                  label={strings.slates.filterVisibility}
+                  options={VISIBILITY_OPTIONS()}
+                  value={visibilityFilter}
+                  onChange={setVisibilityFilter}
+                />
+              </div>
+            )}
             {/* Every tag in the library, a row of its own under sort and show.
                 Editing adds a small menu after each tag (rename in place, or
                 remove from every slate); the menus grow in beside the words,
@@ -2064,14 +2092,25 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       ) : (
         <div
           key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}`}
-          className="animate-[fadeIn_0.3s_ease-out]"
+          className={`animate-[fadeIn_0.3s_ease-out] ${effectiveViewMode === 'list' ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]' : ''}`}
         >
           {slateGroups.map((group) => (
-            <section key={group.key} className="mt-8 first:mt-0">
-              {group.label && <h2 className="px-2 pb-2 text-xs md:text-sm text-[var(--theme-text-muted)]">{group.label}</h2>}
+            <section key={group.key} className={ledger ? 'flex items-start' : ''}>
+              {/* The day, once, beside its first slate; it rides along the
+                  top while its slates scroll by, until the next day takes over */}
+              {ledger && (
+                <div
+                  className="sticky flex-shrink-0 w-[4.75rem] md:w-28 pl-2 py-3.5 text-xs leading-5 md:text-sm md:leading-6 text-[var(--theme-text-dim)]"
+                  style={{ top: 'max(0.75rem, env(safe-area-inset-top))' }}
+                >
+                  {group.pin ? <span className="flex h-5 md:h-6 items-center"><PinGlyph /></span> : group.label}
+                </div>
+              )}
               <div
                 className={effectiveViewMode === 'list'
-                  ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
+                  // Each slate ruled off; in the ledger the rule starts after
+                  // the date, and a full one marks a new day
+                  ? `divide-y divide-[var(--theme-border-light)] ${ledger ? 'min-w-0 flex-1' : ''}`
                   : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}
               >
                 {group.slates.map((slate) => (
@@ -2095,7 +2134,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                     onCopy={(e) => copySlateNow(slate, e)}
                     onKeep={(e) => toggleKeepOffline(slate, e)}
                     layout={effectiveViewMode === 'list' ? 'row' : 'card'}
-                    dated={!dateSorted}
+                    dated={!ledger}
                     selecting={selecting && !slate.shared}
                     selected={selected.has(slate.slate_number)}
                     onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}
