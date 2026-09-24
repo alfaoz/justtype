@@ -122,8 +122,8 @@ function SlateBadges({ slate, offline = false, onCopy, onKeep, markLast = false 
   return (
     <>
       {!markLast && mark}
-      {/* The app's rows say only what is unusual: private goes unsaid */}
-      {inShell && status.usual ? null : slate.is_locked && slate.unlockedHere ? (
+      {/* Rows say only what is unusual: private goes unsaid */}
+      {status.usual ? null : slate.is_locked && slate.unlockedHere ? (
         // The open lock shuts on a click
         <button
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); forgetDocKey(slate.slate_number); }}
