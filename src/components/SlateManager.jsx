@@ -25,7 +25,6 @@ import { fileAway } from '../archiveMotion';
 import { nativeMenu, canNativeMenu } from '../shellMenu';
 import { tap } from '../cues';
 import { inShell } from '../shell';
-import { Collapse } from './Reveal';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -693,8 +692,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   };
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   // The app's folded sort and show line, open or not
-  const [choicesOpen, setChoicesOpen] = useState(false);
-  const foldChoices = (rows) => (inShell ? <Collapse open={choicesOpen}>{rows}</Collapse> : rows);
   const [sortBy, setSortBy] = useState(() => remembered?.sortBy ?? 'recent'); // 'recent' | 'oldest' | 'a-z' | 'z-a' | 'words'
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('justtype-slate-view') || 'list'); // 'list' | 'grid'
   // Phones always get the list, whatever preference the desktop toggle saved.
@@ -1951,23 +1948,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
               </div>
             </div>
 
-            {/* The app folds sort and show into one line of what is chosen;
-                a tap opens the two rows under it */}
-            {inShell && (
-              <button
-                type="button"
-                onClick={() => { tap(); setChoicesOpen(v => !v); }}
-                aria-expanded={choicesOpen}
-                className="flex items-center gap-2 text-xs text-[var(--theme-text-dim)]"
-              >
-                <Ico of={SortIcon} className="w-3.5 h-3.5" />
-                <span className="text-[var(--theme-text)]">{SORT_OPTIONS.find(o => o.id === sortBy)?.label}</span>
-                <span className="opacity-30">·</span>
-                <span className={visibilityFilter === 'trash' ? 'text-[var(--theme-red)]' : 'text-[var(--theme-text)]'}>{VISIBILITY_OPTIONS().find(o => o.id === visibilityFilter)?.label}</span>
-              </button>
-            )}
-            {foldChoices(
-              <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm ${inShell ? 'pt-3' : ''}`}>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs md:text-sm">
                 <ChoiceRow
                   swipe
                   icon={SortIcon}
@@ -1985,7 +1966,6 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   onChange={setVisibilityFilter}
                 />
               </div>
-            )}
             {/* Every tag in the library, a row of its own under sort and show.
                 Editing adds a small menu after each tag (rename in place, or
                 remove from every slate); the menus grow in beside the words,
