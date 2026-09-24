@@ -269,6 +269,8 @@ const strings = {
   slates: {
     title: 'my slates',
     newSlate: '+ new slate',
+    // Headings over the list while it is sorted by date
+    groups: { pinned: 'pinned', today: 'today', yesterday: 'yesterday', week: 'previous 7 days', month: 'previous 30 days' },
     searchPlaceholder: 'search slates...',
     sortLabel: 'sort:',
     filterVisibility: 'show:',

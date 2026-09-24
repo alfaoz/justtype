@@ -23,6 +23,7 @@ import { ScrollRow } from './ScrollRow';
 import { burnAway } from '../burn';
 import { fileAway } from '../archiveMotion';
 import { nativeMenu, canNativeMenu } from '../shellMenu';
+import { tap } from '../cues';
 
 // Where the list was left when the writer took over: its filters, search
 // and scroll position, so coming back lands on the same view
@@ -41,6 +42,24 @@ const ALL_TAGS = '__all__';
 
 const formatDateShort = (dateString) =>
   new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+// Sorted by date, the list reads in groups: pinned, today, yesterday, the
+// last week, the last month, then month by month. The heading does the
+// dating, so the rows leave their dates out. A slate not saved to the
+// account yet has no date and counts as today.
+const dateGroupOf = (slate, now) => {
+  const g = strings.slates.groups;
+  if (slate.pinned_at) return { key: 'pinned', label: g.pinned };
+  const d = slate.updated_at ? new Date(slate.updated_at) : now;
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(now) - day(d)) / 86400000);
+  if (days <= 0) return { key: 'today', label: g.today };
+  if (days === 1) return { key: 'yesterday', label: g.yesterday };
+  if (days < 7) return { key: 'week', label: g.week };
+  if (days < 30) return { key: 'month', label: g.month };
+  const month = d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
+  return { key: `${d.getFullYear()}-${d.getMonth()}`, label: d.getFullYear() === now.getFullYear() ? month : `${month} ${d.getFullYear()}` };
+};
 
 // The status vocabulary: one quiet lowercase word per state, coloured the way
 // the rest of the app already speaks (blue = public, orange = was public,
@@ -163,6 +182,13 @@ const menuSymbols = new Map([
   [LeaveIcon, 'rectangle.portrait.and.arrow.right'],
 ]);
 
+// The phone's own menu over a list of menu items, from the element given
+async function openNativeItems(anchor, items) {
+  const id = await nativeMenu(anchor, items.map(({ id, label, danger, icon }) => ({ id, label, danger: Boolean(danger), symbol: menuSymbols.get(icon) || null })));
+  const hit = id && items.find(i => i.id === id);
+  if (hit) hit.onClick({ stopPropagation() {}, preventDefault() {} });
+}
+
 /**
  * Three dots that open a small menu: the slate rows have one, and in edit
  * mode every tag does.
@@ -180,12 +206,10 @@ function DotMenu({ isOpen, onToggle, items, small = false }) {
     setOpenUp(window.innerHeight - r.bottom < h && r.top > h);
   }, [isOpen]);
   // In the iOS shell the phone draws the menu: the same words, off the dots
-  const openNative = async (e) => {
+  const openNative = (e) => {
     e.stopPropagation();
     e.preventDefault();
-    const id = await nativeMenu(wrapRef.current, items.map(({ id, label, danger, icon }) => ({ id, label, danger: Boolean(danger), symbol: menuSymbols.get(icon) || null })));
-    const hit = id && items.find(i => i.id === id);
-    if (hit) hit.onClick({ stopPropagation() {}, preventDefault() {} });
+    openNativeItems(wrapRef.current, items);
   };
   return (
     <div ref={wrapRef} className="relative flex items-center flex-shrink-0">
@@ -262,9 +286,9 @@ function Strike({ on, top }) {
  * The slate menu both layouts share. Own slates get pin/tags/publish/
  * delete; slates shared with me get the two-step leave.
  */
-function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
+function slateMenuItems(slate, { onPin, onMoveUp, onMoveDown, onTags, onPublish, onLock, onArchive, onDelete, onRestore, onDeleteForever, onLeave, leaveArmed, onOffload, onCopyToDevice }) {
   const isPinned = Boolean(slate.pinned_at);
-  const items = slate.deleted_at ? [
+  return slate.deleted_at ? [
     { id: 'restore', label: strings.slates.menu.restore, icon: UnarchiveIcon, onClick: onRestore },
     { id: 'forever', label: strings.slates.menu.deleteForever, icon: TrashIcon, danger: true, onClick: onDeleteForever },
   ] : slate.shared ? [
@@ -286,7 +310,48 @@ function SlateMenu({ slate, isOpen, onToggle, onPin, onMoveUp, onMoveDown, onTag
     !slate.local && { id: 'archive', label: slate.archived_at ? strings.slates.menu.unarchive : strings.slates.menu.archive, icon: slate.archived_at ? UnarchiveIcon : ArchiveIcon, onClick: onArchive },
     { id: 'delete', label: strings.slates.menu.delete, icon: TrashIcon, danger: true, onClick: onDelete },
   ].filter(Boolean);
-  return <DotMenu isOpen={isOpen} onToggle={onToggle} items={items} />;
+}
+
+function SlateMenu({ slate, ...menuProps }) {
+  return <DotMenu isOpen={menuProps.isOpen} onToggle={menuProps.onToggle} items={slateMenuItems(slate, menuProps)} />;
+}
+
+// In the app the rows carry no dots: holding a row opens its menu, the way
+// the phone's own lists do. A finger that moves is scrolling, not holding;
+// the tap that ends a hold does not also open the slate.
+function useHoldMenu(slate, menuProps, off) {
+  const rowRef = useRef(null);
+  const press = useRef(null);
+  const held = useRef(false);
+  const stop = () => { if (press.current) { clearTimeout(press.current.timer); press.current = null; } };
+  useEffect(() => stop, []);
+  const latest = useRef(null);
+  latest.current = { slate, menuProps };
+  if (!canNativeMenu || off) return { rowRef, held, holdProps: {} };
+  const holdProps = {
+    onTouchStart: (e) => {
+      held.current = false;
+      stop();
+      const t = e.touches[0];
+      press.current = {
+        x: t.clientX, y: t.clientY,
+        timer: setTimeout(() => {
+          press.current = null;
+          held.current = true;
+          tap('medium');
+          openNativeItems(rowRef.current, slateMenuItems(latest.current.slate, latest.current.menuProps));
+        }, 450),
+      };
+    },
+    onTouchMove: (e) => {
+      const p = press.current;
+      const t = e.touches[0];
+      if (p && Math.hypot(t.clientX - p.x, t.clientY - p.y) > 10) stop();
+    },
+    onTouchEnd: stop,
+    onTouchCancel: stop,
+  };
+  return { rowRef, held, holdProps };
 }
 
 /**
@@ -361,8 +426,10 @@ const PinGlyph = () => (
  * between rows. `card` keeps the bordered box for the grid. Both are thin
  * layouts over the same title/badges/menu pieces.
  */
-function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false }) {
+function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = false, onCopy, onKeep, hit = null, editing = false, drag = null, selecting = false, selected = false, dated = true }) {
   const isPinned = Boolean(slate.pinned_at);
+  const { rowRef, held, holdProps } = useHoldMenu(slate, menuProps, selecting);
+  const dots = !canNativeMenu && <SlateMenu slate={slate} {...menuProps} />;
   // The slate the writer has open (the one the writer button goes back to)
   // rests in its hover state: no word, just the row already lit
   // Content search: the line the query was found on, the match lit up
@@ -373,7 +440,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
     </p>
   );
   const unavailable = offline && !slate.available && !slate.local && !slate.shared;
-  const open = unavailable ? undefined : onOpen;
+  const open = unavailable ? undefined : (e) => { if (held.current) { held.current = false; return; } onOpen(e); };
   const unavailableCls = unavailable ? ' slate-unavailable' : '';
   const title = slate.title || strings.slates.untitled;
   const struckCls = slate.deleted_at ? ' opacity-60' : '';
@@ -387,7 +454,9 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   if (layout === 'card') {
     return (
       <div
+        ref={rowRef}
         onClick={open}
+        {...holdProps}
         data-slate={slate.slate_number}
         className={`slate-item is-card ${editing ? 'bg-[var(--theme-bg-tertiary)] border-[var(--theme-text-dim)]' : 'bg-[var(--theme-bg-secondary)] border-[var(--theme-border)]'} border p-4 rounded-lg hover:border-[var(--theme-text-dim)] hover:bg-[var(--theme-bg-tertiary)] transition-all cursor-pointer flex flex-col min-h-[132px]${unavailableCls}`}
       >
@@ -405,7 +474,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
             </div>
             <span className="mt-1"><TagWords slate={slate} onTagFilter={onTagFilter} /></span>
           </div>
-          <SlateMenu slate={slate} {...menuProps} />
+          {dots}
         </div>
         {snippet}
 
@@ -415,7 +484,7 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
           </div>
           <div className="flex items-center justify-between text-xs text-[var(--theme-text-dim)]">
             <div className="flex items-center gap-3">{stats}</div>
-            <span>{formatDateShort(slate.updated_at)}</span>
+            {dated && <span>{formatDateShort(slate.updated_at)}</span>}
           </div>
         </div>
       </div>
@@ -432,7 +501,9 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
   } : {};
   return (
     <div
+      ref={rowRef}
       onClick={open}
+      {...holdProps}
       {...dragProps}
       data-slate={slate.slate_number}
       className={`slate-item flex items-start md:items-center gap-3 px-2 py-3.5 ${editing ? 'bg-[var(--theme-bg-secondary)]' : ''} ${drag?.overId === slate.slate_number ? 'bg-[var(--theme-bg-tertiary)]' : ''} hover:bg-[var(--theme-bg-secondary)] cursor-pointer transition-colors${unavailableCls}`}
@@ -453,17 +524,17 @@ function SlateItem({ slate, layout, onOpen, onTagFilter, menuProps, offline = fa
         <div className="mt-1.5 flex md:hidden flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--theme-text-dim)]">
           <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
           {stats}
-          <span>{formatDateShort(slate.updated_at)}</span>
+          {dated && <span>{formatDateShort(slate.updated_at)}</span>}
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3 text-xs text-[var(--theme-text-dim)] flex-shrink-0">
         <SlateBadges slate={slate} offline={offline} onCopy={onCopy} onKeep={onKeep} />
         {stats}
-        <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>
+        {dated && <span className="w-14 text-right">{formatDateShort(slate.updated_at)}</span>}
       </div>
 
-      <SlateMenu slate={slate} {...menuProps} />
+      {dots}
     </div>
   );
 }
@@ -1734,6 +1805,20 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     });
   }, [slates, sharedSlates, debouncedSearchQuery, contentHits, tagFilter, visibilityFilter, sortBy]);
 
+  // By date, the list comes in dated groups; any other order is one list
+  const dateSorted = sortBy === 'recent' || sortBy === 'oldest';
+  const slateGroups = useMemo(() => {
+    if (!dateSorted) return [{ key: 'all', label: null, slates: filteredAndSortedSlates }];
+    const now = new Date();
+    const groups = [];
+    for (const slate of filteredAndSortedSlates) {
+      const { key, label } = dateGroupOf(slate, now);
+      if (groups.at(-1)?.key !== key) groups.push({ key, label, slates: [] });
+      groups.at(-1).slates.push(slate);
+    }
+    return groups;
+  }, [filteredAndSortedSlates, dateSorted]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -1979,56 +2064,64 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
       ) : (
         <div
           key={`${effectiveViewMode}:${sortBy}:${visibilityFilter}`}
-          className={`animate-[fadeIn_0.3s_ease-out] ${
-            effectiveViewMode === 'list'
-              ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
-              : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
-          }`}
+          className="animate-[fadeIn_0.3s_ease-out]"
         >
-          {filteredAndSortedSlates.map((slate) => (
-            <SlateItem
-              key={slate.slate_number}
-              drag={effectiveViewMode === 'list' && !slate.shared && !slate.deleted_at ? drag : null}
-              slate={{
-                ...slate,
-                kept: deviceCopies.kept.has(slate.slate_number),
-                available: deviceCopies.available.has(slate.slate_number),
-                offloaded: deviceCopies.offloaded.has(slate.slate_number),
-                pending: slate.local || deviceCopies.pending.has(slate.slate_number),
-                syncing: syncing.has(slate.slate_number),
-                justSynced: justSynced.has(slate.slate_number),
-                copying: copying.has(slate.slate_number),
-                unlockedHere: isOpen(slate.slate_number),
-              }}
-              offline={!online}
-              hit={contentHits.get(slate.slate_number) || null}
-              editing={currentSlateNumber != null && slate.slate_number === currentSlateNumber}
-              onCopy={(e) => copySlateNow(slate, e)}
-              onKeep={(e) => toggleKeepOffline(slate, e)}
-              layout={effectiveViewMode === 'list' ? 'row' : 'card'}
-              selecting={selecting && !slate.shared}
-              selected={selected.has(slate.slate_number)}
-              onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}
-              onTagFilter={setTagFilter}
-              menuProps={{
-                isOpen: openMenuId === slate.slate_number,
-                onToggle: (e) => toggleMenu(slate.slate_number, e),
-                onPin: (e) => togglePin(slate, e),
-                onMoveUp: slate.pinned_at && pinnedInOrder().findIndex(s => s.slate_number === slate.slate_number) > 0 ? (e) => movePinned(slate, -1, e) : null,
-                onMoveDown: slate.pinned_at && (() => { const l = pinnedInOrder(); const i = l.findIndex(s => s.slate_number === slate.slate_number); return i >= 0 && i < l.length - 1; })() ? (e) => movePinned(slate, 1, e) : null,
-                onTags: (e) => openTagsEditor(slate, e),
-                onOffload: (e) => offloadFromDevice(slate, e),
-                onCopyToDevice: (e) => copySlateNow(slate, e),
-                onPublish: (e) => togglePublish(slate, e),
-                onLock: (e) => toggleLock(slate, e),
-                onArchive: (e) => toggleArchive(slate, e),
-                onDelete: (e) => trashSlate(slate, e),
-                onRestore: (e) => restoreSlate(slate, e),
-                onDeleteForever: (e) => deleteForever(slate, e),
-                onLeave: (e) => handleLeaveClick(slate, e),
-                leaveArmed: leaveConfirmId === slate.sharedSlateId,
-              }}
-            />
+          {slateGroups.map((group) => (
+            <section key={group.key} className="mt-8 first:mt-0">
+              {group.label && <h2 className="px-2 pb-2 text-xs md:text-sm text-[var(--theme-text-muted)]">{group.label}</h2>}
+              <div
+                className={effectiveViewMode === 'list'
+                  ? 'border-y border-[var(--theme-border-light)] divide-y divide-[var(--theme-border-light)]'
+                  : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}
+              >
+                {group.slates.map((slate) => (
+                  <SlateItem
+                    key={slate.slate_number}
+                    drag={effectiveViewMode === 'list' && !slate.shared && !slate.deleted_at ? drag : null}
+                    slate={{
+                      ...slate,
+                      kept: deviceCopies.kept.has(slate.slate_number),
+                      available: deviceCopies.available.has(slate.slate_number),
+                      offloaded: deviceCopies.offloaded.has(slate.slate_number),
+                      pending: slate.local || deviceCopies.pending.has(slate.slate_number),
+                      syncing: syncing.has(slate.slate_number),
+                      justSynced: justSynced.has(slate.slate_number),
+                      copying: copying.has(slate.slate_number),
+                      unlockedHere: isOpen(slate.slate_number),
+                    }}
+                    offline={!online}
+                    hit={contentHits.get(slate.slate_number) || null}
+                    editing={currentSlateNumber != null && slate.slate_number === currentSlateNumber}
+                    onCopy={(e) => copySlateNow(slate, e)}
+                    onKeep={(e) => toggleKeepOffline(slate, e)}
+                    layout={effectiveViewMode === 'list' ? 'row' : 'card'}
+                    dated={!dateSorted}
+                    selecting={selecting && !slate.shared}
+                    selected={selected.has(slate.slate_number)}
+                    onOpen={() => (selecting ? (!slate.shared && toggleSelected(slate.slate_number)) : slate.shared ? (onOpenShared && onOpenShared(slate.sharedSlateId)) : onSelectSlate(slate))}
+                    onTagFilter={setTagFilter}
+                    menuProps={{
+                      isOpen: openMenuId === slate.slate_number,
+                      onToggle: (e) => toggleMenu(slate.slate_number, e),
+                      onPin: (e) => togglePin(slate, e),
+                      onMoveUp: slate.pinned_at && pinnedInOrder().findIndex(s => s.slate_number === slate.slate_number) > 0 ? (e) => movePinned(slate, -1, e) : null,
+                      onMoveDown: slate.pinned_at && (() => { const l = pinnedInOrder(); const i = l.findIndex(s => s.slate_number === slate.slate_number); return i >= 0 && i < l.length - 1; })() ? (e) => movePinned(slate, 1, e) : null,
+                      onTags: (e) => openTagsEditor(slate, e),
+                      onOffload: (e) => offloadFromDevice(slate, e),
+                      onCopyToDevice: (e) => copySlateNow(slate, e),
+                      onPublish: (e) => togglePublish(slate, e),
+                      onLock: (e) => toggleLock(slate, e),
+                      onArchive: (e) => toggleArchive(slate, e),
+                      onDelete: (e) => trashSlate(slate, e),
+                      onRestore: (e) => restoreSlate(slate, e),
+                      onDeleteForever: (e) => deleteForever(slate, e),
+                      onLeave: (e) => handleLeaveClick(slate, e),
+                      leaveArmed: leaveConfirmId === slate.sharedSlateId,
+                    }}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
