@@ -49,10 +49,10 @@ const formatDateShort = (dateString) =>
 // yesterday, the last week, the last month, then by month and by year. The
 // class is printed once, in a column on the left on a wide screen and over
 // its slates on a phone; each row keeps its own date. Pinned slates lead
-// under the pin, in the class's place. A slate not saved to the account
+// under pinned, in the class's place. A slate not saved to the account
 // yet has no date and counts as today.
 const dayOf = (slate, now) => {
-  if (slate.pinned_at) return { key: 'pinned', pin: true };
+  if (slate.pinned_at) return { key: 'pinned', label: strings.slates.days.pinned };
   const d = slate.updated_at ? new Date(slate.updated_at) : now;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(now) - day(d)) / 86400000);
@@ -2110,7 +2110,7 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
                   className={`sticky z-10 md:z-auto flex-shrink-0 md:w-28 px-2 pt-4 pb-1.5 md:pr-0 md:py-3.5 text-xs md:text-sm md:leading-6 tracking-wide md:tracking-normal text-[var(--theme-text-dim)] bg-[var(--theme-bg)] md:bg-transparent`}
                   style={{ top: inShell ? 'env(safe-area-inset-top)' : 0 }}
                 >
-                  {group.pin ? <span className="flex h-4 md:h-6 items-center"><PinGlyph /></span> : group.label}
+                  {group.label}
                 </div>
               )}
               <div
