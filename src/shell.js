@@ -11,12 +11,32 @@ export const inShell = Boolean(cap?.isNativePlatform?.());
 // iPadOS web views say Macintosh; a Mac has no touch points
 export const isPad = () => /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// The keyboard's height while it is up, else 0 (published as --kb below)
+export const kbHeight = () => parseFloat(document.documentElement.style.getPropertyValue('--kb')) || 0;
+
+// How far above the writer's bottom edge the caret's line stays, so it rests
+// just above the pills rather than behind them. The writer ends at the
+// keyboard while that is up, else at the screen's foot; the dock sits 8pt
+// above the keyboard or the safe-area line, its pills 40pt tall in a 44pt
+// row, so their top is 50pt up, and 10 more is air.
+let safeProbe = null;
+const safeBottom = () => {
+  if (!safeProbe) {
+    safeProbe = document.createElement('div');
+    safeProbe.setAttribute('aria-hidden', 'true');
+    safeProbe.style.cssText = 'position:fixed;left:0;bottom:0;width:0;height:env(safe-area-inset-bottom);visibility:hidden;pointer-events:none';
+    document.body.appendChild(safeProbe);
+  }
+  return safeProbe.offsetHeight;
+};
+export const dockClearance = () => 60 + (kbHeight() > 0 ? 0 : safeBottom());
+
 // The writer's editors in the app: the caret keeps clear of the dock that
 // floats over the last lines, and once the keyboard is up (the writer has shrunk above
 // it, see index.css) the caret's line is brought into view. Nothing in a
 // browser.
 export const shellScrollMargins = (EditorView, ViewPlugin) => (inShell ? [
-  EditorView.scrollMargins.of(() => ({ bottom: 88 })),
+  EditorView.scrollMargins.of(() => ({ bottom: dockClearance() })),
   ViewPlugin.define((view) => {
     const reveal = () => {
       if (!view.hasFocus) return;

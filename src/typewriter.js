@@ -50,3 +50,17 @@ export function centerTextareaCaret(scroller, ta) {
   if (Math.abs(el.scrollTop - target) < 2) return;
   el.scrollTo({ top: target, behavior: 'smooth' });
 }
+
+// The plain editor in the app: iOS follows the caret only down to the
+// keyboard, where the dock covers it, so after that the caret's line is
+// lifted on until it rests `clear` px above the bottom of what shows
+export function liftTextareaCaret(scroller, ta, clear, kb) {
+  if (!ta) return;
+  const line = parseFloat(getComputedStyle(ta).lineHeight) || 24;
+  const inner = ta.scrollHeight > ta.clientHeight + 1;
+  const el = inner ? ta : scroller;
+  if (!el) return;
+  const bottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight - kb) - clear;
+  const caret = ta.getBoundingClientRect().top + caretTop(ta) - ta.scrollTop + line;
+  if (caret > bottom + 1) el.scrollTop += caret - bottom;
+}

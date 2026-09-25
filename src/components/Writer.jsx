@@ -5,7 +5,7 @@ import { VERSION } from '../version';
 import { strings } from '../strings';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, decryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
-import { useScroll, centerTextareaCaret } from '../typewriter';
+import { useScroll, centerTextareaCaret, liftTextareaCaret } from '../typewriter';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
 import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory } from '../history';
@@ -27,7 +27,7 @@ import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '..
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { canNativeMenu, canNativePill, setNativePill, hideNativePill, nativeStatusColor, nativeExportText, nativeExportPDF, canShareLink, shareLink } from '../shellMenu';
-import { inShell } from '../shell';
+import { inShell, dockClearance, kbHeight } from '../shell';
 import { biometry, hasSecret, readSecret, forgetSecret, rememberSecret, deviceUnlockAsked, turnOnDeviceUnlock, turnOffDeviceUnlock } from '../deviceUnlock';
 import { SunIcon, SizeIcon, EyeIcon, HashIcon, PenIcon, PeopleIcon, ClockIcon, LinkIcon } from './icons';
 import { LockPanel } from './LockPanel';
@@ -1176,9 +1176,27 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   });
   // Keep the caret line in the middle while typing in the plain editor
   const centerIfWanted = () => {
-    if (scrollMode !== 'centered') return;
+    if (scrollMode !== 'centered') return keepCaretClear();
     requestAnimationFrame(() => centerTextareaCaret(mainRef.current, textareaRef.current));
   };
+  // In the app the caret's line rests above the pills, not behind them: iOS
+  // scrolls the plain editor only as far as the keyboard (a second look
+  // catches its own scroll landing after the first)
+  const keepCaretClear = () => {
+    if (!inShell || scrollMode === 'centered') return;
+    const lift = () => liftTextareaCaret(mainRef.current, textareaRef.current, dockClearance(), kbHeight());
+    requestAnimationFrame(lift);
+    setTimeout(lift, 120);
+  };
+  const keepCaretClearRef = useRef(keepCaretClear);
+  keepCaretClearRef.current = keepCaretClear;
+  // Once the keyboard is up, the same for the line the caret is on
+  useEffect(() => {
+    if (!inShell) return undefined;
+    const reveal = () => { if (document.activeElement === textareaRef.current) keepCaretClearRef.current(); };
+    window.addEventListener('shell:caret', reveal);
+    return () => window.removeEventListener('shell:caret', reveal);
+  }, []);
   // The caret goes back where it was once the slate is on screen
   useEffect(() => {
     if (isLoading) return;
@@ -3037,7 +3055,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             ref={textareaRef}
             value={content}
             readOnly={inTrash}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => { setContent(e.target.value); keepCaretClear(); }}
             onKeyDown={handleTextareaKeyDown}
             onKeyUp={centerIfWanted}
             onClick={centerIfWanted}
