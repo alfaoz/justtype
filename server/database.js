@@ -55,7 +55,6 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-  CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
   CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity);
 
   CREATE TABLE IF NOT EXISTS admin_logs (
@@ -1197,7 +1196,87 @@ try {
   } catch (e) { /* column already present */ }
   console.log('✓ Collab checkpoints table initialized');
 } catch (err) {
+  // A server running on a half-migrated schema fails later in ways that are
+  // hard to trace (a missing column in the middle of a save). Stop here.
   console.error('Database migration error:', err);
+  process.exit(1);
+}
+
+// Numbered migrations. The block above predates them and stays as the
+// baseline (every step in it is guarded, so it is safe on every boot). New
+// schema changes go here: each runs once, in order, in its own transaction,
+// and PRAGMA user_version records the last one applied. A failure stops the
+// boot rather than serving on a half-migrated schema.
+const migrations = [
+  // 1. A session is found by its token or, for two minutes after a renewal,
+  // by the token it replaced. Without an index on the second the OR scanned
+  // the whole table on every signed-in request. token_hash is UNIQUE, so its
+  // own extra index was a duplicate that every session write paid for.
+  () => {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_prev_token_hash ON sessions(prev_token_hash)');
+    db.exec('DROP INDEX IF EXISTS idx_sessions_token_hash');
+  },
+  // 2. Slate numbers come from a per-account counter that never goes down.
+  // MAX(slate_number) + 1 handed a purged slate's number to the next slate,
+  // so a stale tab or an old /slate/N link reached a different slate.
+  () => {
+    const cols = db.pragma('table_info(users)');
+    if (!cols.some(col => col.name === 'next_slate_number')) {
+      db.exec('ALTER TABLE users ADD COLUMN next_slate_number INTEGER');
+    }
+    db.exec(`
+      UPDATE users SET next_slate_number = 1 + MAX(
+        COALESCE((SELECT MAX(slate_number) FROM slates WHERE slates.user_id = users.id), 0),
+        COALESCE((SELECT MAX(slate_number) FROM slate_tombstones WHERE slate_tombstones.user_id = users.id), 0)
+      )
+    `);
+  },
+  // 3. A save carries a ref. A retry of a save that already landed (its
+  // answer was lost on the way back) is recognised and not written twice.
+  () => {
+    const cols = db.pragma('table_info(slates)');
+    if (!cols.some(col => col.name === 'last_save_ref')) {
+      db.exec('ALTER TABLE slates ADD COLUMN last_save_ref TEXT');
+    }
+  },
+  // 4. B2 files leave through a queue: a save answers without waiting on the
+  // delete, a failed delete is retried, and a replaced version lingers long
+  // enough that restoring a recent database backup finds every file it
+  // points at (see b2DeleteQueue.js). The worker checks that no row still
+  // points at a file before deleting it, hence the file id indexes.
+  () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS b2_pending_deletes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_id TEXT NOT NULL,
+        file_name TEXT,
+        not_before INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        reason TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_b2_pending_deletes_due ON b2_pending_deletes(not_before);
+      CREATE INDEX IF NOT EXISTS idx_slates_b2_file_id ON slates(b2_file_id);
+      CREATE INDEX IF NOT EXISTS idx_slates_b2_public_file_id ON slates(b2_public_file_id);
+      CREATE INDEX IF NOT EXISTS idx_slates_history_b2_file_id ON slates(history_b2_file_id);
+      CREATE INDEX IF NOT EXISTS idx_collab_checkpoints_b2_file_id ON collab_checkpoints(b2_file_id);
+    `);
+  },
+];
+
+const appliedVersion = db.pragma('user_version', { simple: true });
+for (let i = appliedVersion; i < migrations.length; i++) {
+  try {
+    db.transaction(() => {
+      migrations[i]();
+      db.pragma(`user_version = ${i + 1}`);
+    })();
+    console.log(`✓ Database migration ${i + 1} applied`);
+  } catch (err) {
+    console.error(`Database migration ${i + 1} failed:`, err);
+    process.exit(1);
+  }
 }
 
 console.log('✓ Database initialized');
