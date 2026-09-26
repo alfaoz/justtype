@@ -1517,10 +1517,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const data = await response.json();
 
       if (response.ok && data.url) {
-        // Store tier for test upgrade after payment
-        if (token) {
-          localStorage.setItem('justtype-pending-tier', tier);
-        }
         // Redirect to Stripe checkout
         window.location.href = data.url;
       } else {

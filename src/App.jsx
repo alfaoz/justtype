@@ -752,23 +752,10 @@ export default function App() {
       // Clean URL first
       window.history.replaceState({}, '', '/');
 
-      // In test mode, trigger upgrade via test endpoint
-      const tier = localStorage.getItem('justtype-pending-tier');
-
-      if (tier && token) {
-        fetch(`${API_URL}/stripe/test-upgrade`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ tier })
-        }).then(response => {
-          return response.json();
-        }).then(data => {
-          localStorage.removeItem('justtype-pending-tier');
-          // Refresh user data to get updated storage info
-          fetchUserData();
-        }).catch(err => console.error('Test upgrade failed:', err));
-      }
+      // The payment's webhook upgrades the account; the writer asks for the
+      // plan again once it is back (see its supporter tier). The tier a
+      // checkout once left here for a test upgrade is no longer used.
+      localStorage.removeItem('justtype-pending-tier');
     } else if (payment === 'cancelled') {
       // Just clean URL, no modal needed
       localStorage.removeItem('justtype-pending-tier');
