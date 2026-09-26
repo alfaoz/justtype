@@ -250,14 +250,19 @@ export default function App() {
   // and a device that dismissed it before the account could remember tells
   // the account instead of asking again. Signed-in only, writer view only
   // (so it never lands on top of /join, /verify or an auth flow).
-  const markWhatsNewSeen = () => {
+  // The account is told once: after that (or once it has said it knows)
+  // this device keeps a note per account and sends nothing more
+  const whatsNewToldKey = (id) => `${WHATS_NEW_SEEN_KEY}-told-${id}`;
+  const noteWhatsNewTold = (id) => { try { localStorage.setItem(whatsNewToldKey(id), '1'); } catch (e) { /* ignore */ } };
+  const markWhatsNewSeen = (id = userId) => {
     try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+    try { if (id && localStorage.getItem(whatsNewToldKey(id))) return; } catch (e) { /* ignore */ }
     fetch(`${API_URL}/preferences`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({ whatsNewSeen: strings.whatsNewModal.version }),
-    }).catch(() => {});
+    }).then((r) => { if (r.ok && id) noteWhatsNewTold(id); }).catch(() => {});
   };
 
   useEffect(() => {
@@ -273,6 +278,7 @@ export default function App() {
         if (cancelled) return;
         if (prefs && prefs.whatsNewSeen === strings.whatsNewModal.version) {
           try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+          if (userId) noteWhatsNewTold(userId);
           return;
         }
         if (!prefs) return; // could not ask: never nag on a guess
@@ -890,7 +896,7 @@ export default function App() {
       // A fresh signup has no "before" to compare against, so the v4
       // announcement would be meaningless noise on their very first slate.
       if (authData.isNewUser) {
-        markWhatsNewSeen();
+        markWhatsNewSeen(authData.user.id);
       }
       setPendingRecoveryPhrase(authData.recoveryPhrase);
     } else {

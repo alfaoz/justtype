@@ -914,11 +914,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     checkSubscriptionAndDonate();
   }, []);
 
-  // Track supporter tier on mount
+  // Track supporter tier on mount. The visit is counted once a day on this
+  // device; in between, the tier that visit returned stands. Back from a
+  // payment the plan is asked for at once, and again a little later: the
+  // webhook that upgrades it can land after the redirect.
+  const backFromPaymentRef = useRef(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('payment') === 'success');
   useEffect(() => {
+    if (!token || token === 'checking') return; // once, when the session is known
+    const visitKey = `justtype-visit-${userId}`;
+    const remember = (tier) => {
+      try { localStorage.setItem(visitKey, JSON.stringify({ at: Date.now(), tier: tier || null })); } catch { /* storage unavailable */ }
+    };
     const fetchSupporterTier = async () => {
-      if (!token || token === 'checking') return; // once, when the session is known
-
       try {
         const response = await fetch(`${API_URL}/user/visit`, {
           method: 'POST',
@@ -930,13 +937,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (data.supporterTier) {
             setSupporterTier(data.supporterTier);
           }
+          remember(data.supporterTier);
         }
       } catch (err) {
         console.error('Failed to fetch supporter tier:', err);
       }
     };
 
+    const paid = backFromPaymentRef.current;
+    backFromPaymentRef.current = false;
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem(visitKey) || 'null'); } catch { last = null; }
+    if (!paid && last && Date.now() - last.at < 24 * 60 * 60 * 1000) {
+      if (last.tier) setSupporterTier(last.tier);
+      return;
+    }
     fetchSupporterTier();
+    if (!paid) return;
+    const recheck = setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_URL}/account/storage`, { credentials: 'include' });
+        const data = await response.json();
+        if (response.ok && data.supporterTier) { setSupporterTier(data.supporterTier); remember(data.supporterTier); }
+      } catch { /* the next visit asks again */ }
+    }, 8000);
+    return () => clearTimeout(recheck);
   }, [token]);
 
   // Track unsaved changes
