@@ -68,6 +68,13 @@ function sendSse(userId, event) {
   return n;
 }
 
+// The same event to every open stream (a notice for everyone)
+function broadcastSse(event) {
+  let n = 0;
+  for (const userId of sseClients.keys()) n += sendSse(userId, event);
+  return n;
+}
+
 // --- web push --------------------------------------------------------------
 
 // Fire a content-free wake ping to all of a user's push subscriptions.
@@ -101,5 +108,5 @@ async function notifyDrop(db, userId) {
 }
 
 module.exports = {
-  initPush, getPublicKey, addSseClient, removeSseClient, sendSse, notifyDrop, pushEnabled: () => pushEnabled
+  initPush, getPublicKey, addSseClient, removeSseClient, sendSse, broadcastSse, notifyDrop, pushEnabled: () => pushEnabled
 };

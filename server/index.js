@@ -10,6 +10,7 @@ const { customAlphabet } = require('nanoid');
 const db = require('./database');
 const { SESSION_MATCH } = require('./sessionMatch');
 const b2Storage = require('./b2Storage');
+const b2DeleteQueue = require('./b2DeleteQueue');
 const b2Monitor = require('./b2Monitor');
 const { mountOAuth } = require('./oauth');
 const { mountCollab } = require('./collab');
@@ -312,61 +313,47 @@ const unwrapKey = (wrappedKeyBase64, wrappingKey) => {
 
 // Decode base64 input strictly, but tolerate base64url + missing padding.
 // This prevents silently accepting malformed base64 while staying compatible across clients.
+// The value of one base64 or base64url character
+const base64Sextet = (c) => (
+  c >= 65 && c <= 90 ? c - 65
+    : c >= 97 && c <= 122 ? c - 71
+      : c >= 48 && c <= 57 ? c + 4
+        : (c === 43 || c === 45) ? 62 : 63
+);
+
+// Strict base64 (or base64url, RFC 4648) to bytes. Validation is one regex
+// pass plus arithmetic: the old version copied and re-encoded the whole
+// string several times, about 30 ms of blocked event loop for a 5 MB slate.
 const decodeBase64Strict = (base64, { maxBytes } = {}) => {
-  if (typeof base64 !== 'string') {
+  const invalid = () => {
     const err = new Error('Invalid base64');
     err.code = 'BASE64_INVALID';
-    throw err;
-  }
+    return err;
+  };
+  if (typeof base64 !== 'string') throw invalid();
 
+  // Only base64 alphabet chars + optional padding at the end. JSON should not
+  // carry whitespace; it is stripped only in the rare case it is there.
   let value = base64.trim();
-  if (!value) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
+  if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(value)) {
+    value = value.replace(/\s+/g, '');
+    if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(value)) throw invalid();
   }
 
-  // JSON shouldn't contain whitespace, but be defensive.
-  value = value.replace(/\s+/g, '');
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 61) end--;
+  if (end === 0) throw invalid();
+  const paddingCount = value.length - end;
 
-  // Allow base64url (RFC 4648) by normalizing to standard base64 alphabet.
-  value = value.replace(/-/g, '+').replace(/_/g, '/');
-
-  // Require only base64 alphabet chars + optional padding at the end.
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
-  }
-
-  // Strip padding; we'll re-pad properly.
-  const unpadded = value.replace(/=+$/, '');
-  const paddingCount = value.length - unpadded.length;
-  if (!unpadded) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
-  }
-
-  // base64 length mod 4 cannot be 1.
-  const remainder = unpadded.length % 4;
-  if (remainder === 1) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
-  }
-
-  const paddingNeeded = (4 - remainder) % 4;
+  // base64 length mod 4 cannot be 1
+  const remainder = end % 4;
+  if (remainder === 1) throw invalid();
 
   // If padding was provided by the caller, require it to be correct (but allow missing padding).
-  if (paddingCount !== 0 && paddingCount !== paddingNeeded) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
-  }
-  const padded = unpadded + '='.repeat(paddingNeeded);
-  const decodedSize = (padded.length / 4) * 3 - paddingNeeded;
+  const paddingNeeded = (4 - remainder) % 4;
+  if (paddingCount !== 0 && paddingCount !== paddingNeeded) throw invalid();
 
+  const decodedSize = Math.floor((end * 3) / 4);
   if (typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 0 && decodedSize > maxBytes) {
     const err = new Error('Base64 too large');
     err.code = 'BASE64_TOO_LARGE';
@@ -375,17 +362,11 @@ const decodeBase64Strict = (base64, { maxBytes } = {}) => {
     throw err;
   }
 
-  const buf = Buffer.from(padded, 'base64');
+  // The last character's unused low bits must be zero, or two different
+  // strings would decode to the same bytes (what a round trip used to catch)
+  if (remainder && (base64Sextet(value.charCodeAt(end - 1)) & (remainder === 2 ? 0x0f : 0x03))) throw invalid();
 
-  // Round-trip check (ignoring padding) to catch forgiving decoders.
-  const normalize = (s) => s.replace(/=+$/, '');
-  if (normalize(buf.toString('base64')) !== normalize(padded)) {
-    const err = new Error('Invalid base64');
-    err.code = 'BASE64_INVALID';
-    throw err;
-  }
-
-  return buf;
+  return Buffer.from(value, 'base64');
 };
 
 // Generate a new random slate key and wrap it with both password and recovery phrase
@@ -402,33 +383,53 @@ const setupKeyWrapping = (password, encryptionSalt) => {
   return { slateKey, wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey };
 };
 
-// Migrate an existing user from password-derived encryption to key-wrapping
+// Migrate an existing user from password-derived encryption to key-wrapping.
+// Every slate is re-encrypted into a new file first; only when all of them
+// exist do the rows switch over, together with the wrapped key, in one
+// transaction. Switching slate by slate stranded the ones already switched
+// under a key that was never saved whenever a later B2 call failed, and the
+// login fell back to the old key.
 const migrateUserEncryption = async (userId, password, encryptionSalt) => {
   const oldKey = deriveEncryptionKey(password, encryptionSalt);
   const { slateKey, wrappedKey, recoveryPhrase, recoverySalt, recoveryWrappedKey } = setupKeyWrapping(password, encryptionSalt);
 
-  // Re-encrypt all user slates with the new slate key
   const slates = db.prepare('SELECT id, b2_file_id FROM slates WHERE user_id = ?').all(userId);
-
-  for (const slate of slates) {
-    if (!slate.b2_file_id) continue;
-    try {
+  const uploaded = [];
+  try {
+    for (const slate of slates) {
+      if (!slate.b2_file_id) continue;
       const content = await b2Storage.getSlate(slate.b2_file_id, oldKey);
       const newFileId = await b2Storage.uploadSlate(`${userId}-${slate.id}-migrated-${Date.now()}`, content, slateKey);
-      db.prepare('UPDATE slates SET b2_file_id = ? WHERE id = ?').run(newFileId, slate.id);
-    } catch (err) {
-      console.error(`Failed to migrate slate #${slate.id} for user #${userId}:`, err);
-      throw new Error('Migration failed: could not re-encrypt slates');
+      uploaded.push({ slate, newFileId });
     }
+  } catch (err) {
+    console.error(`Failed to migrate slates for user #${userId}:`, err);
+    b2DeleteQueue.removed(uploaded.map((u) => u.newFileId));
+    throw new Error('Migration failed: could not re-encrypt slates');
   }
 
-  // Store wrapped keys and mark as migrated
-  db.prepare(`
-    UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1, recovery_key_shown = 0
-    WHERE id = ?
-  `).run(wrappedKey, recoveryWrappedKey, recoverySalt, userId);
+  // Only if no other login migrated the account while this one uploaded
+  const applied = db.transaction(() => {
+    const done = db.prepare(`
+      UPDATE users SET wrapped_key = ?, recovery_wrapped_key = ?, recovery_salt = ?, key_migrated = 1, recovery_key_shown = 0
+      WHERE id = ? AND COALESCE(key_migrated, 0) = 0
+    `).run(wrappedKey, recoveryWrappedKey, recoverySalt, userId);
+    if (done.changes === 0) return false;
+    const point = db.prepare('UPDATE slates SET b2_file_id = ? WHERE id = ? AND b2_file_id = ?');
+    for (const u of uploaded) point.run(u.newFileId, u.slate.id, u.slate.b2_file_id);
+    return true;
+  })();
 
-  console.log(`Migration succeeded for user #${userId}: ${slates.length} slates re-encrypted`);
+  if (!applied) {
+    // The other login's key is the one the slates are under now
+    b2DeleteQueue.removed(uploaded.map((u) => u.newFileId));
+    const row = db.prepare('SELECT wrapped_key FROM users WHERE id = ?').get(userId);
+    return { slateKey: unwrapKey(row.wrapped_key, oldKey), recoveryPhrase: null };
+  }
+
+  // The old files are not pointed at any more
+  b2DeleteQueue.replaced(uploaded.map((u) => u.slate.b2_file_id));
+  console.log(`Migration succeeded for user #${userId}: ${uploaded.length} slates re-encrypted`);
 
   return { slateKey, recoveryPhrase };
 };
@@ -581,16 +582,18 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
         const now = new Date().toISOString();
 
         if (tier === 'one_time') {
-          // One-time supporter: 50MB storage
+          // One-time supporter: 50MB storage. A tip from someone already on
+          // the quarterly plan keeps their plan and their Stripe customer
+          // (payment-mode sessions usually carry no customer at all).
           db.prepare(`
             UPDATE users
-            SET supporter_tier = 'one_time',
-                storage_limit = 50000000,
+            SET supporter_tier = CASE WHEN supporter_tier = 'quarterly' THEN supporter_tier ELSE 'one_time' END,
+                storage_limit = CASE WHEN supporter_tier = 'quarterly' THEN storage_limit ELSE MAX(COALESCE(storage_limit, 0), 50000000) END,
                 donated_at = ?,
-                stripe_customer_id = ?,
-                subscription_expires_at = NULL
+                stripe_customer_id = COALESCE(?, stripe_customer_id),
+                subscription_expires_at = CASE WHEN supporter_tier = 'quarterly' THEN subscription_expires_at ELSE NULL END
             WHERE id = ?
-          `).run(now, session.customer, userId);
+          `).run(now, session.customer || null, userId);
           console.log(`✓ User ${userId} upgraded to one-time supporter`);
         } else if (tier === 'quarterly') {
           // Quarterly supporter: unlimited storage
@@ -746,6 +749,10 @@ take care!
               text: emailBody
             }).catch(err => console.error('Failed to send cancellation email:', err));
           }
+        } else if (subscription.status === 'active' && !cancelDate) {
+          // Resumed before it ran out: the scheduled end is off
+          const cleared = db.prepare('UPDATE users SET subscription_expires_at = NULL WHERE id = ? AND subscription_expires_at IS NOT NULL').run(user.id);
+          if (cleared.changes) console.log(`✓ User ${user.id} subscription resumed, end date cleared`);
         }
         break;
       }
@@ -775,13 +782,21 @@ take care!
   }
 });
 
-// 8mb allows ~5mb encrypted slates sent as base64 (4/3 overhead) plus JSON overhead.
-app.use(express.json({ limit: '8mb' }));
+// Bodies are parsed before rate limits run and before anyone is known, so
+// the routes that never carry a slate (sign in, sign up, OAuth, feedback)
+// take a small one. Everything else keeps 8mb, which allows ~5mb encrypted
+// slates sent as base64 (4/3 overhead) plus JSON overhead.
+const SMALL_BODY_PREFIXES = ['/api/auth/', '/oauth/', '/api/feedback', '/api/user/', '/api/notifications', '/api/preferences', '/api/public/'];
+const isSmallBodyRoute = (p) => SMALL_BODY_PREFIXES.some(prefix => p.startsWith(prefix));
+const smallJson = express.json({ limit: '100kb' });
+const largeJson = express.json({ limit: '8mb' });
+app.use((req, res, next) => (isSmallBodyRoute(req.path) ? smallJson : largeJson)(req, res, next));
 app.use(passport.initialize());
 
 // Handle payload too large errors
 app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') {
+    if (isSmallBodyRoute(req.path)) return res.status(413).json({ error: 'Request too large' });
     return res.status(413).json({
       error: 'Slate content too large. Maximum size is 5MB.',
       maxSize: '5MB'
@@ -858,8 +873,10 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
-// Serve static files from dist directory with cache control
-app.use(express.static(path.join(__dirname, '..', 'dist'), {
+// Serve static files from dist directory with cache control. API requests
+// skip it: it sits ahead of the API routes, and every API GET paid a disk
+// lookup for a file that could never exist.
+const serveDist = express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
   etag: true,
   lastModified: true,
@@ -886,7 +903,8 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     }
   }
-}));
+});
+app.use((req, res, next) => (req.path.startsWith('/api/') ? next() : serveDist(req, res, next)));
 
 // Helper function to parse device info from user agent
 const parseDevice = (userAgent) => {
@@ -1008,38 +1026,71 @@ const applyHistoryRows = (userId, slate, fileId, bytes, count) => {
 };
 
 // Helper function to check if user has exceeded storage limit
+// Checks the account has room for newContentSize more bytes and, when it
+// does, reserves them in the same statement. Checking and counting used to be
+// apart, with a B2 upload in between, so parallel saves or imports each saw
+// the old total and together went past the limit. The write that follows
+// recounts exactly (updateUserStorage); a write that fails before that is
+// recounted a minute later, so a reservation never lingers. An error refuses
+// the write instead of waving it through.
+const reserveStorageStmt = db.prepare(`
+  UPDATE users SET storage_used = COALESCE(storage_used, 0) + @bytes
+  WHERE id = @id AND (supporter_tier = 'quarterly'
+    OR COALESCE(storage_used, 0) + @bytes <= CAST(COALESCE(storage_limit, 25000000) * 1.1 AS INTEGER))
+`);
 const checkStorageLimit = (userId, newContentSize) => {
   try {
-    const user = db.prepare('SELECT storage_used, storage_limit, supporter_tier FROM users WHERE id = ?').get(userId);
-
-    // Quarterly supporters have unlimited storage
-    if (user.supporter_tier === 'quarterly') {
+    const bytes = Math.max(0, Math.floor(Number(newContentSize) || 0));
+    if (bytes === 0) return { allowed: true };
+    if (reserveStorageStmt.run({ id: userId, bytes }).changes === 1) {
+      setTimeout(() => updateUserStorage(userId), 60 * 1000).unref();
       return { allowed: true };
     }
-
-    const currentUsage = user.storage_used || 0;
-    const limit = user.storage_limit || 25000000; // Default 25MB
-    const hardLimit = Math.floor(limit * 1.1); // 110% of limit
-    const projectedUsage = currentUsage + newContentSize;
-
-    if (projectedUsage > hardLimit) {
-      const usedMB = (currentUsage / 1024 / 1024).toFixed(2);
-      const limitMB = (limit / 1024 / 1024).toFixed(0);
-      return {
-        allowed: false,
-        error: `Storage limit exceeded. You're using ${usedMB} MB of ${limitMB} MB. Delete some slates or upgrade to continue.`
-      };
-    }
-
-    return { allowed: true };
+    const user = db.prepare('SELECT storage_used, storage_limit FROM users WHERE id = ?').get(userId);
+    if (!user) return { allowed: false, error: 'User not found' };
+    const usedMB = ((user.storage_used || 0) / 1024 / 1024).toFixed(2);
+    const limitMB = ((user.storage_limit || 25000000) / 1024 / 1024).toFixed(0);
+    return {
+      allowed: false,
+      error: `Storage limit exceeded. You're using ${usedMB} MB of ${limitMB} MB. Delete some slates or upgrade to continue.`
+    };
   } catch (err) {
     console.error('Storage check error:', err);
-    return { allowed: true }; // Allow on error to not block users
+    return { allowed: false, error: 'Could not check your storage. Please try again.' };
   }
 };
 
+// Slate numbers come from a per-account counter that never goes down
+// (database.js migration 2). MAX(slate_number) + 1 handed a purged slate's
+// number to the next one. The counter also never falls behind the slates
+// that exist, whatever wrote them.
+const allocateSlateNumberStmt = db.prepare(`
+  UPDATE users SET next_slate_number = 1 + MAX(
+    COALESCE(next_slate_number, 1),
+    (SELECT COALESCE(MAX(slate_number), 0) + 1 FROM slates WHERE user_id = @id)
+  )
+  WHERE id = @id RETURNING next_slate_number - 1 AS n
+`);
+const allocateSlateNumber = (userId) => allocateSlateNumberStmt.get({ id: userId }).n;
+
+// Whether a save of this slate may need resyncing to a third-party app: a
+// grant for it, or an app with access to everything. The client skips the
+// grants lookup after a save or an open when this is false.
+const slateHasGrantsStmt = db.prepare(`
+  SELECT EXISTS (SELECT 1 FROM oauth_slate_grants WHERE user_id = @u AND slate_number = @n)
+      OR EXISTS (SELECT 1 FROM oauth_share_all WHERE user_id = @u) AS g
+`);
+const slateHasGrants = (userId, slateNumber) => slateHasGrantsStmt.get({ u: userId, n: slateNumber }).g === 1;
+
 // A session in use renews its token once the token is this old
 const SESSION_RENEW_AFTER_S = 7 * 24 * 60 * 60;
+
+// Every signed-in request looks its session up; the write that records
+// activity only happens when the last one is more than five minutes old, so
+// reads do not all queue for SQLite's single writer. The account page shows
+// last activity to within those five minutes.
+const sessionLookupStmt = db.prepare(`SELECT id, last_activity < datetime('now', '-5 minutes') AS stale FROM sessions WHERE ${SESSION_MATCH}`);
+const sessionTouchStmt = db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?');
 
 // Middleware to verify JWT token (checks HttpOnly cookie first, then Authorization header)
 const authenticateToken = (req, res, next) => {
@@ -1072,13 +1123,14 @@ const authenticateToken = (req, res, next) => {
     // Check if session exists in database and update last activity
     try {
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      const result = db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
+      const session = sessionLookupStmt.get(tokenHash, tokenHash);
 
-      // If no rows were updated, the session doesn't exist (was deleted)
-      if (result.changes === 0) {
+      // No row: the session was deleted (logged out, reset, pruned)
+      if (!session) {
         res.clearCookie('justtype_token', { path: '/' });
         return res.status(401).json({ error: 'Session expired or logged out' });
       }
+      if (session.stale) sessionTouchStmt.run(session.id);
 
       // In use, the session keeps going: a cookie token older than a week is
       // swapped for a fresh 30-day one on the same session row. It carries
@@ -1163,6 +1215,11 @@ mountOAuth(app, {
   generateUniqueShareId,
   checkStorageLimit,
   updateUserStorage,
+  allocateSlateNumber,
+  b2DeleteQueue,
+  createRateLimitMiddleware,
+  // Defined further down; resolved when a route calls it
+  destroySlate: (...args) => destroySlate(...args),
   dropHub
 });
 
@@ -1211,7 +1268,7 @@ app.post('/api/auth/register', verifyTurnstileToken, createRateLimitMiddleware('
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Generate 6-digit code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
     const termsAcceptedAt = new Date().toISOString();
 
@@ -1448,7 +1505,9 @@ app.post('/api/auth/verify-email', createRateLimitMiddleware('verifyEmail'), asy
   }
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE email = ? AND verification_token = ?').get(email.toLowerCase(), code);
+    // A pending email change keeps its code in the same column, and that
+    // code went to the NEW address: it must not verify the current one
+    const user = db.prepare('SELECT * FROM users WHERE email = ? AND verification_token = ? AND pending_email IS NULL').get(email.toLowerCase(), code);
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid verification code' });
@@ -1605,24 +1664,34 @@ app.post('/api/account/slate-drops/:id/adopt', authenticateToken, async (req, re
 
     const slateId = `${req.user.id}-${Date.now()}`;
     const b2FileId = await b2Storage.uploadRawSlate(slateId, encryptedBuffer);
-    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+    const nextNumber = allocateSlateNumber(req.user.id);
 
     const adopt = db.transaction(() => {
+      // Keep the drop as a thin receipt (status + resulting slate_number) so the
+      // creating app can poll the outcome via GET /api/oauth/drops[/:id]. Null the
+      // blobs: we no longer need (or want to retain) the app-wrapped ciphertext.
+      // Claimed first and only while still pending: every open tab and device
+      // is told about a drop and sweeps it, and two of them used to both pass
+      // the check above and each make a slate.
+      const claimed = db.prepare(`UPDATE oauth_slate_drops
+        SET status = 'adopted', adopted_slate_number = ?, adopted_at = strftime('%s','now'),
+            wrapped_key = '', enc_content = '', enc_title = NULL
+        WHERE id = ? AND status = 'pending'`).run(nextNumber, drop.id);
+      if (claimed.changes === 0) return false;
       db.prepare(`INSERT INTO slates
         (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, source_app)
         VALUES (?, ?, '', ?, ?, ?, ?, ?, 1, ?)`).run(
         req.user.id, nextNumber, encryptedTitle, b2FileId,
         wordCount || 0, charCount || 0, sizeBytes || encryptedBuffer.length, drop.client_id
       );
-      // Keep the drop as a thin receipt (status + resulting slate_number) so the
-      // creating app can poll the outcome via GET /api/oauth/drops[/:id]. Null the
-      // blobs — we no longer need (or want to retain) the app-wrapped ciphertext.
-      db.prepare(`UPDATE oauth_slate_drops
-        SET status = 'adopted', adopted_slate_number = ?, adopted_at = strftime('%s','now'),
-            wrapped_key = '', enc_content = '', enc_title = NULL
-        WHERE id = ?`).run(nextNumber, drop.id);
+      return true;
     });
-    adopt();
+    if (!adopt()) {
+      // Another device adopted it while this one uploaded
+      b2DeleteQueue.removed([b2FileId]);
+      updateUserStorage(req.user.id);
+      return res.status(404).json({ error: 'drop not found' });
+    }
 
     updateUserStorage(req.user.id);
     res.status(201).json({ success: true, slate_number: nextNumber, source_app: drop.client_id });
@@ -1922,7 +1991,7 @@ app.post('/api/auth/resend-verification', createRateLimitMiddleware('resendVerif
     }
 
     // Generate new code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     db.prepare('UPDATE users SET verification_token = ?, verification_code_expires = ? WHERE id = ?')
@@ -1954,7 +2023,7 @@ app.post('/api/auth/forgot-password', verifyTurnstileToken, createRateLimitMiddl
     }
 
     // Generate reset code (expires in 10 minutes)
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     db.prepare('UPDATE users SET reset_token = ?, reset_code_expires = ? WHERE id = ?')
@@ -2158,18 +2227,10 @@ app.post('/api/auth/reset-password', createRateLimitMiddleware('resetPassword'),
       return res.status(400).json({ error: 'Reset code has expired' });
     }
 
-    // Delete all user slates from B2 and DB
-    const slates = db.prepare('SELECT id, b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(user.id);
-    for (const slate of slates) {
-      try {
-        if (slate.b2_file_id) await b2Storage.deleteSlate(slate.b2_file_id);
-        if (slate.b2_public_file_id) await b2Storage.deleteSlate(slate.b2_public_file_id);
-        if (slate.history_b2_file_id) await b2Storage.deleteSlate(slate.history_b2_file_id);
-      } catch (err) {
-        console.error(`Failed to delete B2 file for slate #${slate.id}:`, err);
-      }
-    }
-    db.prepare('DELETE FROM slates WHERE user_id = ?').run(user.id);
+    // Delete all user slates: the same removal as everywhere else, so their
+    // collab state, history allowance and files go with them
+    const slates = db.prepare('SELECT * FROM slates WHERE user_id = ?').all(user.id);
+    for (const slate of slates) await destroySlate(slate, user.id);
 
     // Set up fresh encryption with new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -2621,7 +2682,7 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
         const member = db.prepare('SELECT wrapped_key FROM collab_members WHERE slate_id = ? AND user_id = ?').get(slate.id, req.user.id);
         collabWrappedKey = member ? member.wrapped_key : null;
       }
-      return res.json({ ...slate, encryptedContent, encrypted: true, collab_wrapped_key: collabWrappedKey });
+      return res.json({ ...slate, encryptedContent, encrypted: true, collab_wrapped_key: collabWrappedKey, has_grants: slateHasGrants(req.user.id, slate.slate_number) });
     }
 
     // Use encryption key from middleware (already verified to exist)
@@ -2630,7 +2691,7 @@ app.get('/api/slates/:id', authenticateToken, requireEncryptionKey, async (req, 
     // Fetch content from B2 (decrypt if encrypted)
     const content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
 
-    res.json({ ...slate, content });
+    res.json({ ...slate, content, has_grants: slateHasGrants(req.user.id, slate.slate_number) });
   } catch (error) {
     console.error('Get slate error:', error);
     if (error instanceof B2Error) {
@@ -2742,7 +2803,7 @@ app.post('/api/slates', authenticateToken, requireEncryptionKey, createRateLimit
 	    const titleToStore = isE2E ? '' : title;
 	    const encryptedTitleToStore = isE2E ? encryptedTitle : null;
 	    const editorModeToStore = req.body.editorMode === 'wysiwyg' ? 'wysiwyg' : 'plain';
-	    const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+	    const nextNumber = allocateSlateNumber(req.user.id);
 	    const stmt = db.prepare(`
 	      INSERT INTO slates (user_id, slate_number, title, encrypted_title, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode, client_ref)
 	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2827,7 +2888,7 @@ app.post('/api/slates/batch', authenticateToken, requireEncryptionKey, createRat
       try {
         const b2FileId = await b2Storage.uploadRawSlate(`${req.user.id}-${Date.now()}-${created.length}`, d.buffer);
         const row = db.transaction(() => {
-          const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.user.id).next;
+          const nextNumber = allocateSlateNumber(req.user.id);
           db.prepare(`
             INSERT INTO slates (user_id, slate_number, title, encrypted_title, encrypted_tags, b2_file_id, word_count, char_count, size_bytes, encryption_version, editor_mode, created_at, updated_at)
             VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, 1, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, ?, CURRENT_TIMESTAMP))
@@ -2864,6 +2925,27 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 
     if (!slate) {
       return res.status(404).json({ error: 'Slate not found' });
+    }
+
+    // A retry of a save that already landed (its answer was lost on the way
+    // back) carries the same ref: answer as that save did, write nothing.
+    // Checked before the base, which the landed save has already moved on.
+    const saveRef = typeof req.body?.saveRef === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(req.body.saveRef) ? req.body.saveRef : null;
+    if (saveRef && slate.last_save_ref === saveRef) {
+      return res.json({
+        success: true,
+        duplicate: true,
+        updated_at: slate.updated_at,
+        word_count: slate.word_count,
+        char_count: slate.char_count,
+        was_unpublished: false,
+        is_published: slate.is_published === 1,
+        share_id: slate.share_id,
+        is_locked: slate.is_locked === 1,
+        slateCount: db.prepare('SELECT COUNT(*) as count FROM slates WHERE user_id = ?').get(req.user.id).count,
+        recovery_receipt: null,
+        has_grants: slateHasGrants(req.user.id, slate.slate_number),
+      });
     }
 
     // Lock change riding on this save: the content arrives re-keyed, so the
@@ -2985,8 +3067,9 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       }
     }
 
-    // Check storage limit (account for size difference)
-    const sizeDifference = contentSize - (slate.size_bytes || 0);
+    // Check storage limit (account for size difference). A slate in the
+    // trash is not counted, so all of its new size is new to the account.
+    const sizeDifference = contentSize - (slate.deleted_at ? 0 : (slate.size_bytes || 0));
     if (sizeDifference > 0) {
       const storageCheck = checkStorageLimit(req.user.id, sizeDifference);
       if (!storageCheck.allowed) {
@@ -3051,12 +3134,25 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
 	      SET title = ?, encrypted_title = ?, b2_file_id = ?, word_count = ?, char_count = ?, size_bytes = ?, encryption_version = ?,
 	          is_published = ?, b2_public_file_id = ?, is_locked = ?, lock_wrapped_key = ?, lock_salt = ?,
 	          lock_recovery_wrapped_key = ?, lock_recovery_key_id = ?,
-	          history_b2_file_id = ?, history_count = ?, history_bytes = ?, updated_at = CURRENT_TIMESTAMP
-	      WHERE slate_number = ? AND user_id = ?
+	          history_b2_file_id = ?, history_count = ?, history_bytes = ?, last_save_ref = ?, updated_at = CURRENT_TIMESTAMP
+	      WHERE slate_number = ? AND user_id = ? AND b2_file_id IS ?
 	    `);
-	    stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId,
-	      lockToStore.locked, lockToStore.wrappedKey, lockToStore.salt, lockToStore.recoveryWrappedKey, lockToStore.recoveryKeyId,
-	      historyFileId, historyCount, historyBytes, req.params.id, req.user.id);
+    // The row is only written if no other save landed while this one was
+    // uploading (b2_file_id is new on every save). The base check above ran
+    // before the upload, so without this two overlapping saves both passed
+    // and the one that finished last won, even with the older text.
+    const written = stmt.run(titleToStore, encryptedTitleToStore, b2FileId, wordCount, charCount, sizeBytes, encryptionVersion, newPublishedState, newPublicFileId,
+      lockToStore.locked, lockToStore.wrappedKey, lockToStore.salt, lockToStore.recoveryWrappedKey, lockToStore.recoveryKeyId,
+      historyFileId, historyCount, historyBytes, saveRef, req.params.id, req.user.id, oldB2FileId);
+    if (written.changes === 0) {
+      // Lost the race: what this save uploaded is not referenced by anything
+      const orphans = [b2FileId];
+      if (historyIn) orphans.push(historyFileId);
+      b2DeleteQueue.removed(orphans);
+      updateUserStorage(req.user.id);
+      const current = db.prepare('SELECT updated_at FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+      return res.status(409).json({ error: 'Slate changed since it was loaded', code: 'SLATE_CHANGED', updated_at: current ? current.updated_at : null });
+    }
     if (historyIn) {
       db.prepare('UPDATE users SET history_bytes = MAX(0, COALESCE(history_bytes, 0) + ?) WHERE id = ?').run(historyBytes - (slate.history_bytes || 0), req.user.id);
     }
@@ -3064,7 +3160,9 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     // Collaborative slate: the canonical blob changed — tell live viewers to refetch.
     if (slate.is_collab) collabHub.notifySlateChanged(slate.id);
 
-    // Best-effort cleanup of old B2 files AFTER the DB update (prevents data loss if the DB write fails).
+    // Old B2 files go AFTER the DB update, through the delete queue: the
+    // save answers without waiting, and the replaced version stays a week so
+    // a restored database still finds it.
     const fileIdsToDelete = new Set();
     if (oldB2FileId) fileIdsToDelete.add(oldB2FileId);
     if (oldPublicFileId && oldPublicFileId !== oldB2FileId) fileIdsToDelete.add(oldPublicFileId);
@@ -3076,14 +3174,7 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
     fileIdsToDelete.delete(b2FileId);
     if (newPublicFileId) fileIdsToDelete.delete(newPublicFileId);
     if (historyFileId) fileIdsToDelete.delete(historyFileId);
-
-    for (const fileId of fileIdsToDelete) {
-      try {
-        await b2Storage.deleteSlate(fileId);
-      } catch (err) {
-        console.warn('Failed to delete old B2 file:', err);
-      }
-    }
+    b2DeleteQueue.replaced([...fileIdsToDelete]);
 
     // Update user's total storage usage
     updateUserStorage(req.user.id);
@@ -3115,9 +3206,12 @@ app.put('/api/slates/:id', authenticateToken, createRateLimitMiddleware('updateS
       is_locked: isLockedToStore === 1,
       slateCount: currentSlateCount.count,
       recovery_receipt: recoveryReceipt,
+      has_grants: slateHasGrants(req.user.id, slate.slate_number),
     });
   } catch (error) {
     console.error('Update slate error:', error);
+    // Drop any storage this save reserved before it failed
+    updateUserStorage(req.user.id);
     if (error instanceof B2Error) {
       return res.status(error.code === 'B2_RATE_LIMIT' ? 429 : 500).json({
         error: error.userMessage,
@@ -3191,17 +3285,15 @@ app.patch('/api/slates/:id/publish', authenticateToken, requireEncryptionKey, cr
       const publicSlateId = `${req.user.id}-public-${Date.now()}`;
       publicFileId = await b2Storage.uploadSlate(publicSlateId, content, null); // null = no encryption
     }
+    // Replaced and withdrawn copies leave through the delete queue, which
+    // only deletes once no row points at them any more
     if (isPublished && oldPublicFileId && oldPublicFileId !== publicFileId && oldPublicFileId !== slate.b2_file_id) {
-      try { await b2Storage.deleteSlate(oldPublicFileId); } catch (err) { console.warn('Failed to delete old shared copy:', err); }
+      b2DeleteQueue.replaced([oldPublicFileId]);
     }
 
     // If unpublishing, delete the public copy
     if (!isPublished && publicFileId) {
-      try {
-        await b2Storage.deleteSlate(publicFileId);
-      } catch (err) {
-        console.warn('Failed to delete public B2 file:', err);
-      }
+      if (publicFileId !== slate.b2_file_id) b2DeleteQueue.removed([publicFileId]);
       publicFileId = null;
     }
 
@@ -3297,9 +3389,7 @@ app.put('/api/slates/:id/history', authenticateToken, createRateLimitMiddleware(
     if (!allowance.allowed) return res.status(413).json({ error: allowance.error, code: 'HISTORY_OVER' });
     const fileId = await b2Storage.uploadRawSlate(`history-${slate.id}-${Date.now()}`, parsed.buffer);
     applyHistoryRows(req.user.id, slate, fileId, parsed.buffer.length, parsed.count);
-    if (slate.history_b2_file_id && slate.history_b2_file_id !== fileId) {
-      try { await b2Storage.deleteSlate(slate.history_b2_file_id); } catch (err) { console.warn('Failed to delete old history file:', err); }
-    }
+    if (slate.history_b2_file_id && slate.history_b2_file_id !== fileId) b2DeleteQueue.replaced([slate.history_b2_file_id]);
     res.json({ success: true, count: parsed.count, bytes: parsed.buffer.length });
   } catch (error) {
     console.error('Put history error:', error);
@@ -3315,7 +3405,7 @@ app.delete('/api/slates/:id/history', authenticateToken, createRateLimitMiddlewa
     if (!slate) return res.status(404).json({ error: 'Slate not found' });
     if (slate.history_b2_file_id) {
       applyHistoryRows(req.user.id, slate, null, 0, 0);
-      try { await b2Storage.deleteSlate(slate.history_b2_file_id); } catch (err) { console.warn('Failed to delete history file:', err); }
+      b2DeleteQueue.removed([slate.history_b2_file_id]);
     }
     res.json({ success: true });
   } catch (error) {
@@ -3324,22 +3414,20 @@ app.delete('/api/slates/:id/history', authenticateToken, createRateLimitMiddlewa
   }
 });
 
-// Remove a slate for good: its files, its collab state, its history, its row
+// Remove a slate for good: its row, its collab state, its history, then its
+// files. The rows go first, in one transaction, and the files follow through
+// the delete queue: a crash in between leaves at worst a file nothing points
+// at, never a row pointing at a deleted file.
 const destroySlate = async (slate, userId) => {
-  try {
-    await b2Storage.deleteSlate(slate.b2_file_id);
-  } catch (err) {
-    console.warn('Failed to delete B2 file:', err);
-  }
-  // Collab state too (no FK cascade)
   const collabDoc = slate.is_collab
     ? db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slate.id)
     : null;
   const files = new Set(
     db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id = ?').all(slate.id).map((r) => r.b2_file_id)
   );
+  if (slate.b2_file_id) files.add(slate.b2_file_id);
   if (collabDoc && collabDoc.snapshot_b2_file_id) files.add(collabDoc.snapshot_b2_file_id);
-  if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) files.add(slate.b2_public_file_id);
+  if (slate.b2_public_file_id) files.add(slate.b2_public_file_id);
   if (slate.history_b2_file_id) files.add(slate.history_b2_file_id);
   db.transaction(() => {
     db.prepare('DELETE FROM collab_members WHERE slate_id = ?').run(slate.id);
@@ -3351,12 +3439,22 @@ const destroySlate = async (slate, userId) => {
     db.prepare('DELETE FROM slates WHERE id = ? AND user_id = ?').run(slate.id, userId);
   })();
   if (slate.is_collab) collabHub.closeRoom(slate.id);
-  for (const fileId of files) {
-    try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete slate B2 file:', err); }
-  }
+  b2DeleteQueue.removed([...files]);
   updateUserStorage(userId);
 };
 const TRASH_KEEP_SECONDS = 30 * 24 * 3600;
+
+// Into the trash, where it stays thirty days and can come back. Answers the
+// time it went in (a slate already there keeps its time).
+const trashSlate = (slate, userId) => {
+  if (slate.deleted_at) return slate.deleted_at;
+  const deletedAt = Math.floor(Date.now() / 1000);
+  db.prepare('UPDATE slates SET deleted_at = ? WHERE id = ?').run(deletedAt, slate.id);
+  // Live collaborators lose the room while the slate is in the trash
+  if (slate.is_collab) collabHub.closeRoom(slate.id);
+  updateUserStorage(userId);
+  return deletedAt;
+};
 
 // Empty the trash: every slate in it goes for good
 app.delete('/api/slates/trash', authenticateToken, createRateLimitMiddleware('emptyTrash'), async (req, res) => {
@@ -3390,15 +3488,7 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
       return res.json({ success: true });
     }
 
-    if (!slate.deleted_at) {
-      const deletedAt = Math.floor(Date.now() / 1000);
-      db.prepare('UPDATE slates SET deleted_at = ? WHERE id = ?').run(deletedAt, slate.id);
-      // Live collaborators lose the room while the slate is in the trash
-      if (slate.is_collab) collabHub.closeRoom(slate.id);
-      updateUserStorage(req.user.id);
-      return res.json({ success: true, trashed: true, deleted_at: deletedAt });
-    }
-    res.json({ success: true, trashed: true, deleted_at: slate.deleted_at });
+    res.json({ success: true, trashed: true, deleted_at: trashSlate(slate, req.user.id) });
   } catch (error) {
     console.error('Delete slate error:', error);
     if (error instanceof B2Error) {
@@ -3414,9 +3504,13 @@ app.delete('/api/slates/:id', authenticateToken, createRateLimitMiddleware('dele
 // Out of the trash, as it was
 app.post('/api/slates/:id/restore', authenticateToken, (req, res) => {
   try {
-    const slate = db.prepare('SELECT id, deleted_at FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
+    const slate = db.prepare('SELECT id, deleted_at, size_bytes FROM slates WHERE slate_number = ? AND user_id = ?').get(req.params.id, req.user.id);
     if (!slate) return res.status(404).json({ error: 'Slate not found' });
     if (slate.deleted_at) {
+      // A slate in the trash does not count toward storage, so coming back
+      // needs room for it: otherwise trash, fill, restore went past the limit
+      const storageCheck = checkStorageLimit(req.user.id, slate.size_bytes || 0);
+      if (!storageCheck.allowed) return res.status(413).json({ error: storageCheck.error });
       db.prepare('UPDATE slates SET deleted_at = NULL WHERE id = ?').run(slate.id);
       updateUserStorage(req.user.id);
     }
@@ -3692,37 +3786,23 @@ app.delete('/api/admin/users/:id', authenticateAdmin, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId);
-
-    // Delete slates from B2
-    for (const slate of slates) {
-      try {
-        await b2Storage.deleteSlate(slate.b2_file_id);
-        if (slate.b2_public_file_id) {
-          await b2Storage.deleteSlate(slate.b2_public_file_id);
-        }
-        if (slate.history_b2_file_id) {
-          await b2Storage.deleteSlate(slate.history_b2_file_id);
-        }
-      } catch (err) {
-        console.error(`Failed to delete B2 file ${slate.b2_file_id}:`, err);
-      }
+    // Every file of theirs leaves through the delete queue, which removes a
+    // file only once no row points at it (so the rows can go below first)
+    const userFiles = new Set();
+    for (const slate of db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId)) {
+      for (const fileId of [slate.b2_file_id, slate.b2_public_file_id, slate.history_b2_file_id]) if (fileId) userFiles.add(fileId);
     }
 
-    // Collab state: their memberships, and everything on slates they own —
-    // members, update log, snapshot metadata + B2 snapshot files (before the
-    // slates rows go away — no FK cascade)
-    const collabB2Files = new Set();
+    // Collab state: their memberships, and everything on slates they own:
+    // members, update log, snapshot metadata and B2 snapshot files (before the
+    // slates rows go away, no FK cascade)
     for (const row of db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
-      if (row.snapshot_b2_file_id) collabB2Files.add(row.snapshot_b2_file_id);
+      if (row.snapshot_b2_file_id) userFiles.add(row.snapshot_b2_file_id);
     }
     for (const row of db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
-      collabB2Files.add(row.b2_file_id);
+      userFiles.add(row.b2_file_id);
     }
-    for (const fileId of collabB2Files) {
-      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
-    }
+    b2DeleteQueue.removed([...userFiles]);
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
@@ -4223,6 +4303,21 @@ app.post('/api/admin/stripe-action', authenticateAdmin, async (req, res) => {
 // ============ NOTIFICATION ROUTES ============
 
 // Helper: check if a user matches notification filters
+// Open tabs hear about a new notice on the account event stream and fetch
+// then, instead of every tab polling every thirty seconds. A notice for
+// named accounts goes to their streams; any other goes to every stream (the
+// client still applies the filters when it fetches).
+function announceNotification(filterUserIds) {
+  try {
+    if (!filterUserIds) return dropHub.broadcastSse({ type: 'notifications' });
+    for (const id of String(filterUserIds).split(',').map((v) => parseInt(v.trim(), 10)).filter(Number.isInteger)) {
+      dropHub.sendSse(id, { type: 'notifications' });
+    }
+  } catch (err) {
+    console.warn('Notification announce failed:', err.message);
+  }
+}
+
 function userMatchesFilters(notification, userStats) {
   const n = notification;
   if (n.filter_user_ids) {
@@ -4250,16 +4345,21 @@ app.get('/api/notifications', authenticateToken, (req, res) => {
       FROM users u WHERE u.id = ?
     `).get(req.user.id);
 
+    // Notices meant for named accounts are matched here, before the limit:
+    // automations write one row per account, so filtering them afterwards
+    // pushed everyone's own notices out of the newest hundred
     const allNotifications = db.prepare(`
       SELECT n.id, n.type, n.title, n.message, n.link, n.created_at,
         n.filter_min_slates, n.filter_max_slates, n.filter_plan,
         n.filter_verified_only, n.filter_min_views, n.filter_user_ids,
         CASE WHEN nr.id IS NOT NULL THEN 1 ELSE 0 END as is_read
       FROM notifications n
-      LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = ?
+      LEFT JOIN notification_reads nr ON nr.notification_id = n.id AND nr.user_id = @uid
+      WHERE n.filter_user_ids IS NULL OR n.filter_user_ids = ''
+         OR (',' || REPLACE(n.filter_user_ids, ' ', '') || ',') LIKE ('%,' || CAST(@uid AS INTEGER) || ',%')
       ORDER BY n.created_at DESC
       LIMIT 100
-    `).all(req.user.id);
+    `).all({ uid: req.user.id });
 
     const filtered = allNotifications.filter(n => userMatchesFilters(n, userStats));
 
@@ -4270,6 +4370,21 @@ app.get('/api/notifications', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('Fetch notifications error:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// Mark several notifications read in one request (the client used to send
+// one request per notice)
+app.post('/api/notifications/read', authenticateToken, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
+  if (!ids || ids.length > 200) return res.status(400).json({ error: 'ids required (at most 200)' });
+  try {
+    const mark = db.prepare('INSERT OR IGNORE INTO notification_reads (user_id, notification_id) VALUES (?, ?)');
+    db.transaction(() => { for (const id of ids) mark.run(req.user.id, id); })();
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Mark read error:', error);
+    res.status(500).json({ error: 'Failed to mark as read' });
   }
 });
 
@@ -4309,6 +4424,7 @@ app.post('/api/admin/notifications', authenticateAdmin, (req, res) => {
       details: { id: result.lastInsertRowid, title, type: type || 'global' },
       ipAddress: req.adminIp || req.ip
     });
+    announceNotification(filter_user_ids || null);
     res.json({ id: result.lastInsertRowid });
   } catch (error) {
     console.error('Create notification error:', error);
@@ -4539,17 +4655,19 @@ function runAutomations() {
           .replace(/\{slate_count\}/g, match.slate_count || '')
           .replace(/\{published_count\}/g, match.published_count || '');
 
-        // Create targeted notification for this user
-        const notifResult = db.prepare(`
-          INSERT INTO notifications (type, title, message, link, filter_user_ids)
-          VALUES ('automated', ?, ?, ?, ?)
-        `).run(title, message, auto.link || null, String(match.user_id));
-
-        // Log that this automation fired
-        db.prepare(`
-          INSERT OR IGNORE INTO automation_log (automation_id, user_id, slate_id)
-          VALUES (?, ?, ?)
-        `).run(auto.id, match.user_id, match.slate_id || null);
+        // Create targeted notification for this user, and log that this
+        // automation fired, together
+        db.transaction(() => {
+          db.prepare(`
+            INSERT INTO notifications (type, title, message, link, filter_user_ids)
+            VALUES ('automated', ?, ?, ?, ?)
+          `).run(title, message, auto.link || null, String(match.user_id));
+          db.prepare(`
+            INSERT OR IGNORE INTO automation_log (automation_id, user_id, slate_id)
+            VALUES (?, ?, ?)
+          `).run(auto.id, match.user_id, match.slate_id || null);
+        })();
+        announceNotification(String(match.user_id));
       }
     }
   } catch (error) {
@@ -4583,6 +4701,7 @@ function fireSignupAutomations(userId, username) {
         INSERT OR IGNORE INTO automation_log (automation_id, user_id, slate_id)
         VALUES (?, ?, NULL)
       `).run(auto.id, userId);
+      announceNotification(String(userId));
     }
   } catch (error) {
     console.error('Signup automation error:', error);
@@ -5134,7 +5253,7 @@ app.post('/api/account/reset-pin', authenticateToken, async (req, res) => {
 });
 
 // Change email (send verification code)
-app.post('/api/account/change-email', authenticateToken, async (req, res) => {
+app.post('/api/account/change-email', authenticateToken, createRateLimitMiddleware('emailChange'), async (req, res) => {
   const { newEmail } = req.body;
 
   if (!newEmail) {
@@ -5155,7 +5274,7 @@ app.post('/api/account/change-email', authenticateToken, async (req, res) => {
     }
 
     // Generate 6-digit code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
     // Store pending email change
@@ -5173,7 +5292,8 @@ app.post('/api/account/change-email', authenticateToken, async (req, res) => {
 });
 
 // Verify email change
-app.post('/api/account/verify-email-change', authenticateToken, async (req, res) => {
+// Rate limited: the code is six digits and lives ten minutes
+app.post('/api/account/verify-email-change', authenticateToken, createRateLimitMiddleware('verifyEmailChange'), async (req, res) => {
   const { code } = req.body;
 
   if (!code) {
@@ -5426,186 +5546,29 @@ app.post('/api/account/export-all/claim', authenticateToken, (req, res) => {
   }
 });
 
-// Export all slates as ZIP (sent via email)
-app.post('/api/account/export-slates', authenticateToken, async (req, res) => {
-  try {
-    // Per-account 24h cooldown (prevents repeated heavy exports / B2 downloads)
-    const now = Date.now();
-    const cooldownUntil = now + EXPORT_COOLDOWN_MS;
-    const claim = db.prepare(`
-      UPDATE users
-      SET export_cooldown_until = ?
-      WHERE id = ?
-        AND (export_cooldown_until IS NULL OR export_cooldown_until <= ?)
-    `).run(cooldownUntil, req.user.id, now);
-
-    if (claim.changes === 0) {
-      const row = db.prepare('SELECT export_cooldown_until FROM users WHERE id = ?').get(req.user.id);
-      const until = row?.export_cooldown_until || cooldownUntil;
-      const retryAfterSeconds = Math.max(0, Math.ceil((until - now) / 1000));
-      return res.status(429).json({
-        error: 'Export cooldown active. Please try again later.',
-        cooldownUntil: until,
-        retryAfterSeconds
-      });
-    }
-
-    const user = db.prepare('SELECT username, email FROM users WHERE id = ?').get(req.user.id);
-
-    if (!user.email) {
-      return res.status(400).json({ error: 'Email required for export. Please add an email to your account first.' });
-    }
-
-    // Get all slates for the user
-    const slates = db.prepare(`
-      SELECT id, slate_number, title, b2_file_id, created_at, updated_at
-      FROM slates
-      WHERE user_id = ?
-      ORDER BY updated_at DESC
-    `).all(req.user.id);
-
-    if (slates.length === 0) {
-      return res.status(400).json({ error: 'No slates to export' });
-    }
-
-    // Start export in background (don't make user wait)
-    res.json({ message: `Exporting ${slates.length} slate(s). You'll receive an email at ${user.email} with the download link shortly.` });
-
-    // Background processing
-    (async () => {
-      try {
-        const archiver = require('archiver');
-        const stream = require('stream');
-
-        // Create ZIP in memory
-        const buffers = [];
-        const bufferStream = new stream.PassThrough();
-        bufferStream.on('data', (chunk) => buffers.push(chunk));
-
-        const archive = archiver('zip', {
-          zlib: { level: 9 } // Maximum compression
-        });
-
-        archive.pipe(bufferStream);
-
-        // Get encryption key for this user
-        let encryptionKey = getCachedEncryptionKey(req.user.id);
-
-        // Add each slate to the ZIP
-        for (const slate of slates) {
-          try {
-            // Download and decrypt slate content
-            let content;
-            if (encryptionKey) {
-              content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
-            } else {
-              // If no cached key, try to decrypt with stored data (for Google users)
-              const userWithKey = db.prepare('SELECT encrypted_encryption_key FROM users WHERE id = ?').get(req.user.id);
-              if (userWithKey && userWithKey.encrypted_encryption_key) {
-                encryptionKey = decryptEncryptionKey(userWithKey.encrypted_encryption_key);
-                content = await b2Storage.getSlate(slate.b2_file_id, encryptionKey);
-              } else {
-                console.error(`No encryption key for user ${req.user.id}, slate ${slate.id}`);
-                continue; // Skip this slate
-              }
-            }
-
-            // Sanitize filename (remove invalid characters)
-            const sanitizedTitle = (slate.title || `slate-${slate.slate_number}`)
-              .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
-              .substring(0, 200); // Limit length
-
-            const filename = `${sanitizedTitle}.txt`;
-
-            // Add metadata header to file
-            const fileContent = `Title: ${slate.title || 'Untitled'}\nCreated: ${new Date(slate.created_at).toLocaleString()}\nLast Updated: ${new Date(slate.updated_at).toLocaleString()}\n\n${content}`;
-
-            archive.append(fileContent, { name: filename });
-          } catch (err) {
-            console.error(`Failed to export slate ${slate.id}:`, err);
-            // Continue with other slates
-          }
-        }
-
-        await archive.finalize();
-
-        // Wait for all buffers to be written
-        await new Promise((resolve) => bufferStream.on('end', resolve));
-
-        const zipBuffer = Buffer.concat(buffers);
-        const zipBase64 = zipBuffer.toString('base64');
-
-        // Send email with ZIP attachment
-        await emailService.sendEmail({
-          to: user.email,
-          subject: 'your justtype slates export',
-          text: `hi ${user.username},\n\nattached is a ZIP file containing all ${slates.length} of your slates as text files.\n\neach slate includes its title, creation date, and last updated date at the top of the file.\n\nthanks for using justtype!\n\n- justtype`,
-          attachments: [{
-            filename: `justtype-export-${new Date().toISOString().split('T')[0]}.zip`,
-            content: zipBase64,
-            encoding: 'base64',
-            type: 'application/zip'
-          }]
-        });
-
-        console.log(`✓ Exported ${slates.length} slates for user #${req.user.id}`);
-      } catch (err) {
-        console.error('Export processing error:', err);
-        // Try to send error email
-        try {
-          await emailService.sendEmail({
-            to: user.email,
-            subject: 'export failed - justtype',
-            text: `hi ${user.username},\n\nsorry, we encountered an error while exporting your slates. please try again later or contact support.\n\nerror: ${err.message}\n\n- justtype`
-          });
-        } catch (emailErr) {
-          console.error('Failed to send error email:', emailErr);
-        }
-      }
-    })();
-  } catch (error) {
-    console.error('Export slates error:', error);
-    res.status(500).json({ error: 'Failed to start export. Please try again.' });
-  }
-});
-
 // Delete account
 app.delete('/api/account/delete', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get user's slates to delete from B2
-    const slates = db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId);
-
-    // Delete slates from B2
-    for (const slate of slates) {
-      const fileIdsToDelete = new Set();
-      if (slate.b2_file_id) fileIdsToDelete.add(slate.b2_file_id);
-      if (slate.b2_public_file_id) fileIdsToDelete.add(slate.b2_public_file_id);
-      if (slate.history_b2_file_id) fileIdsToDelete.add(slate.history_b2_file_id);
-
-      for (const fileId of fileIdsToDelete) {
-        try {
-          await b2Storage.deleteSlate(fileId);
-        } catch (err) {
-          console.error(`Failed to delete B2 file ${fileId}:`, err);
-        }
-      }
+    // Every file of theirs leaves through the delete queue within the hour
+    // (the privacy page promises a deleted account is gone within a day).
+    // The queue removes a file only once no row points at it.
+    const userFiles = new Set();
+    for (const slate of db.prepare('SELECT b2_file_id, b2_public_file_id, history_b2_file_id FROM slates WHERE user_id = ?').all(userId)) {
+      for (const fileId of [slate.b2_file_id, slate.b2_public_file_id, slate.history_b2_file_id]) if (fileId) userFiles.add(fileId);
     }
 
-    // Collab state: their memberships, and everything on slates they own —
-    // members, update log, snapshot metadata + B2 snapshot files (before the
-    // slates rows go away — no FK cascade)
-    const collabB2Files = new Set();
+    // Collab state: their memberships, and everything on slates they own:
+    // members, update log, snapshot metadata and B2 snapshot files (before the
+    // slates rows go away, no FK cascade)
     for (const row of db.prepare('SELECT snapshot_b2_file_id FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
-      if (row.snapshot_b2_file_id) collabB2Files.add(row.snapshot_b2_file_id);
+      if (row.snapshot_b2_file_id) userFiles.add(row.snapshot_b2_file_id);
     }
     for (const row of db.prepare('SELECT DISTINCT b2_file_id FROM collab_checkpoints WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').all(userId)) {
-      collabB2Files.add(row.b2_file_id);
+      userFiles.add(row.b2_file_id);
     }
-    for (const fileId of collabB2Files) {
-      try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
-    }
+    b2DeleteQueue.removed([...userFiles]);
     db.prepare('DELETE FROM collab_updates WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_docs WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM collab_link_invites WHERE slate_id IN (SELECT id FROM slates WHERE user_id = ?)').run(userId);
@@ -5760,6 +5723,12 @@ app.post('/api/stripe/test-upgrade', authenticateToken, async (req, res) => {
   if (!stripe) {
     return res.status(503).json({ error: 'Stripe not configured' });
   }
+  // Only for local development. In production the webhook upgrades an
+  // account once Stripe confirms a payment; this route gave any signed-in
+  // account the unlimited plan for free while prod ran on a test key.
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
 
   const { tier } = req.body;
 
@@ -5856,7 +5825,7 @@ app.post('/api/account/request-unlink-google', authenticateToken, async (req, re
     }
 
     // Generate 6-digit verification code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     // Store verification code
@@ -5963,7 +5932,12 @@ app.use((err, req, res, next) => {
 
 // ============ PERIODIC CLEANUP ============
 
+// One pass at a time: a pass that runs long (a slow B2 call) must not have
+// the next hourly one start on the same rows
+let cleanupRunning = false;
 const runCleanup = async () => {
+  if (cleanupRunning) return;
+  cleanupRunning = true;
   try {
     // Clean up expired verification codes
     const expiredCodes = db.prepare(`
@@ -5974,7 +5948,8 @@ const runCleanup = async () => {
     `).run();
 
     // Clean up old sessions (older than 30 days)
-    const oldSessions = db.prepare('DELETE FROM sessions WHERE datetime(last_activity) < datetime(\'now\', \'-30 days\')').run();
+    // Compared as stored (CURRENT_TIMESTAMP text) so the index on it is used
+    const oldSessions = db.prepare("DELETE FROM sessions WHERE last_activity < datetime('now', '-30 days')").run();
 
     if (expiredCodes.changes > 0 || oldSessions.changes > 0) {
       console.log(`✓ Cleanup: Removed ${expiredCodes.changes} expired codes and ${oldSessions.changes} old sessions`);
@@ -5986,7 +5961,7 @@ const runCleanup = async () => {
     for (const slate of expiredShares) {
       try {
         db.prepare('UPDATE slates SET is_published = 0, b2_public_file_id = NULL, share_expires_at = NULL, share_pass_salt = NULL, share_pass_wrapped_key = NULL WHERE id = ?').run(slate.id);
-        if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) await b2Storage.deleteSlate(slate.b2_public_file_id);
+        if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) b2DeleteQueue.removed([slate.b2_public_file_id]);
       } catch (err) { console.warn('Expired share cleanup failed for slate', slate.id, err); }
     }
     if (expiredShares.length) console.log(`✓ Cleanup: ${expiredShares.length} shared links expired`);
@@ -6014,11 +5989,11 @@ const runCleanup = async () => {
         let currentStorage = user.storage_used;
         let deletedCount = 0;
 
-        // Get user's slates ordered by created_at DESC (latest first)
+        // Get user's slates ordered by created_at DESC (latest first). Only
+        // what counts toward storage: not system slates, not the trash.
         const userSlates = db.prepare(`
-          SELECT id, title, size_bytes, b2_file_id, b2_public_file_id, is_published
-          FROM slates
-          WHERE user_id = ?
+          SELECT * FROM slates
+          WHERE user_id = ? AND is_system_slate = 0 AND deleted_at IS NULL
           ORDER BY created_at DESC
         `).all(user.id);
 
@@ -6029,16 +6004,9 @@ const runCleanup = async () => {
           }
 
           try {
-            // Delete from B2
-            if (slate.b2_file_id) {
-              await b2Storage.deleteSlate(slate.b2_file_id);
-            }
-            if (slate.b2_public_file_id && slate.is_published === 1) {
-              await b2Storage.deleteSlate(slate.b2_public_file_id);
-            }
-
-            // Delete from database
-            db.prepare('DELETE FROM slates WHERE id = ?').run(slate.id);
+            // The same removal as everywhere else, so the slate's history,
+            // collab state and files go with it
+            await destroySlate(slate, user.id);
 
             currentStorage -= slate.size_bytes;
             deletedCount++;
@@ -6071,6 +6039,8 @@ const runCleanup = async () => {
     }
   } catch (err) {
     console.error('Cleanup job failed:', err);
+  } finally {
+    cleanupRunning = false;
   }
 };
 
@@ -6080,7 +6050,24 @@ runCleanup();
 // Run cleanup every hour
 setInterval(runCleanup, 60 * 60 * 1000);
 
-// Run startup health checks and start server
+// The daily admin secret rotation rewrites ADMIN_SECRET in .env and sends
+// SIGHUP (scripts/admin-token-rotator.sh). It used to restart the whole app
+// to pick it up: a few seconds of 502s every morning and every collab
+// socket dropped. Only that one value is re-read.
+process.on('SIGHUP', () => {
+  try {
+    const parsed = require('dotenv').parse(fs.readFileSync(path.join(__dirname, '..', '.env')));
+    if (parsed.ADMIN_SECRET) process.env.ADMIN_SECRET = parsed.ADMIN_SECRET;
+    console.log('✓ Admin secret reloaded');
+  } catch (err) {
+    console.error('Admin secret reload failed:', err.message);
+  }
+});
+
+// Run startup health checks and start server. The server starts listening
+// as soon as the checks are done; B2 and Stripe no longer have to answer
+// first, so an outage of either during a restart does not keep the whole
+// site down (B2 is authorized again on first use).
 (async () => {
   try {
     const healthResults = await healthChecks();
@@ -6092,14 +6079,6 @@ setInterval(runCleanup, 60 * 60 * 1000);
       uptime: 0
     };
 
-    // Initialize Stripe products
-    if (stripeModule) {
-      stripePriceIds = await stripeModule.ensureStripeProducts();
-      if (stripePriceIds) {
-        console.log('✓ Stripe products initialized');
-      }
-    }
-
     const httpServer = app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
       console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -6107,6 +6086,19 @@ setInterval(runCleanup, 60 * 60 * 1000);
 
     // Realtime relay for collaborative slates (ws upgrade on /collab/ws)
     collabHub.attach(httpServer, { db, jwt, JWT_SECRET, crypto });
+
+    // Replaced and removed B2 files leave through the delete queue
+    b2DeleteQueue.start();
+
+    // Initialize Stripe products
+    if (stripeModule) {
+      stripeModule.ensureStripeProducts()
+        .then((ids) => {
+          stripePriceIds = ids;
+          if (stripePriceIds) console.log('✓ Stripe products initialized');
+        })
+        .catch((err) => console.error('Stripe products init failed:', err.message));
+    }
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

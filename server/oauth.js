@@ -793,7 +793,9 @@ function mountOAuth(app, deps) {
     return { accessToken, refreshToken, username };
   };
 
-  app.post('/oauth/token', publicCors, form, express.json(), (req, res) => {
+  // Rate limited per IP: client secrets and refresh tokens are guessable
+  // only if nothing stops a caller from trying
+  app.post('/oauth/token', publicCors, deps.createRateLimitMiddleware('oauthToken'), form, express.json(), (req, res) => {
     sweepExpiredCodes();
     const body = req.body || {};
     const grantType = body.grant_type;
@@ -1200,7 +1202,7 @@ function mountOAuth(app, deps) {
 
       const wordCount = content.trim() === '' ? 0 : content.trim().split(/\s+/).length;
       const charCount = content.length;
-      const nextNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.oauth.userId).next;
+      const nextNumber = deps.allocateSlateNumber(req.oauth.userId);
 
       db.prepare(`INSERT INTO slates
         (user_id, slate_number, title, b2_file_id, b2_public_file_id, word_count, char_count, size_bytes,
@@ -1310,7 +1312,7 @@ function mountOAuth(app, deps) {
       const cc = Number.isFinite(char_count) ? char_count : 0;
       let slateNumber, dropId;
       db.transaction(() => {
-        slateNumber = db.prepare('SELECT COALESCE(MAX(slate_number), 0) + 1 AS next FROM slates WHERE user_id = ?').get(req.oauth.userId).next;
+        slateNumber = deps.allocateSlateNumber(req.oauth.userId);
         // Pending E2E slate: no canonical (master-key) content yet — b2_file_id is a
         // sentinel until the user's client adopts it in place.
         db.prepare(`INSERT INTO slates
@@ -1480,12 +1482,12 @@ function mountOAuth(app, deps) {
         wordCount, charCount, sizeBytes, req.params.n, req.oauth.userId
       );
 
-      // Best-effort delete of old B2 files.
+      // Old B2 files leave through the delete queue (kept a week, see
+      // server/b2DeleteQueue.js)
       const toDelete = new Set([slate.b2_file_id, slate.b2_public_file_id].filter(Boolean));
       toDelete.delete(b2FileId);
-      for (const id of toDelete) {
-        try { await b2Storage.deleteSlate(id); } catch { /* best-effort */ }
-      }
+      toDelete.delete(b2PublicFileId);
+      deps.b2DeleteQueue.replaced([...toDelete]);
 
       updateUserStorage(req.oauth.userId);
       res.json({ success: true, word_count: wordCount, char_count: charCount, title: newTitle });
@@ -1564,18 +1566,12 @@ function mountOAuth(app, deps) {
       if (!slate) return res.status(404).json({ error: 'not_found' });
       if (slate.is_system_slate) return res.status(403).json({ error: 'system slates cannot be deleted' });
 
-      try { await b2Storage.deleteSlate(slate.b2_file_id); } catch { /* best-effort */ }
-      if (slate.b2_public_file_id && slate.b2_public_file_id !== slate.b2_file_id) {
-        try { await b2Storage.deleteSlate(slate.b2_public_file_id); } catch { /* best-effort */ }
-      }
-
-      // Drop per-device wraps before the grants they reference (FK not enforced),
-      // so the tombstone trigger's grant cleanup can't leave them orphaned.
-      db.prepare(`DELETE FROM oauth_grant_device_wraps WHERE grant_id IN (
-        SELECT id FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?)`).run(req.oauth.userId, slate.slate_number);
-      db.prepare('DELETE FROM oauth_slate_grants WHERE user_id = ? AND slate_number = ?').run(req.oauth.userId, slate.slate_number);
-      db.prepare('DELETE FROM slates WHERE slate_number = ? AND user_id = ?').run(req.params.n, req.oauth.userId);
-      updateUserStorage(req.oauth.userId);
+      // The same removal as the app's own delete-for-good: rows first (the
+      // tombstone trigger drops the slate's grants and device wraps and records
+      // the delete for incremental sync), then its history, collab state and
+      // files through the delete queue. This used to leave history bundles,
+      // collab rows and checkpoint files behind.
+      await deps.destroySlate(slate, req.oauth.userId);
       res.json({ success: true });
     } catch (e) {
       console.error('oauth delete slate:', e);
@@ -1610,7 +1606,9 @@ function mountOAuth(app, deps) {
       }
 
       if (!publish && publicFileId) {
-        try { await b2Storage.deleteSlate(publicFileId); } catch { /* best-effort */ }
+        // Through the delete queue, which never removes a file a row still
+        // points at (a plain slate's public copy can be its own content file)
+        if (publicFileId !== slate.b2_file_id) deps.b2DeleteQueue.removed([publicFileId]);
         publicFileId = null;
       }
 

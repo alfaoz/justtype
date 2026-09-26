@@ -43,8 +43,10 @@ const healthChecks = async () => {
     await b2Storage.authorize();
     results.push({ check: 'B2 Connection', status: 'OK', message: 'Authorized' });
   } catch (err) {
-    results.push({ check: 'B2 Connection', status: 'FAIL', message: err.message });
-    hasErrors = true;
+    // Not fatal: the server comes up without B2 and authorizes again on the
+    // first request that needs it. Exiting here turned a B2 outage during a
+    // restart into the whole site being down.
+    results.push({ check: 'B2 Connection', status: 'WARN', message: err.message });
   }
 
   // 4. Database Check
