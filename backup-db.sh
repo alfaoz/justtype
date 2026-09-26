@@ -53,9 +53,11 @@ if [ -f "$APP_DIR/.env" ]; then
     set -a; . "$APP_DIR/.env"; set +a
 fi
 
-if [ -n "$B2_APPLICATION_KEY_ID" ] && [ -n "$B2_APPLICATION_KEY" ]; then
+# The separate backup bucket (B2_BACKUP_*) once its keys are set, the app's
+# bucket until then; backup-offsite.js picks which and names the copy.
+if { [ -n "$B2_BACKUP_KEY_ID" ] && [ -n "$B2_BACKUP_KEY" ]; } || \
+   { [ -n "$B2_APPLICATION_KEY_ID" ] && [ -n "$B2_APPLICATION_KEY" ]; }; then
     export B2_BACKUP_FILE="$BACKUP_FILE"
-    export B2_BACKUP_NAME="backups/db/justtype_backup_$TIMESTAMP.db"
     export B2_OFFSITE_RETAIN_DAYS="$OFFSITE_RETAIN_DAYS"
     OFFSITE_OUT=$([ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 && nvm use 20 >/dev/null 2>&1; \
         node "$APP_DIR/backup-offsite.js" 2>&1)
