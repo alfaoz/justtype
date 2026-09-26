@@ -652,7 +652,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     })();
   }, [isShared, currentSlate, userId]);
 
-  // Load current slate
+  // Load current slate. A load started while the session check ran is not
+  // repeated when the check comes back ('checking' becomes the session):
+  // the slate is already loading, from the same cookie.
+  const loadedUnderRef = useRef(null); // { n, checking } of the last load started here
   useEffect(() => {
     if (isShared) return;
     if (currentSlate && token) {
@@ -660,6 +663,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         adoptedSlateRef.current = null;
         return;
       }
+      const prev = loadedUnderRef.current;
+      loadedUnderRef.current = { n: currentSlate.slate_number, checking: token === 'checking' };
+      if (prev?.checking && token !== 'checking' && prev.n === currentSlate.slate_number) return;
       setIsLoading(true);
       loadSlate(currentSlate.slate_number);
     } else if (!currentSlate && !contentRef.current.trim()) {
@@ -1287,6 +1293,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             return;
           }
           reportNetworkFailure();
+          // Not a load to stand for the one the session check would repeat
+          if (loadedUnderRef.current?.n === id) loadedUnderRef.current = null;
           if (!cached?.data?.encryptedContent) {
             setStatus(strings.writer.connectivity.notAvailableOffline);
             setIsLoading(false);
@@ -1420,6 +1428,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (copyFirst) checkServerCopy(id, data, slateContent);
     } catch (err) {
       console.error('Failed to load slate:', err);
+      if (loadedUnderRef.current?.n === id) loadedUnderRef.current = null;
       setIsLoading(false);
       setLoadingFadeOut(false);
     }

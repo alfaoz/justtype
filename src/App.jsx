@@ -556,7 +556,10 @@ export default function App() {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
           // Slates created offline carry a local id until they sync
-          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
+          const n = slateId.startsWith('local-') ? slateId : parseInt(slateId);
+          // The same slate again (this runs again when the session check
+          // comes back) keeps its object, so the writer does not load it twice
+          setCurrentSlate((prev) => (prev && prev.slate_number === n ? prev : { slate_number: n }));
           setView('writer');
         }
       } else if (path === '/slates') {

@@ -806,8 +806,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return () => clearTimeout(t);
   }, [searchQuery]);
 
+  // Loaded while the session check ran: when it comes back ('checking'
+  // becomes the session) the list is not loaded a second time
+  const loadedUnderRef = useRef(null);
   useEffect(() => {
     if (token) {
+      const prev = loadedUnderRef.current;
+      loadedUnderRef.current = token;
+      if (prev === 'checking' && token !== 'checking') return;
       loadSlates();
       loadCollab();
     }
