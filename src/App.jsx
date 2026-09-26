@@ -26,7 +26,7 @@ import { strings } from './strings';
 import pages from './pages.json';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences, fetchPreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
-import { startDropRealtime, stopDropRealtime } from './dropRealtime';
+import { startDropRealtime, stopDropRealtime, onAccountEvent } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure, reportNetworkSuccess } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
@@ -446,8 +446,14 @@ export default function App() {
     window.location.href = `/oauth/continue?gate=${encodeURIComponent(oauthGate)}`;
   }, [oauthGate, token, pendingRecoveryPhrase, showPinSetup]);
 
-  // Fetch notifications when authenticated
+  // Fetch notifications when authenticated: once when the session is known,
+  // again when the account's event stream says one arrived, when the tab
+  // comes back after a minute or more, and every five minutes while it is
+  // in view (the stream is not open in the app, nor before the account's
+  // key is on this device)
+  const notificationsFetchedAtRef = useRef(0);
   const fetchNotifications = async () => {
+    notificationsFetchedAtRef.current = Date.now();
     try {
       const response = await fetch(`${API_URL}/notifications`, {
         credentials: 'include'
@@ -465,8 +471,17 @@ export default function App() {
   useEffect(() => {
     if (token && token !== 'checking') {
       fetchNotifications();
-      const interval = window.setInterval(fetchNotifications, 30 * 1000);
-      return () => window.clearInterval(interval);
+      const offEvents = onAccountEvent((e) => { if (e.type === 'notifications') fetchNotifications(); });
+      const onVisible = () => {
+        if (document.visibilityState === 'visible' && Date.now() - notificationsFetchedAtRef.current > 60 * 1000) fetchNotifications();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      const interval = window.setInterval(() => { if (document.visibilityState === 'visible') fetchNotifications(); }, 5 * 60 * 1000);
+      return () => {
+        offEvents();
+        document.removeEventListener('visibilitychange', onVisible);
+        window.clearInterval(interval);
+      };
     }
   }, [token]);
 
@@ -483,16 +498,22 @@ export default function App() {
     }
   }, [showNotifications]);
 
-  // Opening the list marks everything in it read
+  // Opening the list marks everything in it read: one request for all of
+  // them (200 at most each), one per notification where the server is older
   const markNotificationsRead = async () => {
     const unread = notifications.filter(n => !n.is_read);
     if (!unread.length) return;
-    await Promise.all(unread.map(n =>
-      fetch(`${API_URL}/notifications/${n.id}/read`, {
+    const one = (n) => fetch(`${API_URL}/notifications/${n.id}/read`, { method: 'POST', credentials: 'include' });
+    for (let i = 0; i < unread.length; i += 200) {
+      const batch = unread.slice(i, i + 200);
+      const res = await fetch(`${API_URL}/notifications/read`, {
         method: 'POST',
-        credentials: 'include'
-      })
-    ));
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ids: batch.map(n => n.id) }),
+      });
+      if (res.status === 404) await Promise.all(batch.map(one));
+    }
     setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
     setUnreadCount(0);
   };
