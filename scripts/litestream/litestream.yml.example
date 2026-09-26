@@ -1,6 +1,7 @@
 # Litestream config for the justtype databases, written for the 0.5 release
 # line (see README.md next to this file for the 0.3 form). Install it as
-# /etc/litestream.yml and put the bucket's name in both replica blocks.
+# /etc/litestream.yml. The bucket is justtype-backups; the key in
+# /etc/litestream.env can only touch its litestream/ prefix.
 #
 # The key is not in this file: litestream.service reads it from the
 # root-only /etc/litestream.env, and it is filled in here from there.
@@ -17,8 +18,8 @@ dbs:
   - path: /root/justtype/data/justtype.db
     replica:
       type: s3
-      bucket: justtype-litestream
-      path: prod
+      bucket: justtype-backups
+      path: litestream/prod
       endpoint: https://s3.eu-central-003.backblazeb2.com
       region: eu-central-003
       force-path-style: true
@@ -26,8 +27,8 @@ dbs:
   - path: /root/justtype-beta/data/justtype.db
     replica:
       type: s3
-      bucket: justtype-litestream
-      path: beta
+      bucket: justtype-backups
+      path: litestream/beta
       endpoint: https://s3.eu-central-003.backblazeb2.com
       region: eu-central-003
       force-path-style: true

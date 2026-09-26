@@ -10,7 +10,7 @@ Wants=network-online.target
 Type=simple
 User=root
 EnvironmentFile=/etc/litestream.env
-ExecStart=/usr/bin/litestream replicate -config /etc/litestream.yml
+ExecStart=/usr/local/bin/litestream replicate -config /etc/litestream.yml
 Restart=always
 RestartSec=5
 
