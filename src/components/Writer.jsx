@@ -1374,8 +1374,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
       // (Collab and locked slates are never app-shared — enforced server-side.)
-      // Not over an edit of our own still queued.
-      if (!fromCache && !pending && data.encrypted && slateKey && !data.is_published && !data.is_collab && !data.is_locked) {
+      // Not over an edit of our own still queued, nor when the server says
+      // no app holds a copy.
+      if (!fromCache && !pending && data.encrypted && slateKey && !data.is_published && !data.is_collab && !data.is_locked && data.has_grants !== false) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -1453,7 +1454,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       if (stillHere()) setTrashedSlate(data.deleted_at ? id : null);
       noteVersions(userId, id, data.history_count);
-      if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && userId) {
+      if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && data.has_grants !== false && userId) {
         const slateKey = await getSlateKey(userId);
         const merged = slateKey ? await pullAppEdits(id, slateKey) : null;
         if (merged && untouched()) loadSlate(id, { network: true });
@@ -2113,8 +2114,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
 
     // Keep any third-party shares of this slate in sync with the new content.
-    // (Not for collab slates, which cannot be app-shared.)
-    if (slateKey && !collabDocKey && slateNumber != null) resyncSharedGrants(slateNumber, text, title, slateKey);
+    // (Not for collab slates, which cannot be app-shared, nor when the server
+    // says nothing holds a copy.)
+    if (slateKey && !collabDocKey && slateNumber != null && data.has_grants !== false) resyncSharedGrants(slateNumber, text, title, slateKey);
 
     // The user has moved on: the slate is saved, nothing else to show
     if (!stillOpen()) { if (!late) endAnnouncement(); return data; }
