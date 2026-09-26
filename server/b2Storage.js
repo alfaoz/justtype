@@ -3,17 +3,92 @@ const crypto = require('crypto');
 const b2Monitor = require('./b2Monitor');
 const { handleB2Error } = require('./b2ErrorHandler');
 
+// A call that hangs holds a save open until the operating system gives up on
+// the socket, which can take minutes. Nothing B2 does for us takes this long.
+const B2_TIMEOUT_MS = 30000;
+// Upload URLs stay valid for a day and each takes one upload at a time, so a
+// few are kept and reused: fetching one first cost every save a round trip,
+// and each new URL meant a fresh TLS handshake with a different pod.
+const UPLOAD_URL_POOL_MAX = 4;
+// File names the delete call needs, remembered from our own uploads so a
+// delete does not first ask B2 for the name
+const FILE_NAME_MEMORY = 5000;
+// A file B2 said is gone is not asked for again for a while: a client that
+// keeps opening such a slate got a B2 round trip and an error every time
+const NOT_FOUND_MEMORY_MS = 10 * 60 * 1000;
+
 class B2Storage {
   constructor() {
     this.b2 = new B2({
       applicationKeyId: process.env.B2_APPLICATION_KEY_ID,
       applicationKey: process.env.B2_APPLICATION_KEY,
+      axios: { timeout: B2_TIMEOUT_MS },
     });
     this.bucketId = process.env.B2_BUCKET_ID;
     // Optional file name prefix so multiple instances (e.g. beta) can share a bucket without mixing files
     this.prefix = process.env.B2_PREFIX || '';
     this.authorized = false;
     this.authExpiry = null; // Track when auth token expires
+    this.authorizing = null;
+    this.uploadUrls = [];
+    this.fileNames = new Map();
+    this.notFound = new Map();
+  }
+
+  rememberFileName(fileId, fileName) {
+    if (!fileId || !fileName) return;
+    this.fileNames.delete(fileId);
+    this.fileNames.set(fileId, fileName);
+    if (this.fileNames.size > FILE_NAME_MEMORY) this.fileNames.delete(this.fileNames.keys().next().value);
+  }
+
+  knownFileName(fileId) {
+    return this.fileNames.get(fileId) || null;
+  }
+
+  // Throws the same not-found error B2 gave, without asking B2 again, for a
+  // file it reported missing in the last few minutes
+  checkNotFound(fileId, operation) {
+    const at = this.notFound.get(fileId);
+    if (!at) return;
+    if (Date.now() - at > NOT_FOUND_MEMORY_MS) { this.notFound.delete(fileId); return; }
+    throw handleB2Error({ response: { status: 404, data: { code: 'not_found', message: 'file not found' } }, message: 'file not found' }, operation);
+  }
+
+  noteNotFound(fileId, error) {
+    if (error?.response?.status !== 404) return;
+    this.notFound.set(fileId, Date.now());
+    if (this.notFound.size > 1000) this.notFound.delete(this.notFound.keys().next().value);
+  }
+
+  // One upload URL for one upload: reused from the pool when there is one
+  async takeUploadUrl() {
+    const pooled = this.uploadUrls.pop();
+    if (pooled) return pooled;
+    const res = await this.b2.getUploadUrl({ bucketId: this.bucketId });
+    return { uploadUrl: res.data.uploadUrl, authorizationToken: res.data.authorizationToken };
+  }
+
+  // Back into the pool after a clean upload. A URL that failed is dropped:
+  // B2 asks for a new one after any error on it.
+  returnUploadUrl(slot) {
+    if (this.uploadUrls.length < UPLOAD_URL_POOL_MAX) this.uploadUrls.push(slot);
+  }
+
+  // Uploads one buffer, remembering the file name for the later delete
+  async putFile(fileName, data, mime) {
+    const slot = await this.takeUploadUrl();
+    // On an error the slot is simply not returned to the pool
+    const response = await this.b2.uploadFile({
+      uploadUrl: slot.uploadUrl,
+      uploadAuthToken: slot.authorizationToken,
+      fileName,
+      data,
+      mime,
+    });
+    this.returnUploadUrl(slot);
+    this.rememberFileName(response.data.fileId, fileName);
+    return response;
   }
 
   // Encrypt content using AES-256-GCM (authenticated encryption)
@@ -100,17 +175,25 @@ class B2Storage {
 
     if (!needsAuth) return;
 
-    try {
-      await this.b2.authorize();
-      this.authorized = true;
-      this.authExpiry = now + (23 * 60 * 60 * 1000); // B2 tokens last 24h, set to 23h to be safe
-      console.log('✓ Backblaze B2 authorized (expires in 23 hours)');
-    } catch (error) {
-      console.error('✗ B2 authorization failed:', error.message);
-      this.authorized = false;
-      this.authExpiry = null;
-      throw error;
-    }
+    // Requests that arrive while the token is being renewed wait for that
+    // one renewal instead of each starting their own
+    if (this.authorizing) return this.authorizing;
+    this.authorizing = (async () => {
+      try {
+        await this.b2.authorize();
+        this.authorized = true;
+        this.authExpiry = Date.now() + (23 * 60 * 60 * 1000); // B2 tokens last 24h, set to 23h to be safe
+        console.log('✓ Backblaze B2 authorized (expires in 23 hours)');
+      } catch (error) {
+        console.error('✗ B2 authorization failed:', error.message);
+        this.authorized = false;
+        this.authExpiry = null;
+        throw error;
+      } finally {
+        this.authorizing = null;
+      }
+    })();
+    return this.authorizing;
   }
 
   async uploadSlate(slateId, content, encryptionKey = null) {
@@ -136,17 +219,7 @@ class B2Storage {
     }
 
     try {
-      const uploadUrl = await this.b2.getUploadUrl({
-        bucketId: this.bucketId,
-      });
-
-      const response = await this.b2.uploadFile({
-        uploadUrl: uploadUrl.data.uploadUrl,
-        uploadAuthToken: uploadUrl.data.authorizationToken,
-        fileName: fileName,
-        data: dataToUpload,
-        mime: mimeType,
-      });
+      const response = await this.uploadWithRetry(fileName, dataToUpload, mimeType);
 
       // Log Class C transaction (upload)
       b2Monitor.logClassC('uploadSlate', {
@@ -157,145 +230,89 @@ class B2Storage {
 
       return response.data.fileId;
     } catch (error) {
-      // If we get a 401, force re-authorization and retry once
+      b2Monitor.logError('uploadSlate', error);
+      throw handleB2Error(error, 'uploadSlate');
+    }
+  }
+
+  // Worth one more try on a fresh upload URL: a rejected token, a timeout or
+  // a dropped connection, or B2 saying it is busy. B2's own guidance for an
+  // upload that fails this way is to get a new URL and send it again.
+  isRetryableUpload(error) {
+    if (this.isStaleAuthError(error)) return true;
+    const status = error?.response?.status;
+    if (!status) return true;
+    return status === 408 || status === 429 || status >= 500;
+  }
+
+  async uploadWithRetry(fileName, data, mime) {
+    try {
+      return await this.putFile(fileName, data, mime);
+    } catch (error) {
+      if (!this.isRetryableUpload(error)) throw error;
       if (this.isStaleAuthError(error)) {
         console.log('B2 auth rejected, forcing re-authorization...');
         this.invalidateAuth();
+        this.uploadUrls = [];
         await this.authorize();
-
-        // Retry the upload
-        try {
-          const uploadUrl = await this.b2.getUploadUrl({
-            bucketId: this.bucketId,
-          });
-
-          const response = await this.b2.uploadFile({
-            uploadUrl: uploadUrl.data.uploadUrl,
-            uploadAuthToken: uploadUrl.data.authorizationToken,
-            fileName: fileName,
-            data: dataToUpload,
-            mime: mimeType,
-          });
-
-          b2Monitor.logClassC('uploadSlate', {
-            slateId,
-            encrypted: !!encryptionKey,
-            sizeBytes: dataToUpload.length
-          });
-
-          return response.data.fileId;
-        } catch (retryError) {
-          b2Monitor.logError('uploadSlate', retryError);
-          const b2Error = handleB2Error(retryError, 'uploadSlate');
-          throw b2Error;
-        }
       }
+      return this.putFile(fileName, data, mime);
+    }
+  }
 
-      b2Monitor.logError('uploadSlate', error);
-      const b2Error = handleB2Error(error, 'uploadSlate');
-      throw b2Error;
+  // Downloads one file by id, once more after a rejected token. A file B2
+  // reported missing a moment ago is refused without asking again.
+  async download(fileId, operation) {
+    await this.authorize();
+    this.checkNotFound(fileId, operation);
+    const get = () => this.b2.downloadFileById({ fileId, responseType: 'arraybuffer' });
+    try {
+      let response;
+      try {
+        response = await get();
+      } catch (error) {
+        if (!this.isStaleAuthError(error)) throw error;
+        console.log('B2 auth rejected, forcing re-authorization...');
+        this.invalidateAuth();
+        await this.authorize();
+        response = await get();
+      }
+      return Buffer.from(response.data);
+    } catch (error) {
+      this.noteNotFound(fileId, error);
+      b2Monitor.logError(operation, error);
+      throw handleB2Error(error, operation);
     }
   }
 
   async getSlate(fileId, encryptionKey = null) {
-    await this.authorize();
+    const downloadedData = await this.download(fileId, 'getSlate');
 
-    try {
-      const response = await this.b2.downloadFileById({
-        fileId: fileId,
-        responseType: 'arraybuffer',
-      });
+    // Log Class B transaction (download)
+    b2Monitor.logClassB('getSlate', {
+      fileId,
+      encrypted: !!encryptionKey,
+      bytes: downloadedData.length
+    });
 
-      const downloadedData = Buffer.from(response.data);
-
-      // Log Class B transaction (download)
-      b2Monitor.logClassB('getSlate', {
-        fileId,
-        encrypted: !!encryptionKey,
-        bytes: downloadedData.length
-      });
-
-      let slateData;
-      if (encryptionKey) {
-        // Decrypt the data
-        const decryptedJson = this.decrypt(downloadedData, encryptionKey);
-        slateData = JSON.parse(decryptedJson);
-      } else {
-        // Parse unencrypted data (legacy slates)
-        slateData = JSON.parse(downloadedData.toString());
-      }
-
-      return slateData.content;
-    } catch (error) {
-      // If we get a 401, force re-authorization and retry once
-      if (this.isStaleAuthError(error)) {
-        console.log('B2 auth rejected, forcing re-authorization...');
-        this.invalidateAuth();
-        await this.authorize();
-
-        // Retry the download
-        try {
-          const response = await this.b2.downloadFileById({
-            fileId: fileId,
-            responseType: 'arraybuffer',
-          });
-
-          const downloadedData = Buffer.from(response.data);
-
-          b2Monitor.logClassB('getSlate', {
-            fileId,
-            encrypted: !!encryptionKey,
-            bytes: downloadedData.length
-          });
-
-          let slateData;
-          if (encryptionKey) {
-            const decryptedJson = this.decrypt(downloadedData, encryptionKey);
-            slateData = JSON.parse(decryptedJson);
-          } else {
-            slateData = JSON.parse(downloadedData.toString());
-          }
-
-          return slateData.content;
-        } catch (retryError) {
-          b2Monitor.logError('getSlate', retryError);
-          const b2Error = handleB2Error(retryError, 'getSlate');
-          throw b2Error;
-        }
-      }
-
-      b2Monitor.logError('getSlate', error);
-      const b2Error = handleB2Error(error, 'getSlate');
-      throw b2Error;
+    let slateData;
+    if (encryptionKey) {
+      // Decrypt the data
+      const decryptedJson = this.decrypt(downloadedData, encryptionKey);
+      slateData = JSON.parse(decryptedJson);
+    } else {
+      // Parse unencrypted data (legacy slates)
+      slateData = JSON.parse(downloadedData.toString());
     }
+
+    return slateData.content;
   }
 
   // Download raw file bytes without decryption (for E2E users)
   async downloadRawFile(fileId) {
-    await this.authorize();
-    try {
-      const response = await this.b2.downloadFileById({
-        fileId: fileId,
-        responseType: 'arraybuffer',
-      });
-      const data = Buffer.from(response.data);
-      b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
-      return data;
-    } catch (error) {
-      if (this.isStaleAuthError(error)) {
-        this.invalidateAuth();
-        await this.authorize();
-        const response = await this.b2.downloadFileById({
-          fileId: fileId,
-          responseType: 'arraybuffer',
-        });
-        const data = Buffer.from(response.data);
-        b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
-        return data;
-      }
-      b2Monitor.logError('downloadRawFile', error);
-      throw handleB2Error(error, 'downloadRawFile');
-    }
+    const data = await this.download(fileId, 'downloadRawFile');
+    b2Monitor.logClassB('downloadRawFile', { fileId, bytes: data.length });
+    return data;
   }
 
   // Upload pre-encrypted blob to B2 (for E2E users)
@@ -303,32 +320,8 @@ class B2Storage {
     await this.authorize();
     const fileName = `${this.prefix}slates/${slateId}.enc`;
 
-    const put = async () => {
-      const uploadUrlResponse = await this.b2.getUploadUrl({
-        bucketId: this.bucketId,
-      });
-      return this.b2.uploadFile({
-        uploadUrl: uploadUrlResponse.data.uploadUrl,
-        uploadAuthToken: uploadUrlResponse.data.authorizationToken,
-        fileName: fileName,
-        data: encryptedBuffer,
-        mime: 'application/octet-stream',
-      });
-    };
-
     try {
-      let response;
-      try {
-        response = await put();
-      } catch (error) {
-        // Same recovery the other upload paths have: a rejected token is
-        // dropped and the write is attempted once more with a fresh one.
-        if (!this.isStaleAuthError(error)) throw error;
-        console.log('B2 auth rejected, forcing re-authorization...');
-        this.invalidateAuth();
-        await this.authorize();
-        response = await put();
-      }
+      const response = await this.uploadWithRetry(fileName, encryptedBuffer, 'application/octet-stream');
       b2Monitor.logClassC('uploadRawSlate', { slateId, bytes: encryptedBuffer.length });
       return response.data.fileId;
     } catch (error) {
@@ -337,57 +330,35 @@ class B2Storage {
     }
   }
 
+  // Deletes one file version. The name comes from the caller, from our own
+  // upload, or (only when neither knows it) from asking B2.
   async deleteSlate(fileId, fileName = null) {
     await this.authorize();
+    const remove = async () => {
+      let name = fileName || this.knownFileName(fileId);
+      if (!name) {
+        const fileInfo = await this.b2.getFileInfo({ fileId });
+        name = fileInfo.data.fileName;
+      }
+      await this.b2.deleteFileVersion({ fileId, fileName: name });
+      this.fileNames.delete(fileId);
+      b2Monitor.logClassC('deleteSlate', { fileId, fileName: name });
+      return true;
+    };
 
     try {
-      // If fileName not provided, get it from B2 first
-      if (!fileName) {
-        const fileInfo = await this.b2.getFileInfo({ fileId });
-        fileName = fileInfo.data.fileName;
-      }
-
-      await this.b2.deleteFileVersion({
-        fileId: fileId,
-        fileName: fileName,
-      });
-
-      // Log Class C transaction (delete)
-      b2Monitor.logClassC('deleteSlate', { fileId, fileName });
-
-      return true;
-    } catch (error) {
-      // If we get a 401, force re-authorization and retry once
-      if (this.isStaleAuthError(error)) {
+      try {
+        return await remove();
+      } catch (error) {
+        if (!this.isStaleAuthError(error)) throw error;
         console.log('B2 auth rejected, forcing re-authorization...');
         this.invalidateAuth();
         await this.authorize();
-
-        // Retry the delete
-        try {
-          if (!fileName) {
-            const fileInfo = await this.b2.getFileInfo({ fileId });
-            fileName = fileInfo.data.fileName;
-          }
-
-          await this.b2.deleteFileVersion({
-            fileId: fileId,
-            fileName: fileName,
-          });
-
-          b2Monitor.logClassC('deleteSlate', { fileId, fileName });
-
-          return true;
-        } catch (retryError) {
-          b2Monitor.logError('deleteSlate', retryError);
-          const b2Error = handleB2Error(retryError, 'deleteSlate');
-          throw b2Error;
-        }
+        return await remove();
       }
-
+    } catch (error) {
       b2Monitor.logError('deleteSlate', error);
-      const b2Error = handleB2Error(error, 'deleteSlate');
-      throw b2Error;
+      throw handleB2Error(error, 'deleteSlate');
     }
   }
 }
