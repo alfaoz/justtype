@@ -8,7 +8,8 @@
 // Mounted at /collab/ws (outside /api/ so nginx's API rate limit does not
 // throttle the channel; the catch-all location already forwards Upgrade).
 // Auth mirrors authenticateToken: cookie (or bearer) JWT at upgrade time,
-// oauth-scoped tokens rejected, session must exist in the sessions table.
+// oauth-scoped tokens rejected, session must exist in the sessions table,
+// and is looked for again about once a minute while the socket lives.
 //
 // Versions: a slate's head is the larger of its newest logged update and its
 // snapshot's version, and the next update takes head + 1. The log therefore
@@ -50,6 +51,7 @@ const FETCH_BATCH = 500;
 // fetch never loads the whole log into memory at once.
 const FETCH_MAX_CHARS = 1.5 * 1024 * 1024;
 const HEARTBEAT_MS = 30000;
+const SESSION_RECHECK_MS = 60 * 1000;
 // A socket that has this much queued and unsent is not keeping up: it is
 // dropped rather than buffered without end, and catches up when it reconnects.
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
@@ -177,7 +179,10 @@ function tokenFromRequest(req) {
   return (authHeader && authHeader.split(' ')[1]) || null;
 }
 
-// Same checks as authenticateToken, minus the express plumbing.
+// Same checks as authenticateToken, minus the express plumbing. The session
+// row's id is kept: a session renews its token as it is used, so the token
+// this socket opened with stops matching after a while, but the row stays
+// until logout, a password reset or expiry deletes it.
 function verifyUser(req) {
   const { jwt, JWT_SECRET, crypto } = deps;
   const token = tokenFromRequest(req);
@@ -191,12 +196,38 @@ function verifyUser(req) {
   if (!user || user.oauth) return null;
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const result = stmts.touchSession.run(tokenHash, tokenHash);
-    if (result.changes === 0) return null;
+    const session = stmts.findSession.get(tokenHash, tokenHash);
+    if (!session) return null;
+    stmts.touchSession.run(session.id);
+    return { id: user.id, username: user.username, sessionId: session.id };
   } catch {
     return null;
   }
-  return { id: user.id, username: user.username };
+}
+
+// Origins the web app is served from (the CORS list in index.js), and the
+// iOS shell, whose bundled page runs at capacitor://<its server hostname>.
+// Logged when unexpected, never refused: the shell's hostnames are set in its
+// own project outside this repo, and the auth cookie is SameSite=lax, which
+// already keeps other sites' pages from opening this socket as a user.
+function knownOrigins() {
+  const list = process.env.NODE_ENV === 'production'
+    ? ['https://justtype.io', 'https://www.justtype.io']
+    : ['http://localhost:5173', 'http://localhost:3003', 'http://127.0.0.1:5173'];
+  if (process.env.PUBLIC_URL) list.push(process.env.PUBLIC_URL.replace(/\/+$/, ''));
+  const set = new Set(list);
+  for (const origin of list) {
+    try { set.add(`capacitor://${new URL(origin).host}`); } catch { /* not a URL */ }
+  }
+  return set;
+}
+let originsSeen = null;
+const originsLogged = new Set();
+function noteOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin || originsSeen.has(origin) || originsLogged.has(origin)) return;
+  if (originsLogged.size < 100) originsLogged.add(origin);
+  console.warn(`collab socket opened from an unexpected origin: ${origin}`);
 }
 
 function membership(slateId, userId) {
@@ -391,9 +422,12 @@ function attach(httpServer, dependencies) {
   const { db } = deps;
   const { WebSocketServer } = require('ws');
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  originsSeen = knownOrigins();
 
   stmts = {
-    touchSession: db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`),
+    findSession: db.prepare(`SELECT id FROM sessions WHERE ${SESSION_MATCH} LIMIT 1`),
+    touchSession: db.prepare('UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?'),
+    sessionAlive: db.prepare('SELECT 1 FROM sessions WHERE id = ?'),
     membership: db.prepare(`
       SELECT m.status, m.role FROM collab_members m
       JOIN slates s ON s.id = m.slate_id
@@ -434,6 +468,7 @@ function attach(httpServer, dependencies) {
       socket.destroy();
       return;
     }
+    noteOrigin(req);
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req, user);
     });
@@ -446,6 +481,8 @@ function attach(httpServer, dependencies) {
       return;
     }
     ws.userId = user.id;
+    ws.sessionId = user.sessionId;
+    ws.sessionCheckedAt = Date.now();
     ws.slateRooms = new Set();
     ws.isAlive = true;
     ws.rateWindowStart = Date.now();
@@ -466,8 +503,20 @@ function attach(httpServer, dependencies) {
   });
 
   const heartbeat = setInterval(() => {
+    const now = Date.now();
     for (const client of wss.clients) {
       if (!client.isAlive) { client.terminate(); continue; }
+      // Logged out, password reset, or expired: the session row is gone and
+      // the socket goes with it.
+      if (client.sessionId && now - client.sessionCheckedAt >= SESSION_RECHECK_MS) {
+        client.sessionCheckedAt = now;
+        let alive = true;
+        try { alive = !!stmts.sessionAlive.get(client.sessionId); } catch { /* a failed read keeps the socket */ }
+        if (!alive) {
+          client.close(1008, 'session ended');
+          continue;
+        }
+      }
       client.isAlive = false;
       try { client.ping(); } catch { /* dying socket */ }
     }
