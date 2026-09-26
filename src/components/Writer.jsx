@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { API_URL, PUBLIC_URL } from '../config';
 import { VERSION } from '../version';
 import { strings } from '../strings';
+import { findConflicts } from '../mergeText';
+import PlainConflicts from './PlainConflicts';
 import { builtInThemes, hiddenThemes, getThemeIds, getTheme, isCustomTheme, addCustomTheme, removeCustomTheme, getExampleThemeJson, validateTheme, applyThemeVariables, syncThemeToServer, syncCustomThemesToServer, MAX_CUSTOM_THEMES, getCustomThemeCount, deviceDefaultTheme } from '../themes';
 import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags, decryptTags, reencryptForApp, decryptOwnerGrant, unwrapKey, wrapKey } from '../crypto';
 import { useScroll, centerTextareaCaret, liftTextareaCaret } from '../typewriter';
@@ -3077,6 +3079,27 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     if (!hasUnsavedChanges || !userId || n == null || isShared || collabDocKey || isLocalSlateNumber(n)) return;
     historyKey().then((key) => warmHistory(userId, n, key)).catch(() => {});
   }, [hasUnsavedChanges, currentSlate?.slate_number]);
+  // Conflict blocks in a plain slate get the rich editor's cards above the
+  // text (PlainConflicts); the rich editor draws them in place itself
+  const plainEditorShown = !(lockGate || lockPrompt) && !(collabDocKey && collabSlateDbId) && editorMode !== 'wysiwyg';
+  const plainConflicts = useMemo(
+    () => (plainEditorShown && !inTrash ? findConflicts(content) : []),
+    [plainEditorShown, inTrash, content]
+  );
+  // A card's choice replaces its block through the editing command, so it is
+  // one undo step like any typing, and the caret lands after it
+  const resolvePlainConflict = (c, text) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    ta.setSelectionRange(c.from, c.to);
+    const done = document.execCommand?.(text ? 'insertText' : 'delete', false, text);
+    if (!done) {
+      const next = ta.value.slice(0, c.from) + text + ta.value.slice(c.to);
+      setContent(next);
+      requestAnimationFrame(() => ta.setSelectionRange(c.from + text.length, c.from + text.length));
+    }
+  };
   const historySource = useMemo(() => {
     const n = currentSlate?.slate_number;
     const rows = (entries) => [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
@@ -3239,7 +3262,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       {/* WRITING AREA + COLLAB PANEL (a row, so the panel narrows the editor
           instead of covering the text you are comparing against) */}
       <div className="flex-grow flex min-h-0 w-full">
-      <main ref={mainRef} key={contentFadeKey} className={`writer-main flex-1 min-w-0 flex justify-center bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'writer-arrive animate-[fadeIn_0.3s_ease-out]' : ''}`}>
+      <main ref={mainRef} key={contentFadeKey} className={`writer-main flex-1 min-w-0 flex ${plainConflicts.length ? 'flex-col items-center' : 'justify-center'} bg-[var(--theme-bg)] overflow-y-auto ${contentFadeKey > 0 ? 'writer-arrive animate-[fadeIn_0.3s_ease-out]' : ''}`}>
         {lockGate || lockPrompt ? (
           <LockPanel
             key={lockGate ? `gate-${lockGate.id}` : 'setup'}
@@ -3289,6 +3312,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             />
           </React.Suspense>
         ) : (
+          <>
+          {plainConflicts.length > 0 && <PlainConflicts conflicts={plainConflicts} onChoose={resolvePlainConflict} />}
           <textarea
             ref={textareaRef}
             value={content}
@@ -3300,8 +3325,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             onBlur={saveCaret}
             placeholder={strings.writer.contentPlaceholder}
             spellCheck={false}
-            className={`writer-column w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}${scrollMode === 'centered' ? ' pb-[50vh]' : ''}`}
+            className={`writer-column w-full max-w-3xl bg-[var(--theme-bg)] border-none leading-relaxed resize-none p-8 focus:ring-0 placeholder-[var(--theme-text-dim)] text-[var(--theme-text)] punto-${punto}${scrollMode === 'centered' ? ' pb-[50vh]' : ''}${plainConflicts.length ? ' flex-1 min-h-[60vh]' : ''}`}
           />
+          </>
         )}
       </main>
 

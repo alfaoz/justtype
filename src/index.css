@@ -1097,21 +1097,23 @@ body.custom-theme ::-webkit-scrollbar-track {
 .wysiwyg-editor .cm-lp-math-error { text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* Merge conflict card: the two versions and three ways out. Same card
-   language as code blocks; the caret inside reveals the raw markers. */
-.wysiwyg-editor .cm-lp-conflict { margin: 0.35em 0; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); overflow: hidden; }
-.wysiwyg-editor .cm-lp-conflict-panes { display: grid; grid-template-columns: 1fr 1fr; }
-@media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-panes { grid-template-columns: 1fr; } }
-.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; transition: background-color 0.2s ease, opacity 0.2s ease; }
+   language as code blocks. In the rich editor it stands in for the block
+   (the caret inside reveals the raw markers); the plain editor shows it
+   above the text. */
+.conflict-card { margin: 0.35em 0; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); overflow: hidden; }
+.conflict-card .conflict-card-panes { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 640px) { .conflict-card .conflict-card-panes { grid-template-columns: 1fr; } }
+.conflict-card .conflict-card-pane { padding: 0.6em 0.75em; min-width: 0; transition: background-color 0.2s ease, opacity 0.2s ease; }
 /* While a choice is hovered: the pane(s) it keeps come forward, the other fades */
-.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane { opacity: 0.4; }
-.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane.is-kept { opacity: 1; background: var(--theme-bg-tertiary); }
-.wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 1px solid var(--theme-border); }
-@media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 0; border-top: 1px solid var(--theme-border); } }
-.wysiwyg-editor .cm-lp-conflict-label { font-size: 0.75em; color: var(--theme-orange); margin-bottom: 0.4em; }
-.wysiwyg-editor .cm-lp-conflict-text { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--theme-text); }
-.wysiwyg-editor .cm-lp-conflict-actions { display: flex; gap: 1em; padding: 0.5em 0.75em; border-top: 1px solid var(--theme-border); font-size: 0.85em; }
-.wysiwyg-editor .cm-lp-conflict-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--theme-text-muted); cursor: pointer; }
-.wysiwyg-editor .cm-lp-conflict-btn:hover { color: var(--theme-text); }
+.conflict-card.is-choosing .conflict-card-pane { opacity: 0.4; }
+.conflict-card.is-choosing .conflict-card-pane.is-kept { opacity: 1; background: var(--theme-bg-tertiary); }
+.conflict-card .conflict-card-pane + .conflict-card-pane { border-left: 1px solid var(--theme-border); }
+@media (max-width: 640px) { .conflict-card .conflict-card-pane + .conflict-card-pane { border-left: 0; border-top: 1px solid var(--theme-border); } }
+.conflict-card .conflict-card-label { font-size: 0.75em; color: var(--theme-orange); margin-bottom: 0.4em; }
+.conflict-card .conflict-card-text { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--theme-text); }
+.conflict-card .conflict-card-actions { display: flex; gap: 1em; padding: 0.5em 0.75em; border-top: 1px solid var(--theme-border); font-size: 0.85em; }
+.conflict-card .conflict-card-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--theme-text-muted); cursor: pointer; }
+.conflict-card .conflict-card-btn:hover { color: var(--theme-text); }
 
 /* Slates list while offline: rows that are not on this device step back */
 .slate-unavailable { opacity: 0.4; cursor: default !important; }

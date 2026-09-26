@@ -15,6 +15,7 @@ import { syntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { markdownMath } from './markdownMath';
 import { markdownConflict } from './markdownConflict';
+import { buildConflictCard } from './conflictCard';
 import { strings } from '../strings';
 
 // The markdown dialect both editors and the read-only view parse: GFM plus
@@ -132,59 +133,21 @@ class MathWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
-// A merge conflict as one card: both versions side by side, three ways out.
-// The buttons edit the document (replace the whole block with the choice),
-// so resolving is just another edit, undoable and autosaved.
+// A merge conflict as one card in place of the block (conflictCard.js)
 class ConflictWidget extends WidgetType {
   constructor(ours, theirs, from, to) { super(); this.ours = ours; this.theirs = theirs; this.from = from; this.to = to; }
   eq(other) { return other.ours === this.ours && other.theirs === this.theirs && other.from === this.from && other.to === this.to; }
   toDOM(view) {
-    const el = document.createElement('div');
-    el.className = 'cm-lp-conflict';
-    const t = strings.writer.conflict;
-    const pane = (label, text) => {
-      const p = document.createElement('div');
-      p.className = 'cm-lp-conflict-pane';
-      const h = document.createElement('div'); h.className = 'cm-lp-conflict-label'; h.textContent = label;
-      const b = document.createElement('pre'); b.className = 'cm-lp-conflict-text'; b.textContent = text;
-      p.append(h, b);
-      return p;
-    };
-    const panes = document.createElement('div');
-    panes.className = 'cm-lp-conflict-panes';
-    const ourPane = pane(t.ours, this.ours);
-    const theirPane = pane(t.theirs, this.theirs);
-    panes.append(ourPane, theirPane);
-    const actions = document.createElement('div');
-    actions.className = 'cm-lp-conflict-actions';
-    // Hovering a choice lights the pane(s) it keeps and dims the rest
-    const preview = (keeps) => {
-      el.classList.toggle('is-choosing', keeps.length > 0);
-      ourPane.classList.toggle('is-kept', keeps.includes(ourPane));
-      theirPane.classList.toggle('is-kept', keeps.includes(theirPane));
-    };
-    const choose = (label, text, keeps) => {
-      const btn = document.createElement('button');
-      btn.type = 'button'; btn.className = 'cm-lp-conflict-btn'; btn.textContent = label; btn.cmIgnore = true;
-      btn.onmouseenter = () => preview(keeps);
-      btn.onmouseleave = () => preview([]);
-      btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
-      btn.onclick = (e) => {
-        e.preventDefault(); e.stopPropagation();
+    return buildConflictCard({
+      ours: this.ours,
+      theirs: this.theirs,
+      choose: (text) => {
         view.dispatch({ changes: { from: this.from, to: this.to, insert: text }, selection: { anchor: this.from + text.length } });
         view.focus();
-      };
-      return btn;
-    };
-    actions.append(
-      choose(t.keepOurs, this.ours, [ourPane]),
-      choose(t.keepTheirs, this.theirs, [theirPane]),
-      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n'), [ourPane, theirPane]),
-    );
-    el.append(panes, actions);
-    return el;
+      },
+    });
   }
-  ignoreEvent(e) { return e.type !== 'mousedown' || e.target.closest?.('.cm-lp-conflict-btn') != null; }
+  ignoreEvent(e) { return e.type !== 'mousedown' || e.target.closest?.('.conflict-card-btn') != null; }
 }
 
 const ROMAN = [[50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
