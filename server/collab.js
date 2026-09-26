@@ -35,6 +35,7 @@ function mountCollab(app, deps) {
   const MAX_MEMBERS = 10;
   const LINK_TTL_SECONDS = 7 * 24 * 3600;
   const MAX_CHECKPOINTS = 20;
+  const MAX_LABELLED = 50;
 
   // Is this B2 file still referenced (current snapshot or a checkpoint)?
   // Snapshot and checkpoint rows can share one file, so deletes check first.
@@ -771,12 +772,22 @@ function mountCollab(app, deps) {
   });
 
   // Name a version (or clear the name by sending an empty label). Any accepted
-  // member may do this, matching who is allowed to restore.
+  // member may do this, matching who is allowed to restore. Named versions are
+  // never pruned, so a slate holds at most MAX_LABELLED of them; renaming one
+  // that already has a name is always allowed.
   app.patch('/api/collab/slates/:slateId/checkpoints/:id', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
     try {
       if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
       const raw = typeof req.body?.label === 'string' ? req.body.label.trim().slice(0, 60) : '';
       const label = raw === '' ? null : raw;
+      if (label) {
+        const cp = db.prepare('SELECT label FROM collab_checkpoints WHERE id = ? AND slate_id = ?').get(req.params.id, req.params.slateId);
+        if (!cp) return res.status(404).json({ error: 'Checkpoint not found' });
+        const named = db.prepare("SELECT COUNT(*) AS n FROM collab_checkpoints WHERE slate_id = ? AND label IS NOT NULL AND label != ''").get(req.params.slateId).n;
+        if (!cp.label && named >= MAX_LABELLED) {
+          return res.status(409).json({ error: 'too many named', code: 'LABEL_LIMIT' });
+        }
+      }
       const result = db.prepare('UPDATE collab_checkpoints SET label = ? WHERE id = ? AND slate_id = ?')
         .run(label, req.params.id, req.params.slateId);
       if (result.changes === 0) return res.status(404).json({ error: 'Checkpoint not found' });
