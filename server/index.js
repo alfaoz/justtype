@@ -1227,7 +1227,7 @@ mountOAuth(app, {
 
 mountCollab(app, {
   db, b2Storage, authenticateToken, createRateLimitMiddleware,
-  decodeBase64Strict, B2Error, collabHub
+  decodeBase64Strict, B2Error, collabHub, b2DeleteQueue
 });
 
 // ============ AUTH ROUTES ============

@@ -28,9 +28,13 @@ const nodeCrypto = require('crypto');
 function mountCollab(app, deps) {
   const {
     db, b2Storage, authenticateToken, createRateLimitMiddleware,
-    decodeBase64Strict, B2Error, collabHub
+    decodeBase64Strict, B2Error, collabHub, b2DeleteQueue
   } = deps;
 
+  // Files this module stops pointing at leave through the delete queue
+  // (server/b2DeleteQueue.js): replaced versions stay a week so a restored
+  // database still finds them, uploads nothing ever pointed at go within the
+  // hour, and nothing a row still references is ever deleted.
   const MAX_CONTENT_BYTES = 5 * 1024 * 1024;
   const MAX_MEMBERS = 10;
   const LINK_TTL_SECONDS = 7 * 24 * 3600;
@@ -150,7 +154,7 @@ function mountCollab(app, deps) {
       })();
 
       if (oldFileId && oldFileId !== newFileId) {
-        try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
+        b2DeleteQueue.replaced([oldFileId]);
       }
       res.json({ success: true, slate_id: slate.id });
     } catch (error) {
@@ -193,10 +197,10 @@ function mountCollab(app, deps) {
 
       if (collabHub) collabHub.closeRoom(slate.id);
       if (oldFileId && oldFileId !== newFileId) {
-        try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
+        b2DeleteQueue.replaced([oldFileId]);
       }
       for (const fileId of deadFiles) {
-        try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
+        b2DeleteQueue.replaced([fileId]);
       }
       res.json({ success: true });
     } catch (error) {
@@ -471,10 +475,10 @@ function mountCollab(app, deps) {
         collabHub.notifyRekeyed(slate.id);
       }
       if (oldFileId && oldFileId !== newFileId) {
-        try { await b2Storage.deleteSlate(oldFileId); } catch (err) { console.warn('Failed to delete old B2 file:', err); }
+        b2DeleteQueue.replaced([oldFileId]);
       }
       for (const fileId of deadFiles) {
-        try { await b2Storage.deleteSlate(fileId); } catch (err) { console.warn('Failed to delete collab B2 file:', err); }
+        b2DeleteQueue.replaced([fileId]);
       }
       res.json({ success: true, epoch });
     } catch (error) {
@@ -794,7 +798,7 @@ function mountCollab(app, deps) {
       })();
 
       if (outcome.refused) {
-        try { await b2Storage.deleteSlate(newFileId); } catch (err) { console.warn('Failed to delete unused snapshot B2 file:', err); }
+        b2DeleteQueue.removed([newFileId]);
         return res.status(409).json({ error: outcome.refused });
       }
       kept = true;
@@ -802,18 +806,18 @@ function mountCollab(app, deps) {
 
       if (outcome.previousFileId && outcome.previousFileId !== newFileId
           && !checkpointFileReferenced(slateId, outcome.previousFileId)) {
-        try { await b2Storage.deleteSlate(outcome.previousFileId); } catch (err) { console.warn('Failed to delete old snapshot B2 file:', err); }
+        b2DeleteQueue.replaced([outcome.previousFileId]);
       }
       for (const cp of outcome.prunedCheckpoints) {
         if (cp.b2_file_id !== newFileId && !checkpointFileReferenced(slateId, cp.b2_file_id)) {
-          try { await b2Storage.deleteSlate(cp.b2_file_id); } catch (err) { console.warn('Failed to delete pruned checkpoint B2 file:', err); }
+          b2DeleteQueue.replaced([cp.b2_file_id]);
         }
       }
       res.json({ success: true, snapshotVersion: outcome.version });
     } catch (error) {
       console.error('Collab snapshot store error:', error);
       if (newFileId && !kept) {
-        try { await b2Storage.deleteSlate(newFileId); } catch (err) { console.warn('Failed to delete unused snapshot B2 file:', err); }
+        b2DeleteQueue.removed([newFileId]);
       }
       b2ErrorResponse(res, error, 'Failed to store snapshot');
     }
