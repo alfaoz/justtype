@@ -282,7 +282,12 @@ function mountCollab(app, deps) {
       const member = target ? getMember.get(slate.id, target.id) : null;
       if (!member) return res.status(404).json({ error: 'Not a member' });
       if (member.role === 'owner') return res.status(400).json({ error: 'The owner cannot be removed' });
-      db.prepare('DELETE FROM collab_members WHERE id = ?').run(member.id);
+      // The invite link goes too: whoever was removed may still hold it, and
+      // until the key rotates it would let them straight back in.
+      db.transaction(() => {
+        db.prepare('DELETE FROM collab_members WHERE id = ?').run(member.id);
+        db.prepare('DELETE FROM collab_link_invites WHERE slate_id = ?').run(slate.id);
+      })();
       if (collabHub) collabHub.kickMember(slate.id, target.id);
       res.json({ success: true });
     } catch (error) {
