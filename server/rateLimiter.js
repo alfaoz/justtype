@@ -54,6 +54,10 @@ class RateLimiter {
     collabRespond: { max: 120, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
     collabFetch: { max: 480, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
     collabSnapshot: { max: 240, windowMs: 60 * 60 * 1000 }, // snapshot posts (each re-uploads the doc state)
+    // OAuth token endpoint (IP-based) and account email changes (user-based)
+    oauthToken: { max: 30, windowMs: 15 * 60 * 1000 }, // 30 per 15 minutes per IP: code exchanges and refreshes
+    emailChange: { max: 10, windowMs: 60 * 60 * 1000 }, // 10 per hour per user: each one mails a code to the new address
+    verifyEmailChange: { max: 10, windowMs: 60 * 60 * 1000 }, // 10 per hour per user: guesses at that code
   };
 
   check(userId, operation, factor = 1) {
@@ -241,6 +245,7 @@ function createRateLimitMiddleware(operation) {
     'resendVerification',
     'adminAuth',
     'viewPublicSlate',
+    'oauthToken',
   ]);
 
   return (req, res, next) => {
