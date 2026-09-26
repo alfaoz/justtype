@@ -1997,7 +1997,11 @@ app.post('/api/auth/resend-verification', createRateLimitMiddleware('resendVerif
     db.prepare('UPDATE users SET verification_token = ?, verification_code_expires = ? WHERE id = ?')
       .run(verificationCode, expiresAt, user.id);
 
-    await emailService.sendVerificationEmail(user.email, user.username, verificationCode);
+    // Said "sent" even when the mail service refused it, and the person
+    // waited for a code that never came
+    if (!await emailService.sendVerificationEmail(user.email, user.username, verificationCode)) {
+      return res.status(502).json({ error: 'Could not send the email. Please try again in a moment.' });
+    }
 
     res.json({ message: 'Verification code sent!' });
   } catch (error) {
@@ -5282,7 +5286,9 @@ app.post('/api/account/change-email', authenticateToken, createRateLimitMiddlewa
       .run(newEmail.toLowerCase(), verificationCode, expiresAt, req.user.id);
 
     // Send verification email to NEW email
-    await emailService.sendVerificationEmail(newEmail, req.user.username, verificationCode);
+    if (!await emailService.sendVerificationEmail(newEmail, req.user.username, verificationCode)) {
+      return res.status(502).json({ error: 'Could not send the email. Please try again in a moment.' });
+    }
 
     res.json({ message: 'Verification code sent' });
   } catch (error) {
