@@ -10,7 +10,7 @@
 // page carries no Capacitor runtime of its own, so it talks to the plugin
 // through the bridge the shell injects. Nothing here may throw at load: a
 // missing bridge means no native menus, never no app.
-import { inShell } from './shell';
+import { inShell, inMac, nativeHost } from './shell';
 import { PUBLIC_URL } from './config';
 
 const cap = inShell ? window.Capacitor : null;
@@ -127,8 +127,11 @@ export function nativeStatusColor(tone) {
 // the result back to justtype://auth, and the app reloads with that query so
 // App.jsx exchanges the code exactly as the web does.
 export async function startGoogleSignIn() {
-  if (!canNativeMenu) { window.location.href = '/auth/google'; return; }
-  const result = await cap.nativePromise('ShellMenu', 'signIn', { url: `${PUBLIC_URL}/auth/google?app=1`, scheme: 'justtype' }).catch(() => null);
+  // The Mac app answers the same sign-in call with the Mac's sheet, without
+  // claiming the rest of ShellMenu (the phone's native menus)
+  const host = canNativeMenu ? cap : (inMac ? nativeHost : null);
+  if (!host) { window.location.href = '/auth/google'; return; }
+  const result = await host.nativePromise('ShellMenu', 'signIn', { url: `${PUBLIC_URL}/auth/google?app=1`, scheme: 'justtype' }).catch(() => null);
   if (!result?.url) return;
   const query = new URL(result.url).search;
   if (query) window.location.replace(`/${query}`);

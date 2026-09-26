@@ -4,9 +4,9 @@
 // (ShellKeychainPlugin, this device only, never in a backup), so the app's
 // files alone do not hold it; a key an older build left in IndexedDB moves
 // over the first time it is read, and the IndexedDB copy is deleted.
-import { inShell } from './shell';
+import { nativeHost } from './shell';
 
-const cap = inShell ? window.Capacitor : null;
+const cap = nativeHost;
 const inKeychain = Boolean(cap?.isPluginAvailable?.('ShellKeychain'));
 const keychain = (method, data) => cap.nativePromise('ShellKeychain', method, data);
 const account = (userId) => `user-${userId}`;

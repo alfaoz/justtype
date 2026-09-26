@@ -10,10 +10,10 @@
 // or set on this phone, and dropped when the lock comes off or the copy stops
 // fitting (the secret was changed on another device). Turned off, every copy
 // goes.
-import { inShell } from './shell';
+import { nativeHost } from './shell';
 import { makePref } from './pref';
 
-const cap = inShell ? window.Capacitor : null;
+const cap = nativeHost;
 const available = Boolean(cap?.isPluginAvailable?.('ShellKeychain'));
 const call = (method, data = {}) => cap.nativePromise('ShellKeychain', method, data);
 

@@ -35,7 +35,7 @@ import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
 import { Ico, PenIcon, SlatesIcon, UserIcon } from './components/icons';
 import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
-import { inShell } from './shell';
+import { inShell, inMac } from './shell';
 import { leftyMode } from './lefty';
 import { canNativeBar, canNativePill, setNativeBar, setNativeUpdates, setNativePillAction, hideNativePill, nativeNewSettled, restoreNativePill, startGoogleSignIn } from './shellMenu';
 
@@ -159,6 +159,14 @@ export default function App() {
   // The writer holds a new slate with words and no first save yet
   const [unsavedDraft, setUnsavedDraft] = useState(false);
   const lefty = leftyMode.use();
+  // The Mac app asks before it quits or hides its window: the writer's text
+  // goes to the device's queue first, and uploads from there
+  useEffect(() => {
+    if (!inMac) return undefined;
+    window.__jtFlush = () => Promise.resolve(writerRef.current?.saveBeforeNavigate?.());
+    return () => { delete window.__jtFlush; };
+  }, []);
+
   useEffect(() => {
     if (!inShell) return undefined;
     const on = (e) => setKeyboardUp(e.detail.height > 0);

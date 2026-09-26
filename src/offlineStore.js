@@ -12,7 +12,7 @@
 //   pending  one queued write per slate: a POST for a local slate, or a PUT
 //            with the base the edits started from, for three-way merging.
 //   history  safety copies taken before a merge overwrites local work.
-import { inShell } from './shell';
+import { inApp, nativeHost } from './shell';
 
 const DB_NAME = 'justtype-offline';
 const DB_VERSION = 1;
@@ -20,7 +20,7 @@ const DB_VERSION = 1;
 // on its own are evicted, least recently opened first, only past this budget.
 // Kept slates and slates with a queued write are never evicted.
 // The app keeps its copies in its own files and can afford more
-export const DEVICE_COPY_BUDGET = (inShell ? 256 : 64) * 1024 * 1024;
+export const DEVICE_COPY_BUDGET = (inApp ? 256 : 64) * 1024 * 1024;
 const HISTORY_PER_SLATE = 20;
 
 let dbPromise = null;
@@ -68,13 +68,13 @@ const byUser = (index, userId) => Promise.all([all(index, uid(userId)), all(inde
 
 // ---- where the records live ------------------------------------------------
 //
-// In a browser: the IndexedDB above. In the iOS app: the app's own files
-// (ShellStorePlugin.swift), which iOS never clears the way it may clear a web
+// In a browser: the IndexedDB above. In the apps: the app's own files
+// (ShellStorePlugin.swift on iOS, NativeBridge.swift on the Mac), which are never cleared the way it may clear a web
 // view's storage. The first time the app runs this, everything the web
 // view's database held moves over (unsynced edits included), is read back,
 // and only then is that database deleted. Records are the same objects
 // either way; the app keys them by the same fields.
-const cap = inShell ? window.Capacitor : null;
+const cap = nativeHost;
 const onDevice = Boolean(cap?.isPluginAvailable?.('ShellStore'));
 const shellStore = (method, data) => cap.nativePromise('ShellStore', method, data);
 const keyOf = { slates: r => r.key, lists: r => r.userId, pending: r => r.key, history: r => String(r.id) };

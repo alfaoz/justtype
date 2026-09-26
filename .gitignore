@@ -51,3 +51,4 @@ recovery/
 
 # iOS app web build
 dist-app/
+dist-mac/

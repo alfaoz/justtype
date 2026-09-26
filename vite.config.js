@@ -5,6 +5,11 @@ import { createHash } from 'crypto'
 import { readFileSync, writeFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 
+// The app builds keep their own folders: dist-app for the iOS shell, and
+// VITE_OUT_DIR=dist-mac for the Mac app (../mac/build.sh), so building one
+// never leaves the other's bundle in place of its own
+const outDir = process.env.VITE_OUT_DIR || (process.env.VITE_APP === '1' ? 'dist-app' : 'dist')
+
 function buildManifestPlugin() {
   return {
     name: 'build-manifest',
@@ -15,7 +20,7 @@ function buildManifestPlugin() {
       return html.replace('initial-scale=1.0" />', 'initial-scale=1.0, viewport-fit=cover" />')
     },
     closeBundle() {
-      const distDir = join(process.cwd(), process.env.VITE_APP === '1' ? 'dist-app' : 'dist')
+      const distDir = join(process.cwd(), outDir)
       const assetsDir = join(distDir, 'assets')
       const allFiles = readdirSync(assetsDir)
 
@@ -89,7 +94,7 @@ function buildManifestPlugin() {
 export default defineConfig({
   plugins: [react(), tailwindcss(), buildManifestPlugin()],
   build: {
-    outDir: process.env.VITE_APP === '1' ? 'dist-app' : 'dist',
+    outDir,
     emptyOutDir: true,
     rollupOptions: {
       output: {

@@ -8,6 +8,14 @@
 // header can step aside: an app has no address bar to be told where it is.
 const cap = typeof window !== 'undefined' ? window.Capacitor : null;
 export const inShell = Boolean(cap?.isNativePlatform?.());
+// The Mac app (../mac): the same app in a WKWebView window, keeping the
+// desktop layout, so inShell (the touch shell) stays false there. inApp is
+// either app; nativeHost is what both answer native calls on
+// (isPluginAvailable, nativePromise): Capacitor on iOS, the Mac app's own
+// bridge, which only claims the plugins it has.
+export const inMac = typeof window !== 'undefined' && Boolean(window.justtypeMac);
+export const inApp = inShell || inMac;
+export const nativeHost = inShell ? cap : (inMac ? window.justtypeMac : null);
 // iPadOS web views say Macintosh; a Mac has no touch points
 export const isPad = () => /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 

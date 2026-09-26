@@ -19,8 +19,8 @@
 //   {type:'reconnected'}   socket re-established (synthetic, local)
 // Returns an unsubscribe function; the socket closes when no rooms remain.
 
-import { API_URL } from './config';
-import { inShell } from './shell';
+import { API_URL, PUBLIC_URL } from './config';
+import { inApp } from './shell';
 
 let socket = null;
 let opening = false;
@@ -37,8 +37,12 @@ const listeners = new Map();
 // session cookie sits in the phone's native store, out of a WebSocket's
 // reach, so the app first asks for a one-use ticket over its native HTTP.
 async function wsUrl() {
-  const base = `${new URL(API_URL, window.location.href).origin.replace(/^http/, 'ws')}/collab/ws`;
-  if (!inShell) return base;
+  // The Mac app's API is relative to a capacitor:// page, whose URL origin is
+  // "null": the socket goes to the public site's host instead
+  const apiOrigin = new URL(API_URL, window.location.href).origin;
+  const origin = /^https?:/.test(apiOrigin) ? apiOrigin : new URL(PUBLIC_URL).origin;
+  const base = `${origin.replace(/^http/, 'ws')}/collab/ws`;
+  if (!inApp) return base;
   const response = await fetch(`${API_URL}/collab/ticket`, { method: 'POST', credentials: 'include' });
   if (!response.ok) throw new Error('no ticket');
   const { ticket } = await response.json();
