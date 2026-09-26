@@ -8,7 +8,7 @@ import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags
 import { useScroll, centerTextareaCaret, liftTextareaCaret } from '../typewriter';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
-import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory } from '../history';
+import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory, noteVersions, warmHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -1262,6 +1262,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (!response.ok) throw new Error(`load ${response.status}`);
           data = await response.json();
           setTrashedSlate(data.deleted_at ? id : null);
+          noteVersions(userId, id, data.history_count);
         } catch (netErr) {
           if (gone) {
             leaveGoneSlate(id);
@@ -1434,6 +1435,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
       if (userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       if (stillHere()) setTrashedSlate(data.deleted_at ? id : null);
+      noteVersions(userId, id, data.history_count);
       if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && userId) {
         const slateKey = await getSlateKey(userId);
         const merged = slateKey ? await pullAppEdits(id, slateKey) : null;
@@ -1836,11 +1838,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     try {
       const { body, titleToSave, slateKey, contentKey } = await buildSavePayload();
       const method = currentSlate ? 'PUT' : 'POST';
-      // A version of this text, when one is due, rides on the save
+      // A version of this text, when one is due, rides on the save. It
+      // never waits on the network: versions not on this device yet are
+      // fetched for a later save.
       let checkpoint = null;
       if (currentSlate && userId && contentKey && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) {
         try {
-          checkpoint = await prepareCheckpoint({ userId, n: currentSlate.slate_number, text: content, key: contentKey, explicit });
+          checkpoint = await prepareCheckpoint({ userId, n: currentSlate.slate_number, text: content, key: contentKey, explicit, wait: false });
         } catch (err) { console.warn('history: no version taken', err); }
         if (checkpoint) body.history = checkpoint.history;
       }
@@ -2839,6 +2843,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // text in the editor and saves it like any edit, after the text on screen
   // became a version itself.
   const historyKey = async () => lockDocKey || (userId ? await getSlateKey(userId) : null);
+  // Editing has begun: the slate's versions come now, so the save that is
+  // due to carry one has them without waiting on the network
+  useEffect(() => {
+    const n = currentSlate?.slate_number;
+    if (!hasUnsavedChanges || !userId || n == null || isShared || collabDocKey || isLocalSlateNumber(n)) return;
+    historyKey().then((key) => warmHistory(userId, n, key)).catch(() => {});
+  }, [hasUnsavedChanges, currentSlate?.slate_number]);
   const historySource = useMemo(() => {
     const n = currentSlate?.slate_number;
     const rows = (entries) => [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));
