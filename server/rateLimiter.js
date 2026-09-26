@@ -1,13 +1,28 @@
 // Simple in-memory rate limiter
 // Tracks operations per user to prevent abuse while keeping UX smooth
+//
+// Each key holds one number: the moment its allowance would be fully spent
+// (the "theoretical arrival time" of GCRA). An allowed request moves it on
+// by window / max, and a request is refused when that would put it more
+// than one window ahead of now. So a burst of max still goes through at
+// once and the long-run rate stays max per window, but the allowance comes
+// back one request at a time instead of all at once when a window rolls
+// over. Every check is constant work and constant memory, where a list of
+// timestamps grew with the limit and was scanned on every request.
+
+const net = require('net');
+
+// Float slack so that exactly max requests in one instant still fit.
+const EPSILON = 1e-6;
 
 class RateLimiter {
   constructor() {
-    // Store: userId -> operation -> [timestamps]
+    // Store: "identifier:operation" -> time (ms) its allowance is spent until
     this.store = new Map();
 
-    // Cleanup old entries every 10 minutes
-    setInterval(() => this.cleanup(), 10 * 60 * 1000);
+    // Cleanup old entries every 10 minutes. unref so a script that only
+    // requires this module can still exit.
+    setInterval(() => this.cleanup(), 10 * 60 * 1000).unref();
   }
 
   // Loose limits - focused on abuse prevention, not normal usage restriction
@@ -39,6 +54,10 @@ class RateLimiter {
     collabRespond: { max: 120, windowMs: 60 * 60 * 1000 }, // accept/decline/leave/remove
     collabFetch: { max: 480, windowMs: 15 * 60 * 1000 }, // shared slate content fetches
     collabSnapshot: { max: 240, windowMs: 60 * 60 * 1000 }, // snapshot posts (each re-uploads the doc state)
+    // OAuth token endpoint (IP-based) and account email changes (user-based)
+    oauthToken: { max: 30, windowMs: 15 * 60 * 1000 }, // 30 per 15 minutes per IP: code exchanges and refreshes
+    emailChange: { max: 10, windowMs: 60 * 60 * 1000 }, // 10 per hour per user: each one mails a code to the new address
+    verifyEmailChange: { max: 10, windowMs: 60 * 60 * 1000 }, // 10 per hour per user: guesses at that code
   };
 
   check(userId, operation, factor = 1) {
@@ -49,63 +68,49 @@ class RateLimiter {
     }
 
     const key = `${userId}:${operation}`;
-    const max = Math.round(limit.max * factor);
+    const max = Math.max(1, Math.round(limit.max * factor));
     const now = Date.now();
-    const windowStart = now - limit.windowMs;
+    const step = limit.windowMs / max;
 
-    // Get or create user's operation history
-    if (!this.store.has(key)) {
-      this.store.set(key, []);
-    }
+    // A key with nothing spent, or whose spending lies in the past, starts
+    // from now; the trust factor may have changed since, which only changes
+    // the step and needs no bookkeeping.
+    const spentUntil = Math.max(this.store.get(key) || now, now);
+    const next = spentUntil + step;
 
-    const timestamps = this.store.get(key);
-
-    // Remove timestamps outside the window
-    const recentTimestamps = timestamps.filter(ts => ts > windowStart);
-    this.store.set(key, recentTimestamps);
-
-    // Check if limit exceeded
-    if (recentTimestamps.length >= max) {
-      const oldestTimestamp = Math.min(...recentTimestamps);
-      const resetIn = Math.ceil((oldestTimestamp + limit.windowMs - now) / 1000);
-
+    if (next - now > limit.windowMs + EPSILON) {
       return {
         allowed: false,
-        resetIn,
+        resetIn: Math.max(1, Math.ceil((next - limit.windowMs - now) / 1000)),
         limit: max,
-        current: recentTimestamps.length
+        current: max
       };
     }
 
-    // Add current timestamp
-    recentTimestamps.push(now);
-    this.store.set(key, recentTimestamps);
+    this.store.set(key, next);
 
     return {
       allowed: true,
       limit: max,
-      remaining: max - recentTimestamps.length
+      remaining: Math.max(0, Math.floor((limit.windowMs - (next - now)) / step + EPSILON))
     };
   }
 
+  // A key whose allowance is spent only until a moment already past holds
+  // nothing a fresh key would not, so it goes. That is at most one window
+  // of its own operation after its last request.
   cleanup() {
     const now = Date.now();
     let cleaned = 0;
 
-    for (const [key, timestamps] of this.store.entries()) {
-      // Find the max window from all limits
-      const maxWindow = Math.max(...Object.values(this.limits).map(l => l.windowMs));
-      const windowStart = now - maxWindow * 2; // Keep 2x window for safety
-
-      const recentTimestamps = timestamps.filter(ts => ts > windowStart);
-
-      if (recentTimestamps.length === 0) {
+    for (const [key, spentUntil] of this.store) {
+      if (spentUntil <= now) {
         this.store.delete(key);
         cleaned++;
-      } else if (recentTimestamps.length < timestamps.length) {
-        this.store.set(key, recentTimestamps);
       }
     }
+
+    pruneTrust(now);
 
     if (cleaned > 0) {
       console.log(`Rate limiter cleanup: removed ${cleaned} stale entries`);
@@ -146,6 +151,14 @@ const EARNS_TRUST = new Set([
   'deleteSlate', 'emptyTrash', 'publishSlate',
   'collabEnable', 'collabInvite', 'collabRespond', 'collabFetch', 'collabSnapshot',
 ]);
+
+// Cached factors past their TTL would be read again anyway; dropping them
+// keeps accounts that have gone quiet from staying in memory for good.
+function pruneTrust(now = Date.now()) {
+  for (const [userId, hit] of trust) {
+    if (now - hit.at >= TRUST_TTL) trust.delete(userId);
+  }
+}
 
 function trustFactor(userId) {
   const hit = trust.get(userId);
@@ -194,6 +207,34 @@ function getClientIp(req) {
   return ipAddress || 'unknown';
 }
 
+// One IPv6 subscriber usually gets a whole /64 and can pick any address in
+// it, so an IPv6 client is limited by its /64. IPv4 stays per address.
+function ipRateKey(ip) {
+  if (!net.isIPv6(ip)) return ip;
+  let a = ip.split('%')[0].toLowerCase();
+  // A dotted IPv4 tail fills the last two groups; it counts when '::' is
+  // expanded, and an IPv4-mapped address is keyed by that IPv4 address,
+  // since its /64 would put every IPv4 client in one bucket.
+  let v4 = null;
+  if (a.includes('.')) {
+    v4 = a.slice(a.lastIndexOf(':') + 1);
+    a = a.slice(0, a.lastIndexOf(':') + 1) + '0:0';
+  }
+  const [head, tail] = a.split('::');
+  const h = head ? head.split(':') : [];
+  let groups = h;
+  if (tail !== undefined) {
+    const t = tail ? tail.split(':') : [];
+    groups = [...h, ...new Array(8 - h.length - t.length).fill('0'), ...t];
+  }
+  if (groups.length !== 8) return ip;
+  const n = groups.map(g => parseInt(g, 16));
+  if (n.slice(0, 5).every(x => x === 0) && n[5] === 0xffff) {
+    return v4 || `${n[6] >> 8}.${n[6] & 255}.${n[7] >> 8}.${n[7] & 255}`;
+  }
+  return `${n.slice(0, 4).map(x => x.toString(16)).join(':')}::/64`;
+}
+
 function createRateLimitMiddleware(operation) {
   const ipBasedOperations = new Set([
     'register',
@@ -204,6 +245,7 @@ function createRateLimitMiddleware(operation) {
     'resendVerification',
     'adminAuth',
     'viewPublicSlate',
+    'oauthToken',
   ]);
 
   return (req, res, next) => {
@@ -213,7 +255,7 @@ function createRateLimitMiddleware(operation) {
     // If the operation is explicitly IP-based OR we don't have a user yet, fall back to IP-based limiting.
     // This prevents unauthenticated routes from silently bypassing rate limits.
     if (ipBasedOperations.has(operation) || !hasUser) {
-      identifier = `ip:${getClientIp(req)}`;
+      identifier = `ip:${ipRateKey(getClientIp(req))}`;
     } else {
       identifier = req.user.id;
     }

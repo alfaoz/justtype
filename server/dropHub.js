@@ -77,34 +77,52 @@ function broadcastSse(event) {
 
 // --- web push --------------------------------------------------------------
 
+// A push service that stalls must not hold anything up: each send gives up
+// after PUSH_TIMEOUT_MS of silence on the socket, and a user with many
+// devices is reached a few at a time rather than one after another.
+const PUSH_TIMEOUT_MS = 5000;
+const PUSH_CONCURRENCY = 4;
+
 // Fire a content-free wake ping to all of a user's push subscriptions.
 // db is passed in so the hub stays storage-agnostic. Prunes dead (410/404) subs.
+// Resolves once every send has answered or timed out; never rejects.
 async function sendPush(db, userId) {
   if (!pushEnabled || !webpush) return;
   let subs;
   try {
     subs = db.prepare('SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?').all(userId);
   } catch { return; }
+  if (!subs.length) return;
   const payload = JSON.stringify({ type: 'drops' });
-  for (const s of subs) {
-    try {
-      await webpush.sendNotification(
-        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        payload
-      );
-    } catch (err) {
-      if (err && (err.statusCode === 410 || err.statusCode === 404)) {
-        try { db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id); } catch {}
+  let next = 0;
+  const worker = async () => {
+    while (next < subs.length) {
+      const s = subs[next++];
+      try {
+        await webpush.sendNotification(
+          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+          payload,
+          { timeout: PUSH_TIMEOUT_MS }
+        );
+      } catch (err) {
+        if (err && (err.statusCode === 410 || err.statusCode === 404)) {
+          try { db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id); } catch {}
+        }
       }
     }
-  }
+  };
+  const workers = [];
+  for (let i = 0; i < Math.min(PUSH_CONCURRENCY, subs.length); i++) workers.push(worker());
+  await Promise.all(workers);
 }
 
 // Notify all of a user's clients that a drop landed: instant SSE for open tabs,
-// web push to wake closed ones. Best-effort and non-throwing.
+// web push to wake closed ones. Best-effort and non-throwing. The pushes run
+// in the background, so this resolves as soon as the SSE ping is written and
+// the request that caused the drop never waits on a push service.
 async function notifyDrop(db, userId) {
   try { sendSse(userId, { type: 'drops' }); } catch {}
-  try { await sendPush(db, userId); } catch {}
+  try { sendPush(db, userId).catch(() => {}); } catch {}
 }
 
 module.exports = {
