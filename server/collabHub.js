@@ -21,8 +21,10 @@
 //   s->c  {type:'joined', slateId, version, snapshotVersion, epoch}  (version = head)
 //   c->s  {type:'leave', slateId}
 //   c->s  {type:'update', slateId, payload, epoch, seq?} -> logged + broadcast
+//   s->c  {type:'ack', slateId, version, seq?, compact?} -> to the sender only;
+//                                      compact: the log is large, post a snapshot
 //   s->c  {type:'rekeyed', slateId}   -> doc key rotated, re-resolve + rebuild
-//   s->c  {type:'update', slateId, version, payload, authorId, seq?}
+//   s->c  {type:'update', slateId, version, payload, authorId}
 //   c->s  {type:'fetch', slateId, since}               -> catch-up
 //   s->c  {type:'updates', slateId, updates:[{version,payload}], more, snapshotVersion}
 //   s->c  {type:'snapshot', slateId, version}  -> a snapshot was stored; load it
@@ -32,7 +34,10 @@
 //   s->c  {type:'changed', slateId}    -> canonical blob changed, refetch
 //   s->c  {type:'removed', slateId}    -> membership revoked / collab disabled
 //   s->c  {type:'peer_left', slateId, authorId} -> user's last socket left the room
-//   s->c  {type:'error', error, code?, slateId?}
+//   s->c  {type:'error', error, code?, slateId?, seq?}  seq names a refused update.
+//         Codes on updates: RATE_LIMITED (send it again shortly), LOG_FULL
+//         (snapshot, then send it again), TOO_LARGE (only a snapshot can carry
+//         it), STALE_EPOCH (the key rotated).
 
 const { SESSION_MATCH } = require('./sessionMatch');
 const WS_PATH = '/collab/ws';
@@ -41,10 +46,30 @@ const MAX_PAYLOAD_CHARS = 300 * 1024;    // base64 chars per update/awareness
 const MAX_ROOMS_PER_SOCKET = 8;
 const MAX_SOCKETS_PER_USER = 6;
 const FETCH_BATCH = 500;
+// A catch-up reply stops at this many payload chars and says `more`, so a
+// fetch never loads the whole log into memory at once.
+const FETCH_MAX_CHARS = 1.5 * 1024 * 1024;
 const HEARTBEAT_MS = 30000;
-// Per-socket message budget: generous for typing bursts, hostile to floods.
+// A socket that has this much queued and unsent is not keeping up: it is
+// dropped rather than buffered without end, and catches up when it reconnects.
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+// Flood guard over every frame a socket sends, checked before any parsing.
+// Tripping it closes the socket: the frame is lost unread, and a reconnecting
+// client sends again whatever the relay never confirmed.
 const RATE_WINDOW_MS = 10000;
-const RATE_MAX_MSGS = 300;
+const RATE_MAX_MSGS = 1200;
+// Update budget per socket, as token buckets: an average of 60 frames and
+// 1 MB a second, with two seconds' worth of burst. Typing and pastes stay
+// well under it.
+const UPDATE_MSGS_PER_S = 60;
+const UPDATE_MSGS_BURST = 120;
+const UPDATE_CHARS_PER_S = 1024 * 1024;
+const UPDATE_CHARS_BURST = 2 * 1024 * 1024;
+// Payload chars a slate's log may hold. Past the soft cap every ack asks for
+// a snapshot (which prunes the log); past the hard cap updates are refused
+// until one lands.
+const LOG_SOFT_CHARS = 20 * 1024 * 1024;
+const LOG_HARD_CHARS = 32 * 1024 * 1024;
 
 let wss = null;
 let deps = null;
@@ -52,17 +77,32 @@ let stmts = null;
 
 // Map<slateId, Set<ws>>
 const rooms = new Map();
+// Map<slateId, payload chars in its log>, read from the table on first use and
+// kept by the inserts here. Anything that prunes the log drops the entry
+// (snapshotStored, notifyRekeyed, closeRoom), and so does an emptied room.
+const logChars = new Map();
 
-const send = (ws, obj) => {
-  if (ws.readyState === 1) {
-    try { ws.send(JSON.stringify(obj)); } catch { /* dying socket */ }
+// Hand a frame to a socket, or drop the socket when it cannot keep up.
+function deliver(ws, msg) {
+  if (ws.readyState !== 1) return;
+  if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+    ws.terminate();
+    return;
   }
-};
+  try { ws.send(msg); } catch { /* dying socket */ }
+}
+
+const send = (ws, obj) => deliver(ws, JSON.stringify(obj));
 
 // slateId lets the client route the error to that room's listeners; frames
-// without one never reach a subscriber (pre-parse failures only).
-const sendError = (ws, error, code, slateId) =>
-  send(ws, slateId ? { type: 'error', error, code, slateId } : { type: 'error', error, code });
+// without one never reach a subscriber (pre-parse failures only). seq names
+// the refused update, so the client can send it again or carry it otherwise.
+const sendError = (ws, error, code, slateId, seq) => {
+  const out = { type: 'error', error, code };
+  if (slateId) out.slateId = slateId;
+  if (seq != null) out.seq = seq;
+  send(ws, out);
+};
 
 function joinRoom(slateId, ws) {
   let set = rooms.get(slateId);
@@ -77,6 +117,7 @@ function leaveRoom(slateId, ws) {
     set.delete(ws);
     if (set.size === 0) {
       rooms.delete(slateId);
+      logChars.delete(slateId);
     } else {
       // Tell the room when a user's LAST socket leaves, so presence
       // indicators drop immediately instead of waiting for heartbeat expiry.
@@ -93,9 +134,7 @@ function broadcast(slateId, obj, exceptWs = null) {
   if (!set) return;
   const msg = JSON.stringify(obj);
   for (const client of set) {
-    if (client !== exceptWs && client.readyState === 1) {
-      try { client.send(msg); } catch { /* dying socket */ }
-    }
+    if (client !== exceptWs) deliver(client, msg);
   }
 }
 
@@ -182,10 +221,33 @@ function keyEpoch(slateId) {
   return row ? row.e : null;
 }
 
+function logSize(slateId) {
+  let n = logChars.get(slateId);
+  if (n === undefined) {
+    n = stmts.logSize.get(slateId).n;
+    logChars.set(slateId, n);
+  }
+  return n;
+}
+
 function userSocketCount(userId) {
   let n = 0;
   for (const client of wss.clients) if (client.userId === userId) n++;
   return n;
+}
+
+// Token buckets refilled by elapsed time: false when this update is over the
+// socket's budget.
+function takeUpdateBudget(ws, chars) {
+  const now = Date.now();
+  const elapsed = (now - ws.budgetAt) / 1000;
+  ws.budgetAt = now;
+  ws.msgTokens = Math.min(UPDATE_MSGS_BURST, ws.msgTokens + elapsed * UPDATE_MSGS_PER_S);
+  ws.charTokens = Math.min(UPDATE_CHARS_BURST, ws.charTokens + elapsed * UPDATE_CHARS_PER_S);
+  if (ws.msgTokens < 1 || ws.charTokens < chars) return false;
+  ws.msgTokens -= 1;
+  ws.charTokens -= chars;
+  return true;
 }
 
 function joinedFrame(slateId) {
@@ -193,6 +255,7 @@ function joinedFrame(slateId) {
 }
 
 function handleMessage(ws, raw) {
+  if (ws.readyState !== 1) return;
   if (typeof raw !== 'string') {
     if (Buffer.isBuffer(raw)) raw = raw.toString('utf8');
     else return sendError(ws, 'text frames only');
@@ -200,7 +263,11 @@ function handleMessage(ws, raw) {
   // Cheap flood guard before any parsing.
   const now = Date.now();
   if (now - ws.rateWindowStart > RATE_WINDOW_MS) { ws.rateWindowStart = now; ws.rateCount = 0; }
-  if (++ws.rateCount > RATE_MAX_MSGS) return sendError(ws, 'slow down', 'RATE_LIMITED');
+  if (++ws.rateCount > RATE_MAX_MSGS) {
+    sendError(ws, 'slow down', 'RATE_LIMITED');
+    ws.close(1008, 'too many frames');
+    return;
+  }
 
   let msg;
   try { msg = JSON.parse(raw); } catch { return sendError(ws, 'invalid frame'); }
@@ -218,9 +285,16 @@ function handleMessage(ws, raw) {
     case 'leave':
       return leaveRoom(slateId, ws);
     case 'update': {
-      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
-      if (typeof msg.payload !== 'string' || !msg.payload || msg.payload.length > MAX_PAYLOAD_CHARS) {
-        return sendError(ws, 'bad payload', undefined, slateId);
+      const seq = msg.seq != null ? msg.seq : undefined;
+      if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId, seq);
+      if (typeof msg.payload !== 'string' || !msg.payload) {
+        return sendError(ws, 'bad payload', undefined, slateId, seq);
+      }
+      if (msg.payload.length > MAX_PAYLOAD_CHARS) {
+        return sendError(ws, 'update too large', 'TOO_LARGE', slateId, seq);
+      }
+      if (!takeUpdateBudget(ws, msg.payload.length)) {
+        return sendError(ws, 'slow down', 'RATE_LIMITED', slateId, seq);
       }
       const epoch = keyEpoch(slateId);
       if (epoch === null) {
@@ -228,29 +302,46 @@ function handleMessage(ws, raw) {
         return leaveRoom(slateId, ws);
       }
       if (Number(msg.epoch) !== epoch) {
-        return sendError(ws, 'stale key epoch', 'STALE_EPOCH', slateId);
+        return sendError(ws, 'stale key epoch', 'STALE_EPOCH', slateId, seq);
+      }
+      const size = logSize(slateId);
+      if (size + msg.payload.length > LOG_HARD_CHARS) {
+        return sendError(ws, 'the log is full until a snapshot lands', 'LOG_FULL', slateId, seq);
       }
       let version;
       try {
         version = stmts.append(slateId, msg.payload, ws.userId);
       } catch (e) {
         console.error('collab update insert failed:', e);
-        return sendError(ws, 'update rejected', undefined, slateId);
+        return sendError(ws, 'update rejected', undefined, slateId, seq);
       }
-      const out = { type: 'update', slateId, version, payload: msg.payload, authorId: ws.userId };
-      if (msg.seq != null) send(ws, { ...out, seq: msg.seq });
-      else send(ws, out);
-      broadcast(slateId, out, ws);
+      logChars.set(slateId, size + msg.payload.length);
+      // The sender already holds its update: it gets the version, not the payload back.
+      const ack = { type: 'ack', slateId, version };
+      if (seq !== undefined) ack.seq = seq;
+      if (size + msg.payload.length > LOG_SOFT_CHARS) ack.compact = true;
+      send(ws, ack);
+      broadcast(slateId, { type: 'update', slateId, version, payload: msg.payload, authorId: ws.userId }, ws);
       return;
     }
     case 'fetch': {
       if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
-      const since = Number(msg.since) || 0;
-      const rowsOut = stmts.fetchSince.all(slateId, since, FETCH_BATCH + 1);
-      const more = rowsOut.length > FETCH_BATCH;
+      const since = Math.max(0, Number(msg.since) || 0);
       // The reply says where the snapshot is: a client that asked from
       // below it finds the rows it lacks there, not in the log.
-      return send(ws, { type: 'updates', slateId, updates: rowsOut.slice(0, FETCH_BATCH), more, snapshotVersion: snapshotVersion(slateId) });
+      const snap = snapshotVersion(slateId);
+      const updates = [];
+      let chars = 0;
+      let more = false;
+      for (const row of stmts.fetchSince.iterate(slateId, since, FETCH_BATCH + 1)) {
+        if (updates.length === FETCH_BATCH || (updates.length && chars + row.payload.length > FETCH_MAX_CHARS)) {
+          more = true;
+          break;
+        }
+        updates.push(row);
+        chars += row.payload.length;
+      }
+      return send(ws, { type: 'updates', slateId, updates, more, snapshotVersion: snap });
     }
     case 'awareness': {
       if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
@@ -316,6 +407,7 @@ function attach(httpServer, dependencies) {
     `),
     snapshotVersion: db.prepare('SELECT snapshot_version FROM collab_docs WHERE slate_id = ?'),
     epoch: db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ? AND is_collab = 1 AND deleted_at IS NULL'),
+    logSize: db.prepare('SELECT COALESCE(SUM(LENGTH(payload)), 0) AS n FROM collab_updates WHERE slate_id = ?'),
     insert: db.prepare('INSERT INTO collab_updates (slate_id, version, payload, author_id) VALUES (?, ?, ?, ?)'),
     fetchSince: db.prepare('SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT ?'),
   };
@@ -358,6 +450,9 @@ function attach(httpServer, dependencies) {
     ws.isAlive = true;
     ws.rateWindowStart = Date.now();
     ws.rateCount = 0;
+    ws.budgetAt = Date.now();
+    ws.msgTokens = UPDATE_MSGS_BURST;
+    ws.charTokens = UPDATE_CHARS_BURST;
     ws.on('pong', () => { ws.isAlive = true; });
     // A throw here would escape into the socket's data handler and take the
     // whole process down; one bad frame costs only itself.
@@ -389,15 +484,17 @@ function notifySlateChanged(slateId) {
 }
 
 // A snapshot was stored and the log pruned under it (POST .../snapshot): the
-// room learns the snapshot's version, so no one else posts the same one and
-// anyone behind it loads it.
+// log's size is read again, and the room learns the snapshot's version, so
+// no one else posts the same one and anyone behind it loads it.
 function snapshotStored(slateId, version) {
+  logChars.delete(slateId);
   if (wss) broadcast(slateId, { type: 'snapshot', slateId, version });
 }
 
 // The doc key rotated: every client must re-resolve its wrapped key and
 // rebuild its doc from the fresh canonical blob.
 function notifyRekeyed(slateId) {
+  logChars.delete(slateId);
   if (wss) broadcast(slateId, { type: 'rekeyed', slateId });
 }
 
@@ -415,6 +512,7 @@ function kickMember(slateId, userId) {
 
 // Collaboration ended for the slate (disabled or deleted): everyone out.
 function closeRoom(slateId) {
+  logChars.delete(slateId);
   const set = rooms.get(slateId);
   if (!set) return;
   for (const client of [...set]) {

@@ -659,19 +659,31 @@ function mountCollab(app, deps) {
       COALESCE((SELECT snapshot_version FROM collab_docs WHERE slate_id = ?), 0)
     ) AS v
   `);
+  const FETCH_BATCH = 500;
+  const FETCH_MAX_CHARS = 1.5 * 1024 * 1024;
 
   // Catch-up: encrypted updates after a version (for clients joining over
-  // HTTP before/without the socket).
+  // HTTP before/without the socket). Capped by count and by size; `more`
+  // says to ask again from the last version returned.
   app.get('/api/collab/slates/:slateId/updates', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
     try {
       if (!acceptedMember(req.params.slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
-      const since = Number(req.query.since) || 0;
-      const rows = db.prepare(
-        'SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT 501'
-      ).all(req.params.slateId, since);
-      const more = rows.length > 500;
-      const latest = headVersion.get(req.params.slateId, req.params.slateId).v;
-      res.json({ updates: rows.slice(0, 500), more, latest });
+      const slateId = Number(req.params.slateId);
+      const since = Math.max(0, Number(req.query.since) || 0);
+      const latest = headVersion.get(slateId, slateId).v;
+      const updates = [];
+      let chars = 0;
+      let more = false;
+      const rows = db.prepare('SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT ?');
+      for (const row of rows.iterate(slateId, since, FETCH_BATCH + 1)) {
+        if (updates.length === FETCH_BATCH || (updates.length && chars + row.payload.length > FETCH_MAX_CHARS)) {
+          more = true;
+          break;
+        }
+        updates.push(row);
+        chars += row.payload.length;
+      }
+      res.json({ updates, more, latest });
     } catch (error) {
       console.error('Collab updates fetch error:', error);
       res.status(500).json({ error: 'Failed to fetch updates' });
