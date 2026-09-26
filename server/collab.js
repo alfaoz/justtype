@@ -650,6 +650,16 @@ function mountCollab(app, deps) {
     return m && m.status === 'accepted' ? m : null;
   };
 
+  // A slate's head version, as the ws hub counts it: the newest logged update
+  // or the snapshot's version, whichever is larger. The log is pruned under
+  // every snapshot, so MAX(version) alone restarts at zero after one.
+  const headVersion = db.prepare(`
+    SELECT MAX(
+      COALESCE((SELECT MAX(version) FROM collab_updates WHERE slate_id = ?), 0),
+      COALESCE((SELECT snapshot_version FROM collab_docs WHERE slate_id = ?), 0)
+    ) AS v
+  `);
+
   // Catch-up: encrypted updates after a version (for clients joining over
   // HTTP before/without the socket).
   app.get('/api/collab/slates/:slateId/updates', authenticateToken, createRateLimitMiddleware('collabFetch'), (req, res) => {
@@ -660,7 +670,7 @@ function mountCollab(app, deps) {
         'SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT 501'
       ).all(req.params.slateId, since);
       const more = rows.length > 500;
-      const latest = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM collab_updates WHERE slate_id = ?').get(req.params.slateId).v;
+      const latest = headVersion.get(req.params.slateId, req.params.slateId).v;
       res.json({ updates: rows.slice(0, 500), more, latest });
     } catch (error) {
       console.error('Collab updates fetch error:', error);
@@ -686,34 +696,70 @@ function mountCollab(app, deps) {
   // accepted member may post one (they all hold the doc key; the server can
   // neither produce nor validate ciphertext). version = highest log version
   // the snapshot includes — never ahead of the log itself.
+  //
+  // unlogged: the snapshot also carries edits the log could not take (one
+  // update over the relay's size cap). It must then cover the whole log, and
+  // it takes the next version itself, so everyone who has applied less
+  // loads it.
+  //
+  // Snapshots only move forward. The upload takes a while, so what was read
+  // before it is checked again in the transaction that stores it: a key
+  // rotation, collaboration ending, or a newer snapshot landing meanwhile
+  // makes this one lose, and its file is deleted again.
+  const collabEpoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ? AND is_collab = 1');
+  const currentSnapshot = db.prepare('SELECT snapshot_version, snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?');
+  const storeSnapshot = db.prepare(`
+    INSERT INTO collab_docs (slate_id, snapshot_version, snapshot_b2_file_id, updated_at)
+    VALUES (?, ?, ?, strftime('%s','now'))
+    ON CONFLICT(slate_id) DO UPDATE SET
+      snapshot_version = excluded.snapshot_version,
+      snapshot_b2_file_id = excluded.snapshot_b2_file_id,
+      updated_at = strftime('%s','now')
+    WHERE excluded.snapshot_version > collab_docs.snapshot_version
+  `);
   app.post('/api/collab/slates/:slateId/snapshot', authenticateToken, createRateLimitMiddleware('collabSnapshot'), async (req, res) => {
-    const { payload, version } = req.body || {};
+    const { payload, version, unlogged } = req.body || {};
+    let newFileId = null;
+    let kept = false;
     try {
       const slateId = Number(req.params.slateId);
-      if (!acceptedMember(slateId, req.user.id)) return res.status(404).json({ error: 'Slate not found' });
+      const member = acceptedMember(slateId, req.user.id);
+      if (!member) return res.status(404).json({ error: 'Slate not found' });
       const coveredVersion = Number(version);
       if (!Number.isInteger(coveredVersion) || coveredVersion < 0) return res.status(400).json({ error: 'version required' });
-      const latest = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM collab_updates WHERE slate_id = ?').get(slateId).v;
-      if (coveredVersion > latest) return res.status(409).json({ error: 'snapshot version is ahead of the log' });
-      const existing = db.prepare('SELECT snapshot_version, snapshot_b2_file_id FROM collab_docs WHERE slate_id = ?').get(slateId);
-      if (existing && coveredVersion < existing.snapshot_version) {
-        return res.status(409).json({ error: 'a newer snapshot already exists' });
-      }
+      const carriesUnlogged = unlogged === true;
+      const slateAtStart = collabEpoch.get(slateId);
+      if (!slateAtStart) return res.status(404).json({ error: 'Slate not found' });
+      const refusal = () => {
+        const head = headVersion.get(slateId, slateId).v;
+        const current = currentSnapshot.get(slateId);
+        if (coveredVersion > head) return 'snapshot version is ahead of the log';
+        if (carriesUnlogged && coveredVersion < head) return 'the log moved on since this snapshot';
+        if (!carriesUnlogged && coveredVersion <= (current ? current.snapshot_version : 0)) return 'a newer snapshot already exists';
+        return null;
+      };
+      const early = refusal();
+      if (early) return res.status(409).json({ error: early });
       const blob = decodeBlob(res, payload);
       if (!blob) return;
 
-      const newFileId = await b2Storage.uploadRawSlate(`collab-snap-${slateId}-${Date.now()}`, blob);
-      const epoch = db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slateId).e;
-      let prunedCheckpoints = [];
+      newFileId = await b2Storage.uploadRawSlate(`collab-snap-${slateId}-${Date.now()}`, blob);
+      let outcome = null; // what was stored, or why nothing was
       db.transaction(() => {
-        db.prepare(`
-          INSERT INTO collab_docs (slate_id, snapshot_version, snapshot_b2_file_id, updated_at)
-          VALUES (?, ?, ?, strftime('%s','now'))
-          ON CONFLICT(slate_id) DO UPDATE SET
-            snapshot_version = excluded.snapshot_version,
-            snapshot_b2_file_id = excluded.snapshot_b2_file_id,
-            updated_at = strftime('%s','now')
-        `).run(slateId, coveredVersion, newFileId);
+        const memberNow = getMember.get(slateId, req.user.id);
+        const slateNow = collabEpoch.get(slateId);
+        if (!memberNow || memberNow.id !== member.id || memberNow.status !== 'accepted' || !slateNow || slateNow.e !== slateAtStart.e) {
+          outcome = { refused: 'the slate changed while the snapshot uploaded' };
+          return;
+        }
+        const problem = refusal();
+        if (problem) { outcome = { refused: problem }; return; }
+        const previous = currentSnapshot.get(slateId);
+        const storedVersion = carriesUnlogged ? headVersion.get(slateId, slateId).v + 1 : coveredVersion;
+        if (storeSnapshot.run(slateId, storedVersion, newFileId).changes === 0) {
+          outcome = { refused: 'a newer snapshot already exists' };
+          return;
+        }
         db.prepare('DELETE FROM collab_updates WHERE slate_id = ? AND version <= ?').run(slateId, coveredVersion);
         // Every snapshot is also a retained history checkpoint (same file),
         // capped per slate; the oldest fall off.
@@ -721,10 +767,10 @@ function mountCollab(app, deps) {
           INSERT INTO collab_checkpoints (slate_id, epoch, version, b2_file_id, author_id)
           VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(slate_id, epoch, version) DO NOTHING
-        `).run(slateId, epoch, coveredVersion, newFileId, req.user.id);
+        `).run(slateId, slateAtStart.e, storedVersion, newFileId, req.user.id);
         // Labelled ("named") checkpoints are pinned: they never fall off the
         // end, otherwise a version the user deliberately named would vanish.
-        prunedCheckpoints = db.prepare(`
+        const prunedCheckpoints = db.prepare(`
           SELECT id, b2_file_id FROM collab_checkpoints
           WHERE slate_id = ? AND (label IS NULL OR label = '')
           ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET ?
@@ -732,20 +778,31 @@ function mountCollab(app, deps) {
         for (const cp of prunedCheckpoints) {
           db.prepare('DELETE FROM collab_checkpoints WHERE id = ?').run(cp.id);
         }
+        outcome = { version: storedVersion, previousFileId: previous ? previous.snapshot_b2_file_id : null, prunedCheckpoints };
       })();
 
-      if (existing && existing.snapshot_b2_file_id && existing.snapshot_b2_file_id !== newFileId
-          && !checkpointFileReferenced(slateId, existing.snapshot_b2_file_id)) {
-        try { await b2Storage.deleteSlate(existing.snapshot_b2_file_id); } catch (err) { console.warn('Failed to delete old snapshot B2 file:', err); }
+      if (outcome.refused) {
+        try { await b2Storage.deleteSlate(newFileId); } catch (err) { console.warn('Failed to delete unused snapshot B2 file:', err); }
+        return res.status(409).json({ error: outcome.refused });
       }
-      for (const cp of prunedCheckpoints) {
+      kept = true;
+      if (collabHub) collabHub.snapshotStored(slateId, outcome.version);
+
+      if (outcome.previousFileId && outcome.previousFileId !== newFileId
+          && !checkpointFileReferenced(slateId, outcome.previousFileId)) {
+        try { await b2Storage.deleteSlate(outcome.previousFileId); } catch (err) { console.warn('Failed to delete old snapshot B2 file:', err); }
+      }
+      for (const cp of outcome.prunedCheckpoints) {
         if (cp.b2_file_id !== newFileId && !checkpointFileReferenced(slateId, cp.b2_file_id)) {
           try { await b2Storage.deleteSlate(cp.b2_file_id); } catch (err) { console.warn('Failed to delete pruned checkpoint B2 file:', err); }
         }
       }
-      res.json({ success: true, snapshotVersion: coveredVersion });
+      res.json({ success: true, snapshotVersion: outcome.version });
     } catch (error) {
       console.error('Collab snapshot store error:', error);
+      if (newFileId && !kept) {
+        try { await b2Storage.deleteSlate(newFileId); } catch (err) { console.warn('Failed to delete unused snapshot B2 file:', err); }
+      }
       b2ErrorResponse(res, error, 'Failed to store snapshot');
     }
   });

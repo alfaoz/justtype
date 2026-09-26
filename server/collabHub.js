@@ -10,15 +10,23 @@
 // Auth mirrors authenticateToken: cookie (or bearer) JWT at upgrade time,
 // oauth-scoped tokens rejected, session must exist in the sessions table.
 //
+// Versions: a slate's head is the larger of its newest logged update and its
+// snapshot's version, and the next update takes head + 1. The log therefore
+// always holds exactly the versions after the snapshot, (snapshot, head],
+// with no holes: a snapshot prunes what it covers, so a joiner loads the
+// snapshot and fetches everything after it.
+//
 // Frame protocol (JSON text frames, payloads base64):
 //   c->s  {type:'join',  slateId}
-//   s->c  {type:'joined', slateId, version, snapshotVersion, epoch}
+//   s->c  {type:'joined', slateId, version, snapshotVersion, epoch}  (version = head)
 //   c->s  {type:'leave', slateId}
 //   c->s  {type:'update', slateId, payload, epoch, seq?} -> logged + broadcast
 //   s->c  {type:'rekeyed', slateId}   -> doc key rotated, re-resolve + rebuild
 //   s->c  {type:'update', slateId, version, payload, authorId, seq?}
 //   c->s  {type:'fetch', slateId, since}               -> catch-up
-//   s->c  {type:'updates', slateId, updates:[{version,payload}], more}
+//   s->c  {type:'updates', slateId, updates:[{version,payload}], more, snapshotVersion}
+//   s->c  {type:'snapshot', slateId, version}  -> a snapshot was stored; load it
+//                                      when it is ahead of what you have applied
 //   c->s  {type:'awareness', slateId, payload}         -> relayed, not stored
 //   s->c  {type:'awareness', slateId, payload, authorId}
 //   s->c  {type:'changed', slateId}    -> canonical blob changed, refetch
@@ -40,6 +48,7 @@ const RATE_MAX_MSGS = 300;
 
 let wss = null;
 let deps = null;
+let stmts = null;
 
 // Map<slateId, Set<ws>>
 const rooms = new Map();
@@ -131,7 +140,7 @@ function tokenFromRequest(req) {
 
 // Same checks as authenticateToken, minus the express plumbing.
 function verifyUser(req) {
-  const { db, jwt, JWT_SECRET, crypto } = deps;
+  const { jwt, JWT_SECRET, crypto } = deps;
   const token = tokenFromRequest(req);
   if (!token) return null;
   let user;
@@ -143,7 +152,7 @@ function verifyUser(req) {
   if (!user || user.oauth) return null;
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const result = deps.db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
+    const result = stmts.touchSession.run(tokenHash, tokenHash);
     if (result.changes === 0) return null;
   } catch {
     return null;
@@ -152,35 +161,35 @@ function verifyUser(req) {
 }
 
 function membership(slateId, userId) {
-  return deps.db.prepare(`
-    SELECT m.status, m.role FROM collab_members m
-    JOIN slates s ON s.id = m.slate_id
-    WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1 AND s.deleted_at IS NULL
-  `).get(slateId, userId);
+  return stmts.membership.get(slateId, userId);
 }
 
-function latestVersion(slateId) {
-  const row = deps.db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM collab_updates WHERE slate_id = ?').get(slateId);
-  return row.v;
+function headVersion(slateId) {
+  return stmts.head.get(slateId, slateId).v;
 }
 
 function snapshotVersion(slateId) {
-  const row = deps.db.prepare('SELECT snapshot_version FROM collab_docs WHERE slate_id = ?').get(slateId);
+  const row = stmts.snapshotVersion.get(slateId);
   return row ? row.snapshot_version : 0;
 }
 
-// Doc-key rotation counter (slates.collab_epoch). Updates encrypted under a
-// rotated-away key would poison the fresh log, so writers must present the
-// current epoch.
+// Doc-key rotation counter (slates.collab_epoch), or null once the slate is
+// no longer collaborative (disabled, trashed, deleted). Updates encrypted
+// under a rotated-away key would poison the fresh log, so writers must
+// present the current epoch.
 function keyEpoch(slateId) {
-  const row = deps.db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ?').get(slateId);
-  return row ? row.e : 0;
+  const row = stmts.epoch.get(slateId);
+  return row ? row.e : null;
 }
 
 function userSocketCount(userId) {
   let n = 0;
   for (const client of wss.clients) if (client.userId === userId) n++;
   return n;
+}
+
+function joinedFrame(slateId) {
+  return { type: 'joined', slateId, version: headVersion(slateId), snapshotVersion: snapshotVersion(slateId), epoch: keyEpoch(slateId) ?? 0 };
 }
 
 function handleMessage(ws, raw) {
@@ -200,13 +209,11 @@ function handleMessage(ws, raw) {
 
   switch (msg.type) {
     case 'join': {
-      if (ws.slateRooms.has(slateId)) {
-        return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId), epoch: keyEpoch(slateId) });
-      }
+      if (ws.slateRooms.has(slateId)) return send(ws, joinedFrame(slateId));
       if (ws.slateRooms.size >= MAX_ROOMS_PER_SOCKET) return sendError(ws, 'too many open slates', 'ROOM_LIMIT', slateId);
       if (!membership(slateId, ws.userId)) return sendError(ws, 'not a member', 'NOT_MEMBER', slateId);
       joinRoom(slateId, ws);
-      return send(ws, { type: 'joined', slateId, version: latestVersion(slateId), snapshotVersion: snapshotVersion(slateId), epoch: keyEpoch(slateId) });
+      return send(ws, joinedFrame(slateId));
     }
     case 'leave':
       return leaveRoom(slateId, ws);
@@ -215,14 +222,17 @@ function handleMessage(ws, raw) {
       if (typeof msg.payload !== 'string' || !msg.payload || msg.payload.length > MAX_PAYLOAD_CHARS) {
         return sendError(ws, 'bad payload', undefined, slateId);
       }
-      if (Number(msg.epoch) !== keyEpoch(slateId)) {
+      const epoch = keyEpoch(slateId);
+      if (epoch === null) {
+        send(ws, { type: 'removed', slateId });
+        return leaveRoom(slateId, ws);
+      }
+      if (Number(msg.epoch) !== epoch) {
         return sendError(ws, 'stale key epoch', 'STALE_EPOCH', slateId);
       }
       let version;
       try {
-        version = latestVersion(slateId) + 1;
-        deps.db.prepare('INSERT INTO collab_updates (slate_id, version, payload, author_id) VALUES (?, ?, ?, ?)')
-          .run(slateId, version, msg.payload, ws.userId);
+        version = stmts.append(slateId, msg.payload, ws.userId);
       } catch (e) {
         console.error('collab update insert failed:', e);
         return sendError(ws, 'update rejected', undefined, slateId);
@@ -236,11 +246,11 @@ function handleMessage(ws, raw) {
     case 'fetch': {
       if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
       const since = Number(msg.since) || 0;
-      const rowsOut = deps.db.prepare(
-        'SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT ?'
-      ).all(slateId, since, FETCH_BATCH + 1);
+      const rowsOut = stmts.fetchSince.all(slateId, since, FETCH_BATCH + 1);
       const more = rowsOut.length > FETCH_BATCH;
-      return send(ws, { type: 'updates', slateId, updates: rowsOut.slice(0, FETCH_BATCH), more });
+      // The reply says where the snapshot is: a client that asked from
+      // below it finds the rows it lacks there, not in the log.
+      return send(ws, { type: 'updates', slateId, updates: rowsOut.slice(0, FETCH_BATCH), more, snapshotVersion: snapshotVersion(slateId) });
     }
     case 'awareness': {
       if (!ws.slateRooms.has(slateId)) return sendError(ws, 'join first', 'NOT_JOINED', slateId);
@@ -252,12 +262,72 @@ function handleMessage(ws, raw) {
   }
 }
 
+// Before versions counted from the snapshot, a snapshot that pruned the whole
+// log sent the next update back to version 1 while the snapshot stayed at,
+// say, 64: those updates are newer than the snapshot but numbered below it,
+// and a joiner loading the snapshot skipped them. The rows still left in such
+// a log are one run in the order they were written (a restart only happened
+// on an empty log), so moving the whole run to start right after the
+// snapshot restores (snapshot, head]. A second run finds nothing to do.
+function renumberStrandedUpdates(db) {
+  const stranded = db.prepare(`
+    SELECT u.slate_id AS slateId, MIN(u.version) AS low, d.snapshot_version AS snap
+    FROM collab_updates u JOIN collab_docs d ON d.slate_id = u.slate_id
+    GROUP BY u.slate_id, d.snapshot_version
+    HAVING MIN(u.version) <= d.snapshot_version
+  `).all();
+  if (!stranded.length) return;
+  // Through negative numbers, so no row ever collides with another's version.
+  const negate = db.prepare('UPDATE collab_updates SET version = -version WHERE slate_id = ?');
+  const shift = db.prepare('UPDATE collab_updates SET version = ? - version WHERE slate_id = ?');
+  for (const { slateId, low, snap } of stranded) {
+    try {
+      db.transaction(() => {
+        negate.run(slateId);
+        shift.run(snap - low + 1, slateId);
+      })();
+      console.log(`✓ Collab log of slate ${slateId} renumbered to follow its snapshot (${snap})`);
+    } catch (e) {
+      console.error(`collab log renumbering failed for slate ${slateId}:`, e);
+    }
+  }
+}
+
 // Attach the hub to the app's http server. Called once at startup; every
 // exported notifier is a safe no-op before then.
 function attach(httpServer, dependencies) {
   deps = dependencies;
+  const { db } = deps;
   const { WebSocketServer } = require('ws');
   wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+
+  stmts = {
+    touchSession: db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`),
+    membership: db.prepare(`
+      SELECT m.status, m.role FROM collab_members m
+      JOIN slates s ON s.id = m.slate_id
+      WHERE m.slate_id = ? AND m.user_id = ? AND m.status = 'accepted' AND s.is_collab = 1 AND s.deleted_at IS NULL
+    `),
+    head: db.prepare(`
+      SELECT MAX(
+        COALESCE((SELECT MAX(version) FROM collab_updates WHERE slate_id = ?), 0),
+        COALESCE((SELECT snapshot_version FROM collab_docs WHERE slate_id = ?), 0)
+      ) AS v
+    `),
+    snapshotVersion: db.prepare('SELECT snapshot_version FROM collab_docs WHERE slate_id = ?'),
+    epoch: db.prepare('SELECT COALESCE(collab_epoch, 0) AS e FROM slates WHERE id = ? AND is_collab = 1 AND deleted_at IS NULL'),
+    insert: db.prepare('INSERT INTO collab_updates (slate_id, version, payload, author_id) VALUES (?, ?, ?, ?)'),
+    fetchSince: db.prepare('SELECT version, payload FROM collab_updates WHERE slate_id = ? AND version > ? ORDER BY version LIMIT ?'),
+  };
+  // Head read and insert in one transaction: the version is taken and used
+  // with nothing able to run in between.
+  stmts.append = db.transaction((slateId, payload, authorId) => {
+    const version = stmts.head.get(slateId, slateId).v + 1;
+    stmts.insert.run(slateId, version, payload, authorId);
+    return version;
+  });
+
+  renumberStrandedUpdates(db);
 
   httpServer.on('upgrade', (req, socket, head) => {
     let pathname = '';
@@ -289,7 +359,11 @@ function attach(httpServer, dependencies) {
     ws.rateWindowStart = Date.now();
     ws.rateCount = 0;
     ws.on('pong', () => { ws.isAlive = true; });
-    ws.on('message', (raw) => handleMessage(ws, raw));
+    // A throw here would escape into the socket's data handler and take the
+    // whole process down; one bad frame costs only itself.
+    ws.on('message', (raw) => {
+      try { handleMessage(ws, raw); } catch (e) { console.error('collab frame failed:', e); }
+    });
     ws.on('close', () => {
       for (const slateId of [...ws.slateRooms]) leaveRoom(slateId, ws);
     });
@@ -312,6 +386,13 @@ function attach(httpServer, dependencies) {
 // the room to refetch.
 function notifySlateChanged(slateId) {
   if (wss) broadcast(slateId, { type: 'changed', slateId });
+}
+
+// A snapshot was stored and the log pruned under it (POST .../snapshot): the
+// room learns the snapshot's version, so no one else posts the same one and
+// anyone behind it loads it.
+function snapshotStored(slateId, version) {
+  if (wss) broadcast(slateId, { type: 'snapshot', slateId, version });
 }
 
 // The doc key rotated: every client must re-resolve its wrapped key and
@@ -342,4 +423,4 @@ function closeRoom(slateId) {
   }
 }
 
-module.exports = { attach, issueTicket, notifySlateChanged, notifyRekeyed, kickMember, closeRoom };
+module.exports = { attach, issueTicket, notifySlateChanged, snapshotStored, notifyRekeyed, kickMember, closeRoom };
