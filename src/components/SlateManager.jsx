@@ -4,7 +4,7 @@ import { strings } from '../strings';
 import { decryptContent, decryptTags, decryptTitle, encryptTags, encryptTitle, unwrapKey } from '../crypto';
 import { useConnectivity, isOnline, reportNetworkFailure } from '../connectivity';
 import { cacheList, getCachedList, getCachedSlates, getCachedSlate, getPending, cacheSlate, setKeepOffline, offloadSlate, isLocalSlateNumber, pruneCache, copyPlan, dropStaleCopies } from '../offlineStore';
-import { onSync } from '../offlineSync';
+import { onSync, withSlateSend } from '../offlineSync';
 import { HoverNote } from './HoverNote';
 import { markdownOf, zipOf, fileNameFor, downloadText, downloadBlob } from '../exporter';
 import { openDocKey as openLockKey } from '../slateLock';
@@ -632,26 +632,31 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     setSlates(prev => prev.map(s => s.slate_number === slateNumber ? { ...s, ...lockFields, updated_at: updatedAt ?? s.updated_at } : s));
   };
   // Lock a slate from its menu: fetch it, decrypt under the master key, save
-  // it re-keyed to the chosen secret
+  // it re-keyed to the chosen secret. It runs between uploads of the slate,
+  // so an edit just left on its way up lands before the slate is read.
   const lockFromList = async (slate, { secret, login }, ask) => {
     const master = await getSlateKey(userId);
     if (!master) throw new Error('no key');
     let recoveryKey = ask.recoveryKey;
     if (login) recoveryKey = await ensureLockRecovery({ login, info: ask.info });
-    const d = await fetchSlateForLock(slate);
-    if (d.is_locked) return;
-    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, master) : (d.content || '');
-    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: true, secret, recoveryKey, baseUpdatedAt: d.updated_at });
-    noteLockChange(slate.slate_number, lockFields, data.updated_at);
+    await withSlateSend(userId, slate.slate_number, async () => {
+      const d = await fetchSlateForLock(slate);
+      if (d.is_locked) return;
+      const content = d.encryptedContent ? await decryptContent(d.encryptedContent, master) : (d.content || '');
+      const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: true, secret, recoveryKey, baseUpdatedAt: d.updated_at });
+      noteLockChange(slate.slate_number, lockFields, data.updated_at);
+    });
   };
   // Remove a slate's lock: its doc key must be open (the secret, or recovery)
   const removeLockFromList = async (slate, docKey) => {
     const master = await getSlateKey(userId);
     if (!master) throw new Error('no key');
-    const d = await fetchSlateForLock(slate);
-    const content = d.encryptedContent ? await decryptContent(d.encryptedContent, docKey) : '';
-    const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: false, baseUpdatedAt: d.updated_at });
-    noteLockChange(slate.slate_number, lockFields, data.updated_at);
+    await withSlateSend(userId, slate.slate_number, async () => {
+      const d = await fetchSlateForLock(slate);
+      const content = d.encryptedContent ? await decryptContent(d.encryptedContent, docKey) : '';
+      const { lockFields, data } = await saveLockChange({ userId, slateNumber: slate.slate_number, content, masterKey: master, lockOn: false, baseUpdatedAt: d.updated_at });
+      noteLockChange(slate.slate_number, lockFields, data.updated_at);
+    });
   };
   const toggleLock = async (slate, e) => {
     e.stopPropagation();
@@ -801,8 +806,14 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
     return () => clearTimeout(t);
   }, [searchQuery]);
 
+  // Loaded while the session check ran: when it comes back ('checking'
+  // becomes the session) the list is not loaded a second time
+  const loadedUnderRef = useRef(null);
   useEffect(() => {
     if (token) {
+      const prev = loadedUnderRef.current;
+      loadedUnderRef.current = token;
+      if (prev === 'checking' && token !== 'checking') return;
       loadSlates();
       loadCollab();
     }
@@ -1025,8 +1036,13 @@ export function SlateManager({ token, userId, onSelectSlate, onNewSlate, onOpenS
   // Fetch these slates into the device store, two at a time and paced under
   // the api rate limit, refreshing the marks as each lands. A refusal stops
   // the run; whatever is left waits for the next list load.
-  const copyToDevice = async (numbers) => {
-    if (!userId || !numbers.length || !isOnline()) return;
+  const copyToDevice = async (all) => {
+    if (!userId || !all.length || !isOnline()) return;
+    // A slate with an edit still queued keeps its copy as it is: that copy
+    // holds text the server has not seen yet
+    const queued = new Set((await getPending(userId).catch(() => [])).map(p => String(p.slateNumber)));
+    const numbers = all.filter(n => !queued.has(String(n)));
+    if (!numbers.length) return;
     setCopying(prev => new Set([...prev, ...numbers]));
     const queue = [...numbers];
     const done = (n) => setCopying(prev => { const s = new Set(prev); s.delete(n); return s; });

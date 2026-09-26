@@ -8,7 +8,7 @@ import { encryptContent, decryptContent, encryptTitle, decryptTitle, encryptTags
 import { useScroll, centerTextareaCaret, liftTextareaCaret } from '../typewriter';
 import { markdownOf, FRONT_MATTER, useFrontMatter, setFrontMatter, nextFrontMatter } from '../exporter';
 import { getSlateKey } from '../keyStore';
-import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory } from '../history';
+import { loadHistory, heldHistory, prepareCheckpoint, commitHistory, labelVersion, forgetHistory, enableHistory, disableHistory, noteVersions, warmHistory } from '../history';
 import { publishTheme, withdrawTheme, myThemeStates, fetchCatalog, themeSlate, forgetThemeSlate } from '../themeCatalog';
 import { fetchSharedSlate } from '../collab';
 import { usePresence } from '../presence';
@@ -22,8 +22,8 @@ import { VerifyBadge } from './VerifyBadge';
 import { SupportButtons } from './SupportButtons';
 import { useEscape } from '../useEscape';
 import { useConnectivity, reportNetworkFailure, isOnline } from '../connectivity';
-import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache } from '../offlineStore';
-import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer } from '../offlineSync';
+import { cacheSlate, getCachedSlate, deleteCachedSlate, getPendingFor, queuePending, deletePending, newLocalSlateNumber, isLocalSlateNumber, pruneCache, fingerprint } from '../offlineStore';
+import { onSync, watchConnectivity, queueOfflineSave, mergeWithServer, mergeTexts, saveAndUpload, uploadQueued, uploadSettled, withSlateSend } from '../offlineSync';
 import { nearbyPeerCount, onNearbyChange } from '../nearbyState';
 import { SettingsRow, controlLabel } from './SettingsRow';
 import { canNativeMenu, canNativePill, setNativePill, hideNativePill, nativeStatusColor, nativeExportText, nativeExportPDF, canShareLink, shareLink } from '../shellMenu';
@@ -384,6 +384,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // The version of the open slate as loaded (server timestamp + encrypted
   // blob): the base its edits started from, for conflict detection and merge
   const loadedSlateRef = useRef(null);
+  // The body the text in the editor was written on (loaded, or last saved
+  // here): a queued save names it, so its upload can tell this editor's
+  // earlier saves from another tab's
+  const lineageRef = useRef(null);
   // The number of a slate this editor just created (or that got its server
   // number after an offline save): its text is already on screen, so the
   // load effect adopts the number instead of refetching behind the overlay
@@ -688,7 +692,10 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return true;
   };
 
-  // Load current slate
+    // Load current slate. A load started while the session check ran is not
+  // repeated when the check comes back ('checking' becomes the session):
+  // the slate is already loading, from the same cookie.
+  const loadedUnderRef = useRef(null); // { n, checking } of the last load started here
   useEffect(() => {
     if (isShared) return;
     if (currentSlate && token) {
@@ -696,6 +703,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         adoptedSlateRef.current = null;
         return;
       }
+      const prev = loadedUnderRef.current;
+      loadedUnderRef.current = { n: currentSlate.slate_number, checking: token === 'checking' };
+      if (prev?.checking && token !== 'checking' && prev.n === currentSlate.slate_number) return;
       setIsLoading(true);
       loadSlate(currentSlate.slate_number);
     } else if (!currentSlate && !contentRef.current.trim()) {
@@ -887,8 +897,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       // Only trigger for actual page navigation (close tab, refresh, external link)
-      // Never trigger for internal React navigation
-      if (hasUnsavedChanges && content.trim()) {
+      // Never trigger for internal React navigation. Text already in the
+      // device queue is safe: it goes up the next time justtype opens.
+      if (hasUnsavedChanges && content.trim() && JSON.stringify({ content }) !== lastSavedContentRef.current) {
         e.preventDefault();
         e.returnValue = '';
         return '';
@@ -943,11 +954,18 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     checkSubscriptionAndDonate();
   }, []);
 
-  // Track supporter tier on mount
+  // Track supporter tier on mount. The visit is counted once a day on this
+  // device; in between, the tier that visit returned stands. Back from a
+  // payment the plan is asked for at once, and again a little later: the
+  // webhook that upgrades it can land after the redirect.
+  const backFromPaymentRef = useRef(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('payment') === 'success');
   useEffect(() => {
+    if (!token || token === 'checking') return; // once, when the session is known
+    const visitKey = `justtype-visit-${userId}`;
+    const remember = (tier) => {
+      try { localStorage.setItem(visitKey, JSON.stringify({ at: Date.now(), tier: tier || null })); } catch { /* storage unavailable */ }
+    };
     const fetchSupporterTier = async () => {
-      if (!token || token === 'checking') return; // once, when the session is known
-
       try {
         const response = await fetch(`${API_URL}/user/visit`, {
           method: 'POST',
@@ -959,13 +977,31 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (data.supporterTier) {
             setSupporterTier(data.supporterTier);
           }
+          remember(data.supporterTier);
         }
       } catch (err) {
         console.error('Failed to fetch supporter tier:', err);
       }
     };
 
+    const paid = backFromPaymentRef.current;
+    backFromPaymentRef.current = false;
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem(visitKey) || 'null'); } catch { last = null; }
+    if (!paid && last && Date.now() - last.at < 24 * 60 * 60 * 1000) {
+      if (last.tier) setSupporterTier(last.tier);
+      return;
+    }
     fetchSupporterTier();
+    if (!paid) return;
+    const recheck = setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_URL}/account/storage`, { credentials: 'include' });
+        const data = await response.json();
+        if (response.ok && data.supporterTier) { setSupporterTier(data.supporterTier); remember(data.supporterTier); }
+      } catch { /* the next visit asks again */ }
+    }, 8000);
+    return () => clearTimeout(recheck);
   }, [token]);
 
   // Track unsaved changes
@@ -1008,19 +1044,25 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       adoptSlate({ ...currentSlate, ...e.slate, slate_number: e.to, local: false });
     } else if (e.type === 'merged' && open != null && open === e.slateNumber) {
       loadedSlateRef.current = { updated_at: e.updated_at ?? null, encryptedContent: e.encryptedContent ?? null };
-      setContent(e.text);
+      lineageRef.current = fingerprint(e.encryptedContent);
+      // Words typed while the merged save was on its way are merged onto
+      // the result too, instead of being replaced by it
+      const now = contentRef.current;
+      const next = e.ours == null || now === e.ours ? e.text : mergeTexts(e.ours, now, e.text).text;
+      setContent(next);
+      contentRef.current = next;
       lastSavedContentRef.current = JSON.stringify({ content: e.text });
       loadedHadTextRef.current = !!(e.text || '').trim();
-      setHasUnsavedChanges(false);
+      setHasUnsavedChanges(next !== e.text);
       setStatus(e.conflicts ? strings.writer.connectivity.conflicts(e.conflicts) : strings.writer.connectivity.merged);
       if (!e.conflicts) setTimeout(() => setStatus('ready'), 4000);
     } else if (e.type === 'flushed' && open != null && open === e.slateNumber && e.updated_at) {
       // A queued edit of the open slate reached the account: the next save
       // starts from that version
       loadedSlateRef.current = { updated_at: e.updated_at, encryptedContent: e.encryptedContent ?? loadedSlateRef.current?.encryptedContent ?? null };
-    } else if (e.type === 'started') {
+    } else if (e.type === 'started' && !e.quiet) {
       setStatus(strings.writer.connectivity.syncing);
-    } else if (e.type === 'finished' && !e.failed) {
+    } else if (e.type === 'finished' && !e.failed && !e.quiet) {
       setStatus((prev) => prev === strings.writer.connectivity.syncing ? 'ready' : prev);
     }
   }), [currentSlate, onSlateChange]);
@@ -1173,7 +1215,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     const handlePopstate = async (e) => {
       if (hasUnsavedChanges && content.trim() && token && currentSlate) {
         e.preventDefault();
-        await saveSlateSync();
+        await saveBeforeLeaving();
       }
     };
 
@@ -1273,7 +1315,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       // keep their own path.
       const copyFirst = inShell && !network && isOnline() && Boolean(cached?.data?.encryptedContent)
         && !cached.data.is_collab && !cached.data.deleted_at;
-      if (isLocalSlateNumber(id) || pending) {
+      // A slate kept off this device has no copy for its queued edit to sit
+      // in: the server's slate opens with the queued text in it instead
+      if (isLocalSlateNumber(id) || (pending && (cached?.data?.encryptedContent || pending.op !== 'put'))) {
         if (!cached?.data?.encryptedContent) throw new Error('local copy missing');
         data = cached.data;
         fromCache = true;
@@ -1302,6 +1346,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           if (!response.ok) throw new Error(`load ${response.status}`);
           data = await response.json();
           setTrashedSlate(data.deleted_at ? id : null);
+          noteVersions(userId, id, data.history_count);
         } catch (netErr) {
           if (gone) {
             leaveGoneSlate(id);
@@ -1313,6 +1358,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
             return;
           }
           reportNetworkFailure();
+          // Not a load to stand for the one the session check would repeat
+          if (loadedUnderRef.current?.n === id) loadedUnderRef.current = null;
           if (!cached?.data?.encryptedContent) {
             setStatus(strings.writer.connectivity.notAvailableOffline);
             setIsLoading(false);
@@ -1323,9 +1370,12 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
           fromCache = true;
         }
       }
+      // An edit still queued is the newest text this device has of the slate
+      if (pending?.op === 'put' && pending.body?.encryptedContent) data = { ...data, encryptedContent: pending.body.encryptedContent };
       if (!fromCache && userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       else if (cached && userId) cacheSlate(userId, id, {}, { opened: true }).catch(() => {});
       loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: data.encryptedContent ?? null };
+      lineageRef.current = fingerprint(data.encryptedContent);
       let slateContent;
       let slateTitle = data.title;
       let slateKey = null;
@@ -1397,7 +1447,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
 
       // Two-way sync: adopt any newer edit a connected app made to this slate.
       // (Collab and locked slates are never app-shared — enforced server-side.)
-      if (!fromCache && data.encrypted && slateKey && !data.is_published && !data.is_collab && !data.is_locked) {
+      // Not over an edit of our own still queued, nor when the server says
+      // no app holds a copy.
+      if (!fromCache && !pending && data.encrypted && slateKey && !data.is_published && !data.is_collab && !data.is_locked && data.has_grants !== false) {
         const merged = await pullAppEdits(id, slateKey);
         if (merged) {
           slateContent = merged.content;
@@ -1441,6 +1493,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (copyFirst) checkServerCopy(id, data, slateContent);
     } catch (err) {
       console.error('Failed to load slate:', err);
+      if (loadedUnderRef.current?.n === id) loadedUnderRef.current = null;
       setIsLoading(false);
       setLoadingFadeOut(false);
     }
@@ -1474,7 +1527,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       }
       if (userId && data.encrypted && !data.deleted_at) cacheSlate(userId, id, data, { opened: true }).catch(() => {});
       if (stillHere()) setTrashedSlate(data.deleted_at ? id : null);
-      if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && userId) {
+      noteVersions(userId, id, data.history_count);
+      if (data.encrypted && !data.is_published && !data.is_collab && !data.is_locked && data.has_grants !== false && userId) {
         const slateKey = await getSlateKey(userId);
         const merged = slateKey ? await pullAppEdits(id, slateKey) : null;
         if (merged && untouched()) loadSlate(id, { network: true });
@@ -1503,10 +1557,6 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       const data = await response.json();
 
       if (response.ok && data.url) {
-        // Store tier for test upgrade after payment
-        if (token) {
-          localStorage.setItem('justtype-pending-tier', tier);
-        }
         // Redirect to Stripe checkout
         window.location.href = data.url;
       } else {
@@ -1520,17 +1570,20 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
   };
 
-  // Save before leaving the slate: same path as autosave
-  const saveSlateSync = async () => {
+  // Save before leaving the slate: same path as autosave, but it waits for
+  // nothing past this device. A save still waiting on the server stops
+  // waiting too; its upload carries on without the writer.
+  const saveBeforeLeaving = async () => {
     if (isShared || !token || !currentSlate) return;
-    await saveSlate();
+    hurryRef.current?.();
+    await saveSlate({ leaving: true });
   };
 
   // Expose save function to parent via ref
   useImperativeHandle(ref, () => ({
     saveBeforeNavigate: async () => {
       if (hasUnsavedChanges && token && currentSlate) {
-        await saveSlateSync();
+        await saveBeforeLeaving();
       }
     },
     hasUnsavedChanges: () => hasUnsavedChanges,
@@ -1757,7 +1810,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     }
     lastSavedContentRef.current = JSON.stringify({ content });
     loadedHadTextRef.current = !!((content) || '').trim();
-    setHasUnsavedChanges(false);
+    lineageRef.current = fingerprint(body.encryptedContent);
+    // Words typed since this save began are not in it: they stay unsaved
+    if (contentRef.current === content) setHasUnsavedChanges(false);
     dropDraft();
     // On the phone a standing status covers the dock: a save the owner asked
     // for says a short word briefly (the list's device mark says where it
@@ -1820,6 +1875,8 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     } finally {
       deletingRef.current = null;
     }
+    // Its queued edits have nowhere to go now
+    if (userId) withSlateSend(userId, n, () => deletePending(userId, n)).catch(() => {});
     leaveGoneSlate(n);
     announceStatus(strings.writer.status.deleted, 2000);
     return { deleted: true };
@@ -1837,9 +1894,36 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     return p;
   };
 
+  // How long a save waits for the server before its text counts as saved on
+  // this device (the upload carries on), and the way a slate being left
+  // cuts that wait short
+  const UPLOAD_WAIT_MS = 1500;
+  const hurryRef = useRef(null);
+  const waitForUpload = async (uploaded) => {
+    let timer;
+    const outcome = await Promise.race([
+      uploaded,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, UPLOAD_WAIT_MS, 'waited');
+        hurryRef.current = () => resolve('waited');
+      }),
+    ]);
+    clearTimeout(timer);
+    hurryRef.current = null;
+    return outcome;
+  };
+  // A save the person asked for, kept on this device while its upload
+  // carries on, says so (the phone keeps saveOffline's short word)
+  const announceSavedHere = () => {
+    if (inShell) announceStatus('saved', 2000);
+    else announceStatus(strings.writer.connectivity.savedLocally, 3000);
+  };
+
   // `explicit`: the user asked (cmd+s, the save button, the palette). It is
   // announced like a first save; the two-second autosave is not.
-  const saveSlateNow = async ({ explicit = false } = {}) => {
+  // `leaving`: the writer is moving off the slate. The save shows nothing
+  // and waits for nothing past this device.
+  const saveSlateNow = async ({ explicit = false, leaving = false } = {}) => {
     if (isShared) return null; // shared slates persist through the collab relay
     if (inTrashRef.current) return null; // read until restored
     if (lockGateRef.current) return null; // a shut lock shows no content to save
@@ -1857,11 +1941,21 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       else if (explicit) announceStatus('saved', 2000);
       return null;
     }
+    // An existing private slate saves on this device first and uploads
+    // from there (saveHereFirst)
+    const hereFirst = Boolean(currentSlate && userId && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number));
 
     // Nothing changed since the last save (a queued leave-save behind an
     // autosave, or cmd+s twice): nothing to send
     if (currentSlate && JSON.stringify({ content }) === lastSavedContentRef.current) {
-      if (explicit) announceStatus('saved', 2000);
+      if (contentRef.current === content) setHasUnsavedChanges(false);
+      if (!explicit) return { unchanged: true, slate_number: currentSlate.slate_number };
+      // Asked for while the text is still on its way up: it goes now
+      const queued = hereFirst && isOnline() ? await getPendingFor(userId, currentSlate.slate_number).catch(() => null) : null;
+      if (queued) setStatus('saving...');
+      const outcome = queued ? await waitForUpload(uploadQueued(userId, currentSlate.slate_number)) : null;
+      if (outcome && !outcome.landed) announceSavedHere();
+      else announceStatus('saved', 2000);
       return { unchanged: true, slate_number: currentSlate.slate_number };
     }
 
@@ -1869,18 +1963,20 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     // a word; the announcement keeps the slot
     const creating = !currentSlate;
     const loud = creating || explicit;
-    const quiet = !loud && announcingRef.current;
+    const quiet = leaving || (!loud && announcingRef.current);
     if (loud) setAnnouncingBoth(true);
     if (!quiet) setStatus('saving...');
 
     try {
       const { body, titleToSave, slateKey, contentKey } = await buildSavePayload();
       const method = currentSlate ? 'PUT' : 'POST';
-      // A version of this text, when one is due, rides on the save
+      // A version of this text, when one is due, rides on the save. It
+      // never waits on the network: versions not on this device yet are
+      // fetched for a later save.
       let checkpoint = null;
       if (currentSlate && userId && contentKey && !collabDocKey && !isLocalSlateNumber(currentSlate.slate_number)) {
         try {
-          checkpoint = await prepareCheckpoint({ userId, n: currentSlate.slate_number, text: content, key: contentKey, explicit });
+          checkpoint = await prepareCheckpoint({ userId, n: currentSlate.slate_number, text: content, key: contentKey, explicit, wait: false });
         } catch (err) { console.warn('history: no version taken', err); }
         if (checkpoint) body.history = checkpoint.history;
       }
@@ -1892,6 +1988,11 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
       if (!currentSlate) body.clientRef = (newSlateRefRef.current ||= newLocalSlateNumber());
 
       if ((!isOnline() || (currentSlate && isLocalSlateNumber(currentSlate.slate_number))) && await saveOffline(body, loud)) { if (loud && !inShell) holdAnnouncement(3000); return { local: true }; }
+
+      if (hereFirst && body.encryptedContent) {
+        const saved = await saveHereFirst(body, { text: content, title: titleToSave, slateKey, slateNumber: currentSlate.slate_number, checkpoint, explicit, creating, loud, quiet, leaving, stillOpen });
+        if (saved) return saved;
+      }
 
       const send = (payload) => fetch(url, {
         method,
@@ -1997,76 +2098,153 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         }
       }
 
-      // The user has moved on: the slate is saved, nothing else to show
-      if (!stillOpen()) { endAnnouncement(); return data; }
-
-      lastSavedContentRef.current = JSON.stringify({ content });
-
-      loadedHadTextRef.current = !!((content) || '').trim();
-      setHasUnsavedChanges(false);
-
-      // Keep any third-party shares of this slate in sync with the new content.
-      // (Not for collab slates — they cannot be app-shared.)
-      if (slateKey && !collabDocKey) {
-        const slateNumber = currentSlate ? currentSlate.slate_number : data.slate_number;
-        if (slateNumber != null) resyncSharedGrants(slateNumber, content, titleToSave, slateKey);
+      if (stillOpen()) {
+        lastSavedContentRef.current = JSON.stringify({ content });
+        loadedHadTextRef.current = !!((content) || '').trim();
+        if (sentBody.encryptedContent) lineageRef.current = fingerprint(sentBody.encryptedContent);
+        // Words typed while the save was out are not in it: they stay unsaved
+        if (contentRef.current === content) setHasUnsavedChanges(false);
       }
-
-      // Clear local draft since content is now saved to server
-      dropDraft();
-
-      // Check if we should show support nudge (slate count is 3, 6, or 9)
-      if (data.slateCount && (data.slateCount === 3 || data.slateCount === 6 || data.slateCount === 9)) {
-        const nudgeKey = `support_nudge_shown_${data.slateCount}`;
-
-        // Only show if we haven't shown this nudge before and user is not a supporter
-        if (!localStorage.getItem(nudgeKey) && !supporterTier) {
-          setTimeout(() => {
-            setStatus(strings.nudges.support);
-            setNudgeShown(true);
-            localStorage.setItem(nudgeKey, 'true');
-
-            // Hide after 20 seconds
-            setTimeout(() => {
-              setStatus('ready');
-            }, 20000);
-          }, 10000); // 10 seconds after save
-        }
-      }
-
-      // A save you asked for, or the first one, gets its cue (autosave stays quiet)
-      if (explicit || creating) cue('save');
-
-      // Handle unpublishing due to edit
-      if (data.was_unpublished) {
-        setShareUrl(null);
-        setWasPublishedBeforeEdit(true);
-        setStatus(strings.writer.status.savedAsPrivate);
-        setTimeout(() => setStatus(strings.writer.status.privateDraft), 3000);
-        if (loud) holdAnnouncement(3000);
-      } else if (data.is_published && data.share_id) {
-        // System slates that stay published
-        setShareUrl(`${PUBLIC_URL}/s/${data.share_id}`);
-        setStatus('saved');
-        setTimeout(() => setStatus(strings.writer.status.published), 2000);
-        if (loud) holdAnnouncement(2000);
-      } else if (creating && data.slate_number != null) {
-        const mobile = inShell || window.matchMedia('(max-width: 767px), (pointer: coarse)').matches;
-        announceStatus(mobile ? 'saved' : strings.writer.status.savedAs(data.slate_number), mobile ? 2000 : 3500);
-      } else if (explicit) {
-        announceStatus('saved', 2000);
-      } else if (!quiet) {
-        setStatus('saved');
-        setTimeout(() => setStatus('ready'), 2000);
-      }
-
-      return data; // Return the saved slate data
+      const slateNumber = currentSlate ? currentSlate.slate_number : data.slate_number;
+      return finishSave({ data }, { text: content, title: titleToSave, slateKey, slateNumber, explicit, creating, loud, quiet, stillOpen });
     } catch (err) {
       endAnnouncement();
       setStatus(saveFailedStatus());
       console.error('Save failed:', err);
       return null;
     }
+  };
+
+  // An existing private slate saves on this device first (see "uploads" in
+  // offlineSync.js): the body goes into the queue and up from there, and the
+  // save waits for the server only UPLOAD_WAIT_MS, or not at all when
+  // leaving. Past that the text counts as saved here, the upload carries on,
+  // and what it brings back is applied when it lands. Null when the device
+  // store would not take the body: the save goes straight to the network.
+  //
+  //   answer within the wait     -> saved, announced as always
+  //   no answer yet, or leaving  -> saved on this device; the landing is
+  //                                 applied quietly when it comes (versions,
+  //                                 app copies, the slate's state)
+  //   refused                    -> saved on this device; the queue retries
+  const saveHereFirst = async (body, saved) => {
+    const { text, slateNumber, loud, quiet, leaving, stillOpen } = saved;
+    const baseAtStart = loadedSlateRef.current;
+    let queued;
+    try {
+      queued = await saveAndUpload(userId, slateNumber, body, () => (stillOpen() ? loadedSlateRef.current : baseAtStart), (stillOpen() && lineageRef.current) || undefined);
+    } catch (err) {
+      console.warn('save: the device queue refused it', err);
+      return null;
+    }
+    if (stillOpen()) {
+      lastSavedContentRef.current = JSON.stringify({ content: text });
+      loadedHadTextRef.current = !!text.trim();
+      lineageRef.current = fingerprint(body.encryptedContent);
+      dropDraft();
+    }
+    const outcome = leaving ? 'waited' : await waitForUpload(queued.uploaded);
+    // Only what the editor still holds exactly is saved; words typed since
+    // go with the next save
+    if (stillOpen() && contentRef.current === text) setHasUnsavedChanges(false);
+    if (outcome?.landed) return finishSave(outcome, saved);
+    if (outcome === 'waited') queued.uploaded.then((late) => { if (late?.landed) finishSave(late, { ...saved, late: true }); });
+    const kept = { local: true, slate_number: slateNumber };
+    if (leaving) return kept;
+    if (!stillOpen()) { endAnnouncement(); return kept; }
+    const settleStatus = () => setStatus((prev) => (prev === 'saving...' ? 'ready' : prev));
+    if (outcome === 'waited') {
+      // Still on its way: a save the person asked for says where the text
+      // is, an autosave says nothing
+      if (loud) announceSavedHere();
+      else if (!quiet) settleStatus();
+    } else {
+      // Refused, or the network failed after all: said as saveOffline says it
+      if (!inShell) setStatus(strings.writer.connectivity.savedLocally);
+      else if (loud) announceStatus('saved', 2000);
+      else if (!quiet) settleStatus();
+      if (loud && !inShell) holdAnnouncement(3000);
+    }
+    return kept;
+  };
+
+  // What follows a save the server took: the version that rode on it, app
+  // copies, the page's state and the announcement. `late`: it landed after
+  // the save had stopped waiting for it, so it changes state and says
+  // nothing about saving.
+  const finishSave = (outcome, { text, title, slateKey, slateNumber, checkpoint = null, explicit, creating, loud, quiet, stillOpen, late = false }) => {
+    const data = outcome.data || {};
+    // Only a version the server kept (a 413 sends the text without it)
+    if (checkpoint && outcome.history) commitHistory(userId, slateNumber, checkpoint.entries, checkpoint.blob);
+    // The merged text reached the editor with its sync event
+    if (outcome.merged) {
+      if (!late && stillOpen() && loud) holdAnnouncement(4000);
+      else if (!late && !stillOpen()) endAnnouncement();
+      return data;
+    }
+
+    // Keep any third-party shares of this slate in sync with the new content.
+    // (Not for collab slates, which cannot be app-shared, nor when the server
+    // says nothing holds a copy.)
+    if (slateKey && !collabDocKey && slateNumber != null && data.has_grants !== false) resyncSharedGrants(slateNumber, text, title, slateKey);
+
+    // The user has moved on: the slate is saved, nothing else to show
+    if (!stillOpen()) { if (!late) endAnnouncement(); return data; }
+
+    // Clear local draft since content is now saved to server. A late
+    // landing may come after this writer is gone: the draft it would drop
+    // is another page's by then (this one's went when the text was queued).
+    if (!late) dropDraft();
+
+    // Check if we should show support nudge (slate count is 3, 6, or 9)
+    if (!late && data.slateCount && (data.slateCount === 3 || data.slateCount === 6 || data.slateCount === 9)) {
+      const nudgeKey = `support_nudge_shown_${data.slateCount}`;
+
+      // Only show if we haven't shown this nudge before and user is not a supporter
+      if (!localStorage.getItem(nudgeKey) && !supporterTier) {
+        setTimeout(() => {
+          setStatus(strings.nudges.support);
+          setNudgeShown(true);
+          localStorage.setItem(nudgeKey, 'true');
+
+          // Hide after 20 seconds
+          setTimeout(() => {
+            setStatus('ready');
+          }, 20000);
+        }, 10000); // 10 seconds after save
+      }
+    }
+
+    // A save you asked for, or the first one, gets its cue (autosave stays quiet)
+    if (!late && (explicit || creating)) cue('save');
+
+    // Handle unpublishing due to edit
+    if (data.was_unpublished) {
+      setShareUrl(null);
+      setWasPublishedBeforeEdit(true);
+      setStatus(strings.writer.status.savedAsPrivate);
+      setTimeout(() => setStatus(strings.writer.status.privateDraft), 3000);
+      if (loud && !late) holdAnnouncement(3000);
+    } else if (data.is_published && data.share_id) {
+      // System slates that stay published
+      setShareUrl(`${PUBLIC_URL}/s/${data.share_id}`);
+      if (late) return data;
+      setStatus('saved');
+      setTimeout(() => setStatus(strings.writer.status.published), 2000);
+      if (loud) holdAnnouncement(2000);
+    } else if (late) {
+      return data;
+    } else if (creating && data.slate_number != null) {
+      const mobile = inShell || window.matchMedia('(max-width: 767px), (pointer: coarse)').matches;
+      announceStatus(mobile ? 'saved' : strings.writer.status.savedAs(data.slate_number), mobile ? 2000 : 3500);
+    } else if (explicit) {
+      announceStatus('saved', 2000);
+    } else if (!quiet) {
+      setStatus('saved');
+      setTimeout(() => setStatus('ready'), 2000);
+    }
+
+    return data; // Return the saved slate data
   };
 
   // The link as the panel sees it
@@ -2125,6 +2303,9 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
         const savedSlate = await saveSlate();
         if (!savedSlate) return;
       }
+      // A save still on its way up would land after the link and take the
+      // slate private again
+      if (userId) await uploadSettled(userId, currentSlate.slate_number);
       const master = userId ? await getSlateKey(userId) : null;
       const firstLine = content.split('\n')[0].trim().replace(/^#{1,6}\s+/, '') || 'untitled slate';
       const titleKey = collabDocKey || master;
@@ -2726,13 +2907,23 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   const rekeyForLock = async (lockOn, { secret = null, recoveryKey = null, docKey = null } = {}) => {
     const slateKey = userId ? await getSlateKey(userId) : null;
     if (!slateKey || !currentSlate) return;
-    const { body, data, docKey: key } = await saveLockChange({
-      userId, slateNumber: currentSlate.slate_number, content, masterKey: slateKey, lockOn, secret, recoveryKey, docKey,
+    const n = currentSlate.slate_number;
+    // Between uploads of this slate: one on its way lands first, and a body
+    // still waiting in the queue goes, since the lock change carries the
+    // editor's text as it is now under the new key
+    const { body, data, docKey: key } = await withSlateSend(userId, n, async () => {
+      const change = await saveLockChange({
+        userId, slateNumber: n, content, masterKey: slateKey, lockOn, secret, recoveryKey, docKey,
+      });
+      if (!change.data?.queued) await deletePending(userId, n);
+      return change;
     });
     loadedSlateRef.current = { updated_at: data.updated_at ?? null, encryptedContent: body.encryptedContent };
+    lineageRef.current = fingerprint(body.encryptedContent);
     lastSavedContentRef.current = JSON.stringify({ content });
     loadedHadTextRef.current = !!((content) || '').trim();
-    setHasUnsavedChanges(false);
+    // Words typed while the lock was changing are not in it: they stay unsaved
+    if (contentRef.current === content) setHasUnsavedChanges(false);
     setLockDocKey(key);
     setIsLocked(lockOn);
     lockedSlateRef.current = lockOn ? currentSlate.slate_number : null;
@@ -2879,6 +3070,13 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
   // text in the editor and saves it like any edit, after the text on screen
   // became a version itself.
   const historyKey = async () => lockDocKey || (userId ? await getSlateKey(userId) : null);
+  // Editing has begun: the slate's versions come now, so the save that is
+  // due to carry one has them without waiting on the network
+  useEffect(() => {
+    const n = currentSlate?.slate_number;
+    if (!hasUnsavedChanges || !userId || n == null || isShared || collabDocKey || isLocalSlateNumber(n)) return;
+    historyKey().then((key) => warmHistory(userId, n, key)).catch(() => {});
+  }, [hasUnsavedChanges, currentSlate?.slate_number]);
   const historySource = useMemo(() => {
     const n = currentSlate?.slate_number;
     const rows = (entries) => [...entries].reverse().map(e => ({ id: e.id, created_at: Math.floor(e.at / 1000), label: e.label || null }));

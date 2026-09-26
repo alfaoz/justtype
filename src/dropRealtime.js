@@ -12,9 +12,15 @@ import { inShell } from './shell';
 
 let eventSource = null;
 
-// Open the SSE stream. Two content-free pings:
+// Other parts of the page listen on the same stream (one connection per
+// tab): App refetches its notifications when told there is a new one
+const accountListeners = new Set();
+export function onAccountEvent(fn) { accountListeners.add(fn); return () => accountListeners.delete(fn); }
+
+// Open the SSE stream. Content-free pings:
 //   'drops'     — an app deposited a drop → sweep + adopt.
 //   'reconcile' — an app registered a new install key → wrap shared slates to it.
+//   anything else goes to onAccountEvent listeners ('notifications': a new one).
 // The browser's native EventSource handles reconnection. onAdopted bubbles up to
 // refresh the UI after drops adopt.
 // The iOS app's page (capacitor://) cannot hold this stream: the server's
@@ -40,6 +46,7 @@ function startSse(userId, masterKey, onAdopted) {
         const data = JSON.parse(ev.data);
         if (data && data.type === 'drops') sweepDrops(userId, masterKey, onAdopted);
         else if (data && data.type === 'reconcile') reconcileDeviceWraps(userId);
+        else if (data && data.type) for (const l of accountListeners) l(data);
       } catch {}
     };
     eventSource.onerror = () => { /* browser auto-reconnects */ };

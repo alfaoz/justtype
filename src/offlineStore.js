@@ -249,13 +249,41 @@ export const getCachedList = (userId) => get('lists', uid(userId));
 
 // ---- pending writes --------------------------------------------------------
 
-// record: { op: 'post' | 'put', body, baseUpdatedAt, baseEncryptedContent, editorMode }
+// Changes to one slate's record happen one at a time: an upload deciding
+// what to do with the record it sent must not interleave with a save
+// replacing its body
+const pendingTurns = new Map();
+function onPending(key, fn) {
+  const next = (pendingTurns.get(key) || Promise.resolve()).then(fn);
+  const turn = next.catch(() => {});
+  pendingTurns.set(key, turn);
+  turn.then(() => { if (pendingTurns.get(key) === turn) pendingTurns.delete(key); });
+  return next;
+}
+
+// Names one body in the queue. The server remembers the last one it saved,
+// so sending the same body again (a retry after a lost answer) writes nothing.
+export const newSaveRef = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+
+// Tells one encrypted body from another without keeping it: every body
+// starts with its own random IV and auth tag
+export const fingerprint = (blob) => (typeof blob === 'string' ? `${blob.length}:${blob.slice(0, 48)}` : null);
+
+// record: { op: 'post' | 'put', body, baseUpdatedAt, baseEncryptedContent, editorMode, parent }
 // A second offline save of the same slate replaces the body but keeps the
 // base the first edit started from, so the eventual merge is against the
-// version the person actually saw.
-export async function queuePending(userId, slateNumber, record) {
+// version the person actually saw. `record` may be a function: it is called
+// once the slate's earlier queue changes are done, so what it reads is current.
+// Every body gets a fresh saveRef. `parent` is the fingerprint of the body
+// the new text was written on (another tab's text on the same slate is not).
+export function queuePending(userId, slateNumber, record) {
   const key = slateKeyOf(userId, slateNumber);
+  return onPending(key, () => writePending(key, userId, slateNumber, typeof record === 'function' ? record() : record));
+}
+async function writePending(key, userId, slateNumber, record) {
   const prev = await get('pending', key);
+  const replaced = fingerprint(prev?.body?.encryptedContent);
+  const sameLine = record.parent === undefined || record.parent === replaced;
   // A lock change waiting in the queue rides along under later saves of
   // the same slate: their content is already under the key it switched to
   const carriedLock = record.body && record.body.lock === undefined && prev?.body?.lock !== undefined
@@ -271,6 +299,13 @@ export async function queuePending(userId, slateNumber, record) {
     editorMode: record.editorMode ?? prev?.editorMode,
     baseUpdatedAt: prev?.baseUpdatedAt ?? record.baseUpdatedAt ?? null,
     baseEncryptedContent: prev?.baseEncryptedContent ?? record.baseEncryptedContent ?? null,
+    // The bodies this one was written on top of, since the server last
+    // confirmed one. Any of them may have reached the server unseen (its
+    // upload cut off, the tab closed mid-send): a 409 against one of these
+    // is our own save, not someone else's. Text from another line (a second
+    // tab on the same slate) starts the list again, so it merges instead.
+    inDoubt: sameLine ? [...(prev?.inDoubt || []), replaced].filter(Boolean).slice(-32) : [],
+    saveRef: newSaveRef(),
     createdAt: prev?.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
@@ -279,7 +314,43 @@ export async function queuePending(userId, slateNumber, record) {
 }
 export const getPending = (userId) => forUser('pending', userId).then(r => r.sort((a, b) => a.createdAt - b.createdAt));
 export const getPendingFor = (userId, slateNumber) => get('pending', slateKeyOf(userId, slateNumber));
-export const deletePending = (userId, slateNumber) => del('pending', slateKeyOf(userId, slateNumber));
+export const deletePending = (userId, slateNumber) => onPending(slateKeyOf(userId, slateNumber), () => del('pending', slateKeyOf(userId, slateNumber)));
+
+// The body named `saveRef` reached the server. Still the body in the queue:
+// the record goes. A newer body was queued meanwhile: it stays, on the base
+// `rebase(rec)` gives it ('rebased'), or on its own when that is null
+// ('kept'). `after` runs in the same turn, so no save for this slate lands
+// between the record changing and what follows from it.
+// Resolves 'deleted', 'rebased', 'kept' or 'gone' (nothing queued any more).
+export function settlePending(userId, slateNumber, saveRef, rebase, after) {
+  const key = slateKeyOf(userId, slateNumber);
+  return onPending(key, async () => {
+    const rec = await get('pending', key);
+    let state = 'gone';
+    if (rec && rec.saveRef === saveRef) { await del('pending', key); state = 'deleted'; }
+    else if (rec) {
+      const patch = rebase(rec);
+      if (patch) { await put('pending', { ...rec, ...patch }); state = 'rebased'; } else state = 'kept';
+    }
+    if (after) await after(state);
+    return state;
+  });
+}
+
+// A local slate got its number while a newer body waited under the local
+// one: that body moves to the number as an edit of what was just created
+export function movePending(userId, fromNumber, toNumber, saveRef, base) {
+  const from = slateKeyOf(userId, fromNumber);
+  return onPending(from, async () => {
+    const rec = await get('pending', from);
+    if (!rec) return 'gone';
+    await del('pending', from);
+    if (rec.saveRef === saveRef) return 'deleted';
+    const to = slateKeyOf(userId, toNumber);
+    await onPending(to, () => put('pending', { ...rec, key: to, slateNumber: toNumber, op: 'put', ...base }));
+    return 'moved';
+  });
+}
 
 // ---- history ---------------------------------------------------------------
 

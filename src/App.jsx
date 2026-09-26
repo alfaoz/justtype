@@ -26,7 +26,7 @@ import { strings } from './strings';
 import pages from './pages.json';
 import { applyThemeVariables, themeExists, fetchAndMergePreferences, fetchPreferences, deviceDefaultTheme } from './themes';
 import { ensureUserKeypair, clearUserPrivateKey } from './userKeys';
-import { startDropRealtime, stopDropRealtime } from './dropRealtime';
+import { startDropRealtime, stopDropRealtime, onAccountEvent } from './dropRealtime';
 import { withViewTransition } from './viewTransition';
 import { reportNetworkFailure, reportNetworkSuccess } from './connectivity';
 import { relock, ensureLockRecovery, rewrapLockRecovery } from './slateLock';
@@ -250,14 +250,19 @@ export default function App() {
   // and a device that dismissed it before the account could remember tells
   // the account instead of asking again. Signed-in only, writer view only
   // (so it never lands on top of /join, /verify or an auth flow).
-  const markWhatsNewSeen = () => {
+  // The account is told once: after that (or once it has said it knows)
+  // this device keeps a note per account and sends nothing more
+  const whatsNewToldKey = (id) => `${WHATS_NEW_SEEN_KEY}-told-${id}`;
+  const noteWhatsNewTold = (id) => { try { localStorage.setItem(whatsNewToldKey(id), '1'); } catch (e) { /* ignore */ } };
+  const markWhatsNewSeen = (id = userId) => {
     try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+    try { if (id && localStorage.getItem(whatsNewToldKey(id))) return; } catch (e) { /* ignore */ }
     fetch(`${API_URL}/preferences`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({ whatsNewSeen: strings.whatsNewModal.version }),
-    }).catch(() => {});
+    }).then((r) => { if (r.ok && id) noteWhatsNewTold(id); }).catch(() => {});
   };
 
   useEffect(() => {
@@ -273,6 +278,7 @@ export default function App() {
         if (cancelled) return;
         if (prefs && prefs.whatsNewSeen === strings.whatsNewModal.version) {
           try { localStorage.setItem(WHATS_NEW_SEEN_KEY, '1'); } catch (e) { /* ignore */ }
+          if (userId) noteWhatsNewTold(userId);
           return;
         }
         if (!prefs) return; // could not ask: never nag on a guess
@@ -446,8 +452,14 @@ export default function App() {
     window.location.href = `/oauth/continue?gate=${encodeURIComponent(oauthGate)}`;
   }, [oauthGate, token, pendingRecoveryPhrase, showPinSetup]);
 
-  // Fetch notifications when authenticated
+  // Fetch notifications when authenticated: once when the session is known,
+  // again when the account's event stream says one arrived, when the tab
+  // comes back after a minute or more, and every five minutes while it is
+  // in view (the stream is not open in the app, nor before the account's
+  // key is on this device)
+  const notificationsFetchedAtRef = useRef(0);
   const fetchNotifications = async () => {
+    notificationsFetchedAtRef.current = Date.now();
     try {
       const response = await fetch(`${API_URL}/notifications`, {
         credentials: 'include'
@@ -465,8 +477,17 @@ export default function App() {
   useEffect(() => {
     if (token && token !== 'checking') {
       fetchNotifications();
-      const interval = window.setInterval(fetchNotifications, 30 * 1000);
-      return () => window.clearInterval(interval);
+      const offEvents = onAccountEvent((e) => { if (e.type === 'notifications') fetchNotifications(); });
+      const onVisible = () => {
+        if (document.visibilityState === 'visible' && Date.now() - notificationsFetchedAtRef.current > 60 * 1000) fetchNotifications();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      const interval = window.setInterval(() => { if (document.visibilityState === 'visible') fetchNotifications(); }, 5 * 60 * 1000);
+      return () => {
+        offEvents();
+        document.removeEventListener('visibilitychange', onVisible);
+        window.clearInterval(interval);
+      };
     }
   }, [token]);
 
@@ -483,16 +504,22 @@ export default function App() {
     }
   }, [showNotifications]);
 
-  // Opening the list marks everything in it read
+  // Opening the list marks everything in it read: one request for all of
+  // them (200 at most each), one per notification where the server is older
   const markNotificationsRead = async () => {
     const unread = notifications.filter(n => !n.is_read);
     if (!unread.length) return;
-    await Promise.all(unread.map(n =>
-      fetch(`${API_URL}/notifications/${n.id}/read`, {
+    const one = (n) => fetch(`${API_URL}/notifications/${n.id}/read`, { method: 'POST', credentials: 'include' });
+    for (let i = 0; i < unread.length; i += 200) {
+      const batch = unread.slice(i, i + 200);
+      const res = await fetch(`${API_URL}/notifications/read`, {
         method: 'POST',
-        credentials: 'include'
-      })
-    ));
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ids: batch.map(n => n.id) }),
+      });
+      if (res.status === 404) await Promise.all(batch.map(one));
+    }
     setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
     setUnreadCount(0);
   };
@@ -556,7 +583,10 @@ export default function App() {
         const slateId = path.split('/slate/')[1];
         if (slateId && token) {
           // Slates created offline carry a local id until they sync
-          setCurrentSlate({ slate_number: slateId.startsWith('local-') ? slateId : parseInt(slateId) });
+          const n = slateId.startsWith('local-') ? slateId : parseInt(slateId);
+          // The same slate again (this runs again when the session check
+          // comes back) keeps its object, so the writer does not load it twice
+          setCurrentSlate((prev) => (prev && prev.slate_number === n ? prev : { slate_number: n }));
           setView('writer');
         }
       } else if (path === '/slates') {
@@ -722,23 +752,10 @@ export default function App() {
       // Clean URL first
       window.history.replaceState({}, '', '/');
 
-      // In test mode, trigger upgrade via test endpoint
-      const tier = localStorage.getItem('justtype-pending-tier');
-
-      if (tier && token) {
-        fetch(`${API_URL}/stripe/test-upgrade`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ tier })
-        }).then(response => {
-          return response.json();
-        }).then(data => {
-          localStorage.removeItem('justtype-pending-tier');
-          // Refresh user data to get updated storage info
-          fetchUserData();
-        }).catch(err => console.error('Test upgrade failed:', err));
-      }
+      // The payment's webhook upgrades the account; the writer asks for the
+      // plan again once it is back (see its supporter tier). The tier a
+      // checkout once left here for a test upgrade is no longer used.
+      localStorage.removeItem('justtype-pending-tier');
     } else if (payment === 'cancelled') {
       // Just clean URL, no modal needed
       localStorage.removeItem('justtype-pending-tier');
@@ -866,7 +883,7 @@ export default function App() {
       // A fresh signup has no "before" to compare against, so the v4
       // announcement would be meaningless noise on their very first slate.
       if (authData.isNewUser) {
-        markWhatsNewSeen();
+        markWhatsNewSeen(authData.user.id);
       }
       setPendingRecoveryPhrase(authData.recoveryPhrase);
     } else {

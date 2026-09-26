@@ -106,14 +106,39 @@ async function fetchBundle(userId, n) {
   return data.blob || null;
 }
 
+// What the slate's own payload said about its versions (history_count), so
+// saving a slate that has none never asks the server for them
+const versionsOff = new Set();
+export function noteVersions(userId, n, count) {
+  if (typeof count !== 'number') return;
+  if (count > 0) versionsOff.delete(keyOf(userId, n));
+  else versionsOff.add(keyOf(userId, n));
+}
+
+// A save that found the server's versions out of reach does not ask again
+// on every save after it: once in a few minutes per slate
+const RETRY_FETCH_MS = 5 * 60 * 1000;
+const fetchFailedAt = new Map();
+const loading = new Map();
+
 // The slate's versions, oldest first. From memory, else the device copy
 // when offline, else the server. Null when they cannot be had right now.
-export async function loadHistory(userId, n, key) {
+// `backoff`: a save asking, which skips the server for a while after it failed.
+export function loadHistory(userId, n, key, { backoff = false } = {}) {
   const k = keyOf(userId, n);
-  if (held.has(k)) return held.get(k).entries;
+  if (held.has(k)) return Promise.resolve(held.get(k).entries);
+  if (!loading.has(k)) loading.set(k, readHistory(userId, n, key, backoff).finally(() => loading.delete(k)));
+  return loading.get(k);
+}
+async function readHistory(userId, n, key, backoff) {
+  const k = keyOf(userId, n);
   let blob = null;
   if (isOnline()) {
-    try { blob = await fetchBundle(userId, n); } catch { blob = undefined; }
+    // Skipped for now reads as a fetch that failed: the device copy stands in
+    if (backoff && Date.now() - (fetchFailedAt.get(k) || 0) < RETRY_FETCH_MS) blob = undefined;
+    else {
+      try { blob = await fetchBundle(userId, n); fetchFailedAt.delete(k); } catch { blob = undefined; fetchFailedAt.set(k, Date.now()); }
+    }
   }
   if (blob === undefined || !isOnline()) {
     const cached = await getCachedSlate(userId, n).catch(() => null);
@@ -146,12 +171,25 @@ const due = (entries, text, explicit, now) => {
   return explicit || now - last.at >= GAP_MS;
 };
 
+// Fetch the slate's versions ahead of the save that will want them (the
+// person has started editing); nothing when they are off or already here
+export function warmHistory(userId, n, key) {
+  const k = keyOf(userId, n);
+  if (!userId || n == null || !key || held.has(k) || versionsOff.has(k)) return;
+  loadHistory(userId, n, key, { backoff: true }).catch(() => {});
+}
+
 // A version of `text`, when one is due, ready to ride on the save:
 // { history: { blob, count }, entries, blob } or null.
 // `force` takes one whatever the timing (before a merge or a restore).
-export async function prepareCheckpoint({ userId, n, text, key, explicit = false, force = false, reason = null }) {
+// `wait: false` (a save) never waits on the network: versions not here yet
+// are fetched for the next save and this one goes without.
+export async function prepareCheckpoint({ userId, n, text, key, explicit = false, force = false, reason = null, wait = true }) {
   if (!userId || n == null || !key) return null;
-  const entries = await loadHistory(userId, n, key);
+  const k = keyOf(userId, n);
+  if (!held.has(k) && versionsOff.has(k)) return null;
+  if (!held.has(k) && !wait && isOnline()) { warmHistory(userId, n, key); return null; }
+  const entries = await loadHistory(userId, n, key, { backoff: !wait });
   if (!entries || !entries.length) return null; // versions are off for this slate
   const now = Date.now();
   if (!force && !due(entries, text, explicit, now)) return null;
