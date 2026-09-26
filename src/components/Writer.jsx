@@ -648,6 +648,46 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
     })();
   }, [isShared, currentSlate, userId]);
 
+  // Collaborators' edits reach the owner's editor too, and the owner's writer
+  // is what keeps the slate's own copy current (the lists' counts, device
+  // copies, search, exports). For their edits alone that copy follows at most
+  // once a minute; the owner's own typing autosaves as it always has.
+  const COLLAB_REMOTE_SAVE_MS = 60 * 1000;
+  const collabSaveRef = useRef({ local: false, at: 0, timer: null, save: null });
+  useEffect(() => { collabSaveRef.current.save = isShared ? null : saveSlate; });
+  useEffect(() => () => {
+    clearTimeout(collabSaveRef.current.timer);
+    collabSaveRef.current = { local: false, at: 0, timer: null, save: null };
+  }, [currentSlate?.slate_number, collabDocKey]);
+  const armCollabSave = () => {
+    const r = collabSaveRef.current;
+    if (r.timer || !r.save) return;
+    r.timer = setTimeout(() => {
+      r.timer = null;
+      r.at = Date.now();
+      if (r.save) r.save();
+    }, Math.max(r.at + COLLAB_REMOTE_SAVE_MS - Date.now(), 2000));
+  };
+  const handleCollabChange = (text, remote) => {
+    if (remote) armCollabSave();
+    else collabSaveRef.current.local = true;
+    setContent(text);
+  };
+  // Asked by the autosave: true while a save of collaborators' edits alone
+  // waits for the timer above
+  const holdCollabAutosave = () => {
+    const r = collabSaveRef.current;
+    if (!collabDocKey || r.local) {
+      clearTimeout(r.timer);
+      r.timer = null;
+      r.local = false;
+      r.at = Date.now();
+      return false;
+    }
+    armCollabSave();
+    return true;
+  };
+
   // Load current slate
   useEffect(() => {
     if (isShared) return;
@@ -1004,7 +1044,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               window.triggerLoginNudge();
             }
           }
-        } else if (currentSlate) {
+        } else if (currentSlate && !holdCollabAutosave()) {
           // Logged in with existing slate - auto-save
           saveSlate();
         }
@@ -3030,7 +3070,7 @@ export const Writer = forwardRef(({ token, userId, currentSlate, onSlateChange, 
               username={localStorage.getItem('justtype-username')}
               mode={editorMode}
               initialContent={loadedContentRef.current}
-              onChange={setContent}
+              onChange={handleCollabChange}
               onRemoved={() => setSharedRemoved(true)}
               onError={isShared ? () => setSharedRemoved(true) : undefined}
               puntoClass={`punto-${punto}`}

@@ -5,14 +5,17 @@
 //
 // subscribeCollab(slateId, onEvent) joins the slate's room (auth rides on the
 // session cookie; in the iOS app, on a one-use ticket, see wsUrl) and delivers every server frame for that slate to onEvent:
-//   {type:'joined', version, snapshotVersion}
-//   {type:'update', version, payload, authorId, seq?}
-//   {type:'updates', updates:[{version,payload}], more}   (fetch reply)
+//   {type:'joined', version, snapshotVersion, epoch}
+//   {type:'update', version, payload, authorId}   someone else's update
+//   {type:'ack', version, seq, compact?}   our own update, logged at version
+//   {type:'updates', updates:[{version,payload}], more, snapshotVersion}   (fetch reply)
+//   {type:'snapshot', version}   a snapshot was stored
 //   {type:'awareness', payload, authorId}
 //   {type:'changed'}       canonical blob changed -> refetch
 //   {type:'removed'}       access revoked / collab disabled
 //   {type:'peer_left', authorId}  user's last socket left the room
-//   {type:'error', error, code?}  routed only when the server tagged a slateId
+//   {type:'error', error, code?, seq?}  routed only when the server tagged a slateId;
+//                          seq names a refused update of ours
 //   {type:'reconnected'}   socket re-established (synthetic, local)
 // Returns an unsubscribe function; the socket closes when no rooms remain.
 
@@ -151,8 +154,8 @@ export function requestCollabJoin(slateId) {
   else connect();
 }
 
-// Fire an encrypted update into the slate's room. seq is echoed back on the
-// sender's own copy so callers can match acks; epoch is the key-rotation
+// Fire an encrypted update into the slate's room. seq comes back on the ack
+// (or on the error that refuses it) so callers can match them; epoch is the key-rotation
 // counter from the joined frame (the server rejects stale epochs). Returns
 // false if the socket isn't open (caller decides whether to queue or drop).
 export function sendCollabUpdate(slateId, payload, seq, epoch) {
