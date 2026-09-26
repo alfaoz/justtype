@@ -1,6 +1,6 @@
 // Publishing a custom theme to the catalog. The theme becomes a published
-// slate of the person's own (its text is the theme file), then the slate is
-// submitted for review. Which slate holds which theme is remembered on this
+// slate of the person's own (its first line is the title, as in every slate,
+// and the rest is the theme file), then the slate is submitted for review. Which slate holds which theme is remembered on this
 // device; the review state comes from the server.
 import { API_URL } from './config';
 import { encryptContent, encryptTitle } from './crypto';
@@ -30,8 +30,10 @@ const fail = async (res, fallback) => {
 };
 
 export async function publishTheme(theme, userId) {
-  const content = JSON.stringify(theme, null, 2);
+  // The title is the first line, the way every slate gets its title, so an
+  // edit in the writer keeps it
   const title = `${theme.name} theme`;
+  const content = `${title}\n\n${JSON.stringify(theme, null, 2)}`;
   const slateKey = await getSlateKey(userId);
   const body = {
     encryptedTitle: await encryptTitle(title, slateKey),

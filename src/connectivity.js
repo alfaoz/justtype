@@ -57,9 +57,13 @@ if (typeof window !== 'undefined') {
     if (document.visibilityState === 'visible') { probe(); checkVersion(); }
   });
   // One confirming probe after startup, so a page booted from the offline
-  // cache reports offline without waiting for a failed call
-  setTimeout(probe, 1500);
+  // cache reports offline without waiting for a failed call; a call that
+  // has already succeeded by then is confirmation enough
+  setTimeout(() => { if (!confirmed) probe(); }, 1500);
 }
+let confirmed = false;
+// Call when any API call succeeds during startup
+export function reportNetworkSuccess() { confirmed = true; if (!state.online) setOnline(true); }
 
 export const isOnline = () => state.online;
 // Subscribe outside React (modules that react to reconnects)

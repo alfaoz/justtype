@@ -52,6 +52,16 @@ if (localDist) {
   process.exit(0);
 }
 
+// Live prod is only ever signed over a fresh backup (scripts/prod-backup.sh
+// on the VPS); without one the new build stays unbootable
+if (!remotePath.includes('beta')) {
+  try {
+    console.log(execFileSync('ssh', [host, `sh ${remotePath}/scripts/prod-backup-gate.sh`]).toString().trim());
+  } catch (e) {
+    console.error(`not signing: ${(e.stderr || e.stdout || '').toString().trim() || e.message}`);
+    process.exit(1);
+  }
+}
 console.log(`fetching ${remotePath}/dist/build-manifest.json from ${host}...`);
 const bytes = execFileSync('ssh', [host, `cat ${remotePath}/dist/build-manifest.json`]);
 const manifest = JSON.parse(bytes.toString('utf8'));

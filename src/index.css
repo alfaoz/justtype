@@ -6,6 +6,10 @@
 @import "@fontsource/ibm-plex-mono/latin-500.css";
 @import "@fontsource/ibm-plex-mono/latin-600.css";
 @import "@fontsource/ibm-plex-mono/latin-400-italic.css";
+/* The readable font (accessibility: readable font), self-hosted the same way */
+@import "@fontsource/atkinson-hyperlegible/latin-400.css";
+@import "@fontsource/atkinson-hyperlegible/latin-700.css";
+@import "@fontsource/atkinson-hyperlegible/latin-400-italic.css";
 @import "@fontsource/ibm-plex-mono/latin-500-italic.css";
 
 /* ========================================
@@ -56,9 +60,41 @@ body {
 }
 
 /* Font size (punto) variants - use CSS variables for color and font */
-.punto-small { font-size: 14px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
-.punto-base { font-size: 15px !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
-.punto-large { font-size: 18px !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+/* In rem so a browser set to larger text scales the writing with it */
+.punto-small { font-size: 0.875rem !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-base { font-size: 0.9375rem !important; line-height: 1.7 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+.punto-large { font-size: 1.125rem !important; line-height: 1.6 !important; color: var(--theme-text); font-family: var(--theme-font-writer) !important; }
+
+/* Scale: the root size everything in rem hangs from (scale.js, `big text:
+   off big bigger` on the account page) */
+html[data-scale="big"] { font-size: 112.5%; }
+html[data-scale="bigger"] { font-size: 125%; }
+
+/* Readable font: Atkinson Hyperlegible over whatever the theme chose. The
+   theme sets these variables inline on <html>; important here outranks that. */
+html[data-readable="on"] {
+  --theme-font-writer: 'Atkinson Hyperlegible', Verdana, sans-serif !important;
+  --theme-font-ui: 'Atkinson Hyperlegible', Verdana, sans-serif !important;
+}
+
+/* Line focus: in the rich editor, every line but the caret's steps back */
+html[data-linefocus="on"] .wysiwyg-editor .cm-line { transition: opacity 200ms ease-out; }
+html[data-linefocus="on"] .wysiwyg-editor .cm-focused .cm-line:not(.cm-activeLine) { opacity: 0.35; }
+.wysiwyg-editor .cm-activeLine { background: transparent !important; }
+
+/* Motion off: every animation and transition collapses to nothing. Events
+   still fire (0.01ms, not none), so anything waiting on an end still runs.
+   Set from motion.js: the system preference, or `motion: off` in settings. */
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+  scroll-behavior: auto !important;
+}
 
 /* Punto theme overrides - CSS variables handle this now */
 
@@ -88,7 +124,7 @@ body {
 @media (max-width: 767px) {
   .punto-small,
   .punto-base {
-    font-size: 16px !important;
+    font-size: 1rem !important;
   }
   input,
   textarea,
@@ -335,6 +371,16 @@ body {
   .collab-panel,
   .collab-panel[data-closing='true'] { animation-duration: 0.01ms; }
   .collab-tabpanel { transition-duration: 0.01ms; }
+}
+
+/* A menu unfolding from its button: quick, from the corner it hangs off */
+@keyframes menuInDown {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes menuInUp {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 
 @keyframes fadeInFromRight {
@@ -1055,7 +1101,10 @@ body.custom-theme ::-webkit-scrollbar-track {
 .wysiwyg-editor .cm-lp-conflict { margin: 0.35em 0; border: 1px solid var(--theme-border); border-radius: 6px; background: var(--theme-bg-secondary); overflow: hidden; }
 .wysiwyg-editor .cm-lp-conflict-panes { display: grid; grid-template-columns: 1fr 1fr; }
 @media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-panes { grid-template-columns: 1fr; } }
-.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; }
+.wysiwyg-editor .cm-lp-conflict-pane { padding: 0.6em 0.75em; min-width: 0; transition: background-color 0.2s ease, opacity 0.2s ease; }
+/* While a choice is hovered: the pane(s) it keeps come forward, the other fades */
+.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane { opacity: 0.4; }
+.wysiwyg-editor .cm-lp-conflict.is-choosing .cm-lp-conflict-pane.is-kept { opacity: 1; background: var(--theme-bg-tertiary); }
 .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 1px solid var(--theme-border); }
 @media (max-width: 640px) { .wysiwyg-editor .cm-lp-conflict-pane + .cm-lp-conflict-pane { border-left: 0; border-top: 1px solid var(--theme-border); } }
 .wysiwyg-editor .cm-lp-conflict-label { font-size: 0.75em; color: var(--theme-orange); margin-bottom: 0.4em; }
@@ -1074,8 +1123,17 @@ body.custom-theme ::-webkit-scrollbar-track {
    stays visible: that is the feedback. */
 .device-mark { transition: opacity 0.15s ease; }
 @media (hover: hover) {
-  .slate-item:not(:hover):not(:focus-within) .device-mark:not(.is-live) { opacity: 0; }
+  .slate-item:not(:hover):not([data-hover]):not(:focus-within) .device-mark:not(.is-live) { opacity: 0; }
+  /* The row under the pointer while the list scrolls (see SlateManager) */
+  .slate-item[data-hover]:not(.is-card) { background: var(--theme-bg-secondary); }
+  .slate-item.is-card[data-hover] { background: var(--theme-bg-tertiary); border-color: var(--theme-text-dim); }
 }
+/* Shortcut hints: in the gutter beside the word, taking no space, shown
+   under the pointer so the word itself stays flush with the edge */
+.kbd-host { position: relative; }
+.kbd-hint { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: 0.5rem; white-space: nowrap; opacity: 0; transition: opacity 0.3s ease; }
+.kbd-host:hover .kbd-hint, .kbd-host:focus-visible .kbd-hint { opacity: 0.5; }
+
 @keyframes markSpin { to { transform: rotate(360deg); } }
 @keyframes markPop {
   0% { transform: scale(0.4); opacity: 0; }
@@ -1123,4 +1181,5 @@ body.custom-theme ::-webkit-scrollbar-track {
   .print-root pre { font: inherit; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .print-root .cm-content { min-height: 0; }
   .print-root .cm-lp-copy { display: none; }
+  .print-root .print-break { break-after: page; page-break-after: always; }
 }

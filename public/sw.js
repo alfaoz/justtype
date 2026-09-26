@@ -32,13 +32,67 @@ self.addEventListener('fetch', (event) => {
 
   if (p.startsWith('/assets/')) {
     event.respondWith(cacheFirst(req));
-  } else if (req.mode === 'navigate') {
-    // Every app route is the same loader; offline, any route boots from '/'
-    event.respondWith(networkFirst(event, req, '/', p === '/'));
-  } else if (SHELL_PATHS.includes(p)) {
+  } else if (p === '/build-manifest.json' || p === '/build-manifest.sig') {
+    // Never stale while the network is there: this is what names the build
     event.respondWith(networkFirst(event, req, p, true));
+  } else if (req.mode === 'navigate') {
+    event.respondWith(navigate(event, req, p));
+  } else if (SHELL_PATHS.includes(p)) {
+    event.respondWith(shellFirst(event, req, p, true));
   }
 });
+
+// A page the app has said is its own opens from the last copy at once, the
+// network refreshing it behind. Every other path goes to the network and
+// only falls back to the shell offline: the app is not the only thing this
+// origin serves, and a worker that answered for everything would speak for
+// pages that are not its own. The app names its routes itself (a message
+// from main.jsx on every load), so nothing about them is written here.
+const ROUTES = '/__app-routes';
+let claimed = null;
+async function routes() {
+  if (claimed) return claimed;
+  const cache = await caches.open(SHELL);
+  const hit = await cache.match(ROUTES, MATCH);
+  const list = hit ? await hit.json().catch(() => []) : [];
+  claimed = new Set(['/', ...list]);
+  return claimed;
+}
+self.addEventListener('message', (event) => {
+  const p = event.data && event.data.type === 'app-route' && event.data.path;
+  if (typeof p !== 'string' || !p.startsWith('/') || p.length > 512) return;
+  event.waitUntil((async () => {
+    const known = await routes();
+    if (known.has(p)) return;
+    known.add(p);
+    const cache = await caches.open(SHELL);
+    await cache.put(ROUTES, new Response(JSON.stringify([...known])));
+  })());
+});
+async function navigate(event, req, p) {
+  const known = await routes();
+  if (known.has(p)) return shellFirst(event, req, '/', p === '/');
+  try {
+    return await fetch(req);
+  } catch (err) {
+    const hit = await caches.open(SHELL).then(c => c.match('/', MATCH));
+    if (hit) return hit;
+    throw err;
+  }
+}
+
+// The cached copy at once when there is one, the network's copy stored for
+// next time; the network when there is none
+async function shellFirst(event, req, key, store) {
+  const cache = await caches.open(SHELL);
+  const hit = await cache.match(key, MATCH);
+  const refresh = fetch(req).then(async (res) => {
+    if (res.ok && store) await cache.put(key, res.clone());
+    return res;
+  });
+  if (hit) { event.waitUntil(refresh.catch(() => {})); return hit; }
+  return refresh.catch(async (err) => { const any = await cache.match('/', MATCH); if (any) return any; throw err; });
+}
 
 // Responses carry `Vary: Origin` (cors middleware), which the Cache API
 // honours by default; a module script request and the precache fetch send
@@ -90,7 +144,11 @@ async function precache(manifestRes) {
     } catch { /* offline again already; next manifest fetch retries */ }
   }));
   for (const p of have) if (!wanted.has(p)) await cache.delete(p);
+  // The unhashed shell files are refetched once per build, not per load
   const shell = await caches.open(SHELL);
+  const seen = await shell.match('/__build', MATCH).then(r => (r ? r.text() : ''), () => '');
+  if (seen === String(manifest.version)) return;
+  await shell.put('/__build', new Response(String(manifest.version)));
   for (const p of SHELL_PATHS) {
     if (p === '/build-manifest.json' || p === '/build-manifest.sig') continue;
     try {

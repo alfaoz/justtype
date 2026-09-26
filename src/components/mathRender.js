@@ -6,7 +6,8 @@ import 'katex/dist/katex.min.css';
 
 // Typeset `tex` into `el`. Display math on its own lines uses KaTeX's
 // display mode; `$$` inside a line of prose stays inline but in display
-// style so fractions and limits get their full-size layout.
+// style so fractions and limits get their full-size layout. Returns
+// nothing when it set, or what went wrong in KaTeX's words.
 export function renderMath(el, tex, { block, display }) {
   try {
     katex.render(block || !display ? tex : `\\displaystyle ${tex}`, el, {
@@ -15,8 +16,8 @@ export function renderMath(el, tex, { block, display }) {
       trust: false,
       strict: 'ignore',
     });
-    return true;
-  } catch {
-    return false;
+    return null;
+  } catch (e) {
+    return String(e?.message || e).replace(/^KaTeX parse error: /, '') || 'could not typeset';
   }
 }

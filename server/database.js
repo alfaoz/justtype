@@ -102,6 +102,14 @@ try {
     console.log('✓ Database migrated: Added code expiry columns');
   }
 
+  // Sessions renew their token; the one replaced answers briefly (sessionMatch.js)
+  const sessionColumns = db.pragma('table_info(sessions)');
+  if (!sessionColumns.some(col => col.name === 'prev_token_hash')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN prev_token_hash TEXT;`);
+    db.exec(`ALTER TABLE sessions ADD COLUMN rotated_at DATETIME;`);
+    console.log('✓ Database migrated: sessions can renew their token');
+  }
+
   // Add size_bytes column to slates if it doesn't exist
   const slateColumns = db.pragma('table_info(slates)');
   const hasSizeBytes = slateColumns.some(col => col.name === 'size_bytes');
@@ -1029,6 +1037,77 @@ try {
   if (!slateColsCollab.some(col => col.name === 'is_collab')) {
     db.exec(`ALTER TABLE slates ADD COLUMN is_collab INTEGER DEFAULT 0;`);
     console.log('✓ Database migrated: Added is_collab column to slates');
+  }
+
+  // Locked slates: the content sits under its own doc key, wrapped to a lock
+  // key the account derives from a pin or passphrase that never reaches the
+  // server. The title stays under the master key so the list keeps reading.
+  if (!slateColsCollab.some(col => col.name === 'is_locked')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN is_locked INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_wrapped_key TEXT;`);
+    console.log('✓ Database migrated: Added is_locked and lock_wrapped_key columns to slates');
+  }
+  // The one-lock-key-per-account columns from the first cut of locks were
+  // never read again once every slate got its own secret: dropped
+  let userColsLock = db.pragma('table_info(users)');
+  for (const dead of ['lock_salt', 'lock_wrapped_key', 'lock_recovery_wrapped_key']) {
+    if (!userColsLock.some(col => col.name === dead)) continue;
+    try {
+      db.exec(`ALTER TABLE users DROP COLUMN ${dead};`);
+      console.log(`✓ Database migrated: Dropped unused users.${dead}`);
+    } catch (err) {
+      console.warn(`Could not drop users.${dead}:`, err.message);
+    }
+  }
+  userColsLock = db.pragma('table_info(users)');
+  if (!userColsLock.some(col => col.name === 'history_bytes')) {
+    db.exec(`ALTER TABLE users ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added history_bytes column to users');
+  }
+  // Each locked slate has its own secret: a salt per slate, the doc key
+  // wrapped to the secret, and the doc key wrapped again to the account's
+  // lock-recovery public key (RSA), whose private key is wrapped to the
+  // recovery phrase. The keypairs live as a JSON list on the user, newest
+  // first, so slates locked under an older phrase stay recoverable with it.
+  const slateColsLock = db.pragma('table_info(slates)');
+  if (!slateColsLock.some(col => col.name === 'lock_salt')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_salt TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN lock_recovery_key_id TEXT;`);
+    console.log('✓ Database migrated: Added per-slate lock columns to slates');
+  }
+  // Version history: one client-encrypted bundle of earlier versions per
+  // slate in B2, and how much of the account's history allowance it takes
+  if (!slateColsLock.some(col => col.name === 'history_b2_file_id')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN history_b2_file_id TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN history_count INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN history_bytes INTEGER DEFAULT 0;`);
+    console.log('✓ Database migrated: Added history columns to slates');
+  }
+  // Shares: a private link keeps its copy under a share key (wrapped to the
+  // owner's master key, and to a passphrase when one is set) and may expire
+  if (!slateColsLock.some(col => col.name === 'share_private')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN share_private INTEGER DEFAULT 0;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_pass_salt TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_pass_wrapped_key TEXT;`);
+    db.exec(`ALTER TABLE slates ADD COLUMN share_expires_at INTEGER;`);
+    console.log('✓ Database migrated: Added share columns to slates');
+  }
+  // Trash: a deleted slate keeps its row and files for thirty days
+  if (!slateColsLock.some(col => col.name === 'deleted_at')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN deleted_at INTEGER;`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_slates_deleted ON slates(deleted_at);`);
+    console.log('✓ Database migrated: Added deleted_at column to slates');
+  }
+  // Archived slates leave the main list for a section of their own
+  if (!slateColsLock.some(col => col.name === 'archived_at')) {
+    db.exec(`ALTER TABLE slates ADD COLUMN archived_at INTEGER;`);
+    console.log('✓ Database migrated: Added archived_at column to slates');
+  }
+  if (!userColsLock.some(col => col.name === 'lock_recovery_keys')) {
+    db.exec(`ALTER TABLE users ADD COLUMN lock_recovery_keys TEXT;`);
+    console.log('✓ Database migrated: Added lock_recovery_keys column to users');
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS collab_members (

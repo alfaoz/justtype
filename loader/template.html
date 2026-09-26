@@ -65,18 +65,29 @@
 
   // theme pre-paint, so a dark-theme user does not get a white first frame.
   // keep the map in sync with the built-in themes in src/themes.js.
+  // the whole variable set of the last applied theme is kept on the device
+  // (src/themes.js writes it), so every colour is right from the first
+  // frame, not only the ground; a device without it gets the ground alone.
   try {
-    var bg = {
-      dark: '#050505',
-      legacy: '#111111',
-      light: '#faf9f7',
-      sepia: '#f4ecd8',
-      midnight: '#0a0a14',
-    }[localStorage.getItem('justtype-theme')
-      || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('justtype-theme-vars') || 'null'); } catch (e) { saved = null; }
+    var bg = saved && saved.vars && saved.vars['--theme-bg'];
     if (bg) {
-      document.documentElement.style.setProperty('--theme-bg', bg);
-      document.documentElement.style.backgroundColor = bg;
+      for (var k in saved.vars) root.style.setProperty(k, saved.vars[k]);
+    } else {
+      bg = {
+        dark: '#050505',
+        legacy: '#111111',
+        light: '#faf9f7',
+        sepia: '#f4ecd8',
+        midnight: '#0a0a14',
+      }[localStorage.getItem('justtype-theme')
+        || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light')];
+      if (bg) root.style.setProperty('--theme-bg', bg);
+    }
+    if (bg) {
+      root.style.backgroundColor = bg;
       var themeMeta = document.querySelector('meta[name="theme-color"]');
       if (themeMeta) themeMeta.setAttribute('content', bg);
     }

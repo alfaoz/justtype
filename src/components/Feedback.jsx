@@ -85,8 +85,7 @@ export function Feedback({ token, username, email }) {
         ) : (
           <>
             <h1 className="text-3xl md:text-4xl text-[var(--theme-accent)] mb-2">{strings.feedback.title}</h1>
-            <p className="text-sm mb-1">{strings.feedback.subtitle(username)}</p>
-            <p className="text-xs text-[var(--theme-text-dim)] mb-8">{strings.feedback.hint}</p>
+            <p className="text-sm mb-8">{strings.feedback.subtitle(username)}</p>
 
             <form onSubmit={handleSubmit}>
               {/* The box is the writing surface, not a boxed-in form field:

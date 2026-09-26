@@ -5,6 +5,11 @@ import { strings } from '../strings';
 import { applyThemeVariables, deviceDefaultTheme } from '../themes';
 import { ErrorPage } from './ErrorPage';
 import { PageHeader } from './PageHeader';
+import { TextMorph } from './TextMorph';
+import { nextPunto, usePunto, setPunto } from '../punto';
+import { SettingsRow, controlLabel } from './SettingsRow';
+import { SecretField } from './SecretField';
+import { keyFromFragment, decryptShare, unwrapWithPassphrase } from '../share';
 
 // Rendered-markdown view for slates written in the rich editor (same lazy chunk as the editor)
 const MarkdownView = React.lazy(() => import('./LivePreviewEditor').then(m => ({ default: m.MarkdownView })));
@@ -15,9 +20,34 @@ export function PublicViewer() {
   const [error, setError] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [theme, setTheme] = useState(localStorage.getItem('justtype-theme') || deviceDefaultTheme());
-  const [punto, setPunto] = useState(localStorage.getItem('justtype-punto') || 'base');
+  const punto = usePunto();
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState('plain'); // 'rich' | 'plain', defaults to the author's editor mode
+  // A private link: ciphertext until the key from the address, or a passphrase, opens it
+  const [sealed, setSealed] = useState(null); // { blob, pass, meta }
+  const [phrase, setPhrase] = useState('');
+  const [phraseError, setPhraseError] = useState('');
+  // Everything the page shows about a private link comes out of the
+  // ciphertext; the counts are made here, there is no view count
+  const openSealed = async (blobAndMeta, key) => {
+    const { title, text, author, updatedAt, editorMode } = await decryptShare(blobAndMeta.blob, key);
+    setSlate({
+      ...blobAndMeta.meta,
+      title: title || 'untitled slate', content: text, author, updated_at: updatedAt, editor_mode: editorMode,
+      word_count: text.trim() ? text.trim().split(/\s+/).length : 0, char_count: text.length, view_count: null,
+    });
+    setSealed(null);
+  };
+  const submitPhrase = async () => {
+    if (!sealed?.pass || phrase.trim().length < 4) return;
+    try {
+      const key = await unwrapWithPassphrase(sealed.pass.wrappedKey, sealed.pass.salt, phrase);
+      await openSealed(sealed, key);
+    } catch {
+      setPhraseError(strings.public.locked.wrong);
+      setPhrase('');
+    }
+  };
 
   useEffect(() => {
     const shareId = window.location.pathname.split('/s/')[1];
@@ -35,7 +65,7 @@ export function PublicViewer() {
         ? `${slate.title.substring(0, maxOgTitleLength)}...`
         : slate.title;
 
-      const description = `slate by ${slate.author}`;
+      const description = slate.author ? `slate by ${slate.author}` : pages.brand;
       const pageTitle = `${ogTitle} · ${pages.brand}`;
       const url = window.location.href;
 
@@ -98,28 +128,12 @@ export function PublicViewer() {
     }
   }, [slate]);
 
-  // Save punto to localStorage
-  useEffect(() => {
-    localStorage.setItem('justtype-punto', punto);
-  }, [punto]);
-
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   const cyclePunto = () => {
-    const sizes = ['small', 'base', 'large'];
-    const currentIndex = sizes.indexOf(punto);
-    const nextIndex = (currentIndex + 1) % sizes.length;
-    setPunto(sizes[nextIndex]);
-  };
-
-  const getPuntoLabel = () => {
-    switch (punto) {
-      case 'small': return 'Aa−';
-      case 'large': return 'Aa+';
-      default: return 'Aa';
-    }
+    setPunto(nextPunto(punto));
   };
 
   const copyContent = async () => {
@@ -136,14 +150,26 @@ export function PublicViewer() {
   const loadPublicSlate = async (shareId) => {
     try {
       const response = await fetch(`${API_URL}/public/slates/${shareId}`);
-      if (!response.ok) {
-        // Pick a random message from the array
+      // One of the not-found lines, at random; also what a private link
+      // without its key gets, so the address says nothing about itself
+      const notFound = () => {
         const messages = strings.slateNotFound.messages;
-        const randomMessage = messages[Math.floor(Math.random() * messages.length)];
-        setErrorMessage(randomMessage);
+        setErrorMessage(messages[Math.floor(Math.random() * messages.length)]);
         throw new Error('Slate not found');
-      }
+      };
+      if (!response.ok) notFound();
       const data = await response.json();
+      if (data.encrypted) {
+        const { blob, pass, ...meta } = data;
+        const key = keyFromFragment();
+        if (key) {
+          try { await openSealed({ blob, meta }, key); return; } catch { /* the address key did not fit */ }
+        }
+        if (!pass) notFound();
+        setSealed({ blob, pass, meta });
+        document.title = pages.home.title; // nothing about the slate until it is opened
+        return;
+      }
       setSlate(data);
     } catch (err) {
       setError(err.message);
@@ -165,6 +191,20 @@ export function PublicViewer() {
     );
   }
 
+  if (sealed && !slate) {
+    return (
+      <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] flex items-center justify-center font-mono px-8">
+        <div className="flex flex-col items-center text-center">
+          <div className="text-sm text-[var(--theme-text)] mb-5">{strings.public.locked.title}</div>
+          <SecretField value={phrase} onChange={(v) => { setPhrase(v); setPhraseError(''); }} grow autoFocus onSubmit={submitPhrase} />
+          <div className="text-xs mt-4 text-[var(--theme-text-dim)]">{strings.public.locked.hint}</div>
+          {phraseError && <div className="text-xs mt-2 text-[var(--theme-red)]">{phraseError}</div>}
+          <button onClick={submitPhrase} disabled={phrase.trim().length < 4} className="mt-6 text-xs text-[var(--theme-text)] hover:opacity-70 transition-opacity disabled:opacity-40">{strings.public.locked.open}</button>
+        </div>
+      </div>
+    );
+  }
+
   if (error || !slate) {
     return (
       <ErrorPage
@@ -176,27 +216,22 @@ export function PublicViewer() {
     );
   }
 
-  // One definition of the reader's controls, rendered twice: inline in the
-  // header on desktop, as a bottom bar on mobile.
-  const controlButtons = [
-    { key: 'theme', label: theme, onClick: toggleTheme },
-    { key: 'punto', label: getPuntoLabel(), onClick: cyclePunto },
-    { key: 'view', label: strings.public.viewMode(viewMode), onClick: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
-    { key: 'copy', label: copied ? strings.public.copied : strings.public.copy, onClick: copyContent },
-  ];
-
-  const controls = (
-    <div className="text-sm flex items-center gap-3">
-      {controlButtons.map((c, i) => (
-        <React.Fragment key={c.key}>
-          {i > 0 && <span className="opacity-30">·</span>}
-          <button onClick={c.onClick} className="opacity-60 hover:opacity-100 transition-opacity">
-            {c.label}
-          </button>
-        </React.Fragment>
-      ))}
-    </div>
-  );
+  // The reader's controls use the writer's settings-row model, so they read
+  // `noun: value` and morph in place the same way. Rendered twice: the row
+  // itself in the header on desktop, a bottom bar on mobile.
+  const readerControls = {
+    device: [
+      { id: 'theme', label: 'theme', kind: 'cycle', value: theme, onCycle: toggleTheme },
+      { id: 'size', label: 'size', kind: 'cycle', value: punto, onCycle: cyclePunto },
+    ],
+    slate: [
+      { id: 'view', label: 'view', kind: 'cycle', value: viewMode, onCycle: () => setViewMode(viewMode === 'rich' ? 'plain' : 'rich') },
+    ],
+    actions: [
+      { id: 'copy', label: copied ? strings.public.copied : strings.public.copy, kind: 'action', onClick: copyContent },
+    ],
+  };
+  const flatControls = [...readerControls.device, ...readerControls.slate, ...readerControls.actions];
 
   return (
     <div className="min-h-screen bg-[var(--theme-bg)] text-[var(--theme-text-muted)] font-mono">
@@ -210,7 +245,7 @@ export function PublicViewer() {
       `}</style>
 
       {/* HEADER */}
-      <PageHeader right={<div className="hidden md:flex">{controls}</div>} />
+      <PageHeader right={<div className="hidden md:flex items-center gap-2"><SettingsRow controls={readerControls} /></div>} />
 
       {/* SLATE CONTENT */}
       <main className="max-w-3xl mx-auto px-6 md:px-8 py-10 md:py-12">
@@ -219,22 +254,26 @@ export function PublicViewer() {
 
           {/* Byline first, on its own line: it is the one fact a reader
               actually looks for. The rest is provenance, kept quieter. */}
-          <div className="text-sm text-[var(--theme-text-muted)] mb-3">
+          {slate.author && <div className="text-sm text-[var(--theme-text-muted)] mb-3">
             {strings.public.byAuthor(slate.author)}
             {slate.supporter_badge_visible && slate.supporter_tier && (
               <span className="text-purple-400 font-medium ml-1.5">
                 [{slate.supporter_tier === 'quarterly' ? 'supporter +' : 'supporter'}]
               </span>
             )}
-          </div>
+          </div>}
 
           <div className="text-xs text-[var(--theme-text-dim)] flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
-            <span className="opacity-40">·</span>
+            {slate.updated_at && <>
+              <span>{strings.public.stats.updated(formatDate(slate.updated_at))}</span>
+              <span className="opacity-40">·</span>
+            </>}
             <span>{strings.public.stats.words(slate.word_count)}</span>
             <span className="opacity-40">·</span>
-            <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
-            <span className="opacity-40">·</span>
+            {slate.view_count != null && <>
+              <span>{slate.view_count || 0} {slate.view_count === 1 ? 'view' : 'views'}</span>
+              <span className="opacity-40">·</span>
+            </>}
             <a
               href={`mailto:hi@alfaoz.dev?subject=Report slate: ${encodeURIComponent(slate.title)}&body=Share ID: ${window.location.pathname.split('/s/')[1]}%0A%0AReason for report:%0A`}
               className="hover:text-[var(--theme-accent)] transition-colors"
@@ -267,13 +306,13 @@ export function PublicViewer() {
       {/* CONTROLS - a real bar on mobile, folded into the header on desktop */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--theme-bg)] border-t border-[var(--theme-border-light)] pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-stretch justify-between px-2 h-12">
-          {controlButtons.map((c) => (
+          {flatControls.map((c) => (
             <button
-              key={c.key}
-              onClick={c.onClick}
+              key={c.id}
+              onClick={(e) => (c.kind === 'action' ? c.onClick?.(e) : c.onCycle?.(e))}
               className="flex-1 min-w-0 text-xs text-[var(--theme-text-muted)] active:text-[var(--theme-accent)] transition-colors px-1 truncate"
             >
-              {c.label}
+              <TextMorph>{controlLabel(c)}</TextMorph>
             </button>
           ))}
         </div>

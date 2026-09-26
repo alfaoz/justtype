@@ -25,6 +25,11 @@
       "title": "command line",
       "description": "justtype for your terminal: write and read slates without leaving the shell."
     },
+    "/mac": {
+      "view": "mac",
+      "title": "mac app",
+      "description": "justtype for mac is coming soon."
+    },
     "/dev": {
       "view": "dev",
       "title": "for developers",

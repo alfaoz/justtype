@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { EditorView, keymap, placeholder, drawSelection } from '@codemirror/view';
+import { EditorView, keymap, placeholder, drawSelection, highlightActiveLine } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
@@ -414,6 +414,7 @@ export default function CollabEditor({
           ...(mode === 'wysiwyg' ? [richMarkdown(), livePreview({ reveal: true })] : []),
           EditorView.lineWrapping,
           indentUnit.of('    '),
+          highlightActiveLine(), // marks the caret's line for line focus (index.css)
           drawSelection(),
           placeholder(strings.writer.contentPlaceholder),
           keymap.of([...(mode === 'wysiwyg' ? markdownKeymap : []), ...yUndoManagerKeymap, ...defaultKeymap, indentWithTab]),

@@ -50,6 +50,27 @@ export const builtInThemes = {
     },
     fonts: defaultFonts
   },
+  ash: {
+    id: 'ash',
+    name: 'ash',
+    colors: {
+      bg: '#19191b',
+      bgSecondary: '#202023',
+      bgTertiary: '#27272b',
+      text: '#d0d0d8',
+      textMuted: '#85858f',
+      textDim: '#54545c',
+      border: '#2c2c31',
+      borderLight: '#242428',
+      accent: '#d0d0d8',
+      // Semantic colors
+      blue: '#4cc9f0',
+      orange: '#f77f00',
+      red: '#e94560',
+      green: '#06d6a0',
+    },
+    fonts: defaultFonts
+  },
   legacy: {
     id: 'legacy',
     name: 'legacy',
@@ -416,15 +437,23 @@ export const removeCustomTheme = (id) => {
 import { API_URL } from './config';
 
 // Fetch preferences from server and merge with local
+// The preferences, fetched once: callers within a few seconds of each
+// other (the session check and the what's-new check at boot) share one
+// request
+let prefsFetch = null;
+export const fetchPreferences = () => {
+  if (prefsFetch && Date.now() - prefsFetch.at < 10000) return prefsFetch.promise;
+  const promise = fetch(`${API_URL}/preferences`, { credentials: 'include' })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  prefsFetch = { at: Date.now(), promise };
+  return promise;
+};
+
 export const fetchAndMergePreferences = async () => {
   try {
-    const res = await fetch(`${API_URL}/preferences`, {
-      credentials: 'include'
-    });
-
-    if (!res.ok) return { success: false };
-
-    const data = await res.json();
+    const data = await fetchPreferences();
+    if (!data) return { success: false };
 
     // Apply server theme if it exists and is valid
     if (data.theme && (data.theme in builtInThemes || (data.customThemes && data.theme in data.customThemes))) {
@@ -528,20 +557,21 @@ export const applyThemeVariables = async (themeId) => {
   const theme = typeof themeId === 'object' && themeId ? themeId : getTheme(themeId);
   const root = document.documentElement;
 
-  // Set color CSS variables
-  root.style.setProperty('--theme-bg', theme.colors.bg);
-  root.style.setProperty('--theme-bg-secondary', theme.colors.bgSecondary);
-  root.style.setProperty('--theme-bg-tertiary', theme.colors.bgTertiary);
-  root.style.setProperty('--theme-text', theme.colors.text);
-  root.style.setProperty('--theme-text-muted', theme.colors.textMuted);
-  root.style.setProperty('--theme-text-dim', theme.colors.textDim);
-  root.style.setProperty('--theme-border', theme.colors.border);
-  root.style.setProperty('--theme-border-light', theme.colors.borderLight);
-  root.style.setProperty('--theme-accent', theme.colors.accent);
-  root.style.setProperty('--theme-blue', theme.colors.blue);
-  root.style.setProperty('--theme-orange', theme.colors.orange);
-  root.style.setProperty('--theme-red', theme.colors.red);
-  root.style.setProperty('--theme-green', theme.colors.green);
+  const vars = {
+    '--theme-bg': theme.colors.bg,
+    '--theme-bg-secondary': theme.colors.bgSecondary,
+    '--theme-bg-tertiary': theme.colors.bgTertiary,
+    '--theme-text': theme.colors.text,
+    '--theme-text-muted': theme.colors.textMuted,
+    '--theme-text-dim': theme.colors.textDim,
+    '--theme-border': theme.colors.border,
+    '--theme-border-light': theme.colors.borderLight,
+    '--theme-accent': theme.colors.accent,
+    '--theme-blue': theme.colors.blue,
+    '--theme-orange': theme.colors.orange,
+    '--theme-red': theme.colors.red,
+    '--theme-green': theme.colors.green,
+  };
 
   // Load and apply fonts
   const fonts = theme.fonts || defaultFonts;
@@ -555,9 +585,13 @@ export const applyThemeVariables = async (themeId) => {
   const codeFont2 = parseFontSpec((theme.fonts || defaultFonts).code);
   const codeFontFamily = codeFont2 ? `'${codeFont2.family}', monospace` : writerFontFamily;
 
-  root.style.setProperty('--theme-font-ui', uiFontFamily);
-  root.style.setProperty('--theme-font-writer', writerFontFamily);
-  root.style.setProperty('--theme-font-code', codeFontFamily);
+  vars['--theme-font-ui'] = uiFontFamily;
+  vars['--theme-font-writer'] = writerFontFamily;
+  vars['--theme-font-code'] = codeFontFamily;
+  for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
+  // The loader paints these before the bundle arrives, so the first frame
+  // is already the theme (a hovered catalog theme is not kept)
+  if (typeof themeId === 'string') { try { localStorage.setItem('justtype-theme-vars', JSON.stringify({ vars })); } catch { /* storage unavailable */ } }
 
   // Keep the browser's own chrome (mobile address bar, overscroll ground)
   // on the theme colour, so nothing white ever peeks around the page.

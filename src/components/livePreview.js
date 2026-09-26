@@ -8,6 +8,7 @@
 // technique used by the established live-preview implementations.
 
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
+import { attachHoverNote } from '../hoverNote';
 import { ViewPlugin } from '@codemirror/view';
 import { StateEffect, StateField } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
@@ -115,12 +116,19 @@ class MathWidget extends WidgetType {
       loadMath(view);
       el.classList.add('cm-lp-math-pending');
       el.textContent = this.source;
-    } else if (!renderMath(el, this.tex, this)) {
-      el.classList.add('cm-lp-math-error');
-      el.textContent = this.source;
+    } else {
+      const error = renderMath(el, this.tex, this);
+      if (error) {
+        // The source stays, dotted; hovering it says what is wrong, and
+        // cmd/ctrl+c while hovering copies that
+        el.classList.add('cm-lp-math-error');
+        el.textContent = this.source;
+        el._hoverOff = attachHoverNote(el, error, { title: strings.writer.math.error, tone: 'danger', copyHint: strings.writer.math.copyHint, copied: strings.writer.math.copied });
+      }
     }
     return el;
   }
+  destroy(dom) { dom._hoverOff?.(); }
   ignoreEvent() { return false; }
 }
 
@@ -144,12 +152,22 @@ class ConflictWidget extends WidgetType {
     };
     const panes = document.createElement('div');
     panes.className = 'cm-lp-conflict-panes';
-    panes.append(pane(t.ours, this.ours), pane(t.theirs, this.theirs));
+    const ourPane = pane(t.ours, this.ours);
+    const theirPane = pane(t.theirs, this.theirs);
+    panes.append(ourPane, theirPane);
     const actions = document.createElement('div');
     actions.className = 'cm-lp-conflict-actions';
-    const choose = (label, text) => {
+    // Hovering a choice lights the pane(s) it keeps and dims the rest
+    const preview = (keeps) => {
+      el.classList.toggle('is-choosing', keeps.length > 0);
+      ourPane.classList.toggle('is-kept', keeps.includes(ourPane));
+      theirPane.classList.toggle('is-kept', keeps.includes(theirPane));
+    };
+    const choose = (label, text, keeps) => {
       const btn = document.createElement('button');
       btn.type = 'button'; btn.className = 'cm-lp-conflict-btn'; btn.textContent = label; btn.cmIgnore = true;
+      btn.onmouseenter = () => preview(keeps);
+      btn.onmouseleave = () => preview([]);
       btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
       btn.onclick = (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -159,9 +177,9 @@ class ConflictWidget extends WidgetType {
       return btn;
     };
     actions.append(
-      choose(t.keepOurs, this.ours),
-      choose(t.keepTheirs, this.theirs),
-      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n')),
+      choose(t.keepOurs, this.ours, [ourPane]),
+      choose(t.keepTheirs, this.theirs, [theirPane]),
+      choose(t.keepBoth, [this.ours, this.theirs].filter(Boolean).join('\n'), [ourPane, theirPane]),
     );
     el.append(panes, actions);
     return el;
