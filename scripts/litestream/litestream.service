@@ -1,0 +1,18 @@
+# Streams the justtype databases to B2 (see README.md next to this file).
+# Install as /etc/systemd/system/litestream.service; it takes the place of
+# the unit the .deb ships. The key lives in /etc/litestream.env, root only.
+[Unit]
+Description=Litestream replication for the justtype databases
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/litestream.env
+ExecStart=/usr/bin/litestream replicate -config /etc/litestream.yml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

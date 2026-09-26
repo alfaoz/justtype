@@ -1,0 +1,33 @@
+# Litestream config for the justtype databases, written for the 0.5 release
+# line (see README.md next to this file for the 0.3 form). Install it as
+# /etc/litestream.yml and put the bucket's name in both replica blocks.
+#
+# The key is not in this file: litestream.service reads it from the
+# root-only /etc/litestream.env, and it is filled in here from there.
+access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+
+# A full snapshot every 24 hours, kept for 7 days: any moment in the last
+# week can be restored from the nearest snapshot plus the changes after it.
+snapshot:
+  interval: 24h
+  retention: 168h
+
+dbs:
+  - path: /root/justtype/data/justtype.db
+    replica:
+      type: s3
+      bucket: justtype-litestream
+      path: prod
+      endpoint: https://s3.eu-central-003.backblazeb2.com
+      region: eu-central-003
+      force-path-style: true
+
+  - path: /root/justtype-beta/data/justtype.db
+    replica:
+      type: s3
+      bucket: justtype-litestream
+      path: beta
+      endpoint: https://s3.eu-central-003.backblazeb2.com
+      region: eu-central-003
+      force-path-style: true
