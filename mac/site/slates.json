@@ -1,0 +1,46 @@
+[
+  {
+    "text": "phase web tracking\n\n- events fire twice on the results page\n- the session id resets when the tab sleeps\n- check if the beacon survives a reload\n\nlook at this before friday.",
+    "age": "3h",
+    "tags": ["phase"]
+  },
+  {
+    "text": "reading list\n\n- the name of the rose\n- a month in the country\n- piranesi (again)\n- stoner",
+    "age": "1d",
+    "pinned": true
+  },
+  {
+    "text": "menemen, properly\n\n4 eggs, 3 tomatoes, 2 green peppers, butter.\npeppers first, tomatoes until they give up, eggs last and barely stirred.\nno onions. this is not a debate.",
+    "age": "2d",
+    "public": true,
+    "tags": ["food"]
+  },
+  {
+    "text": "things to say on monday\n\nthe export bug is fixed.\nask about the server move.\nbook the room for thursday.",
+    "age": "4d"
+  },
+  {
+    "text": "songs for the drive\n\n- sezen aksu, git\n- the national, fake empire\n- barış manço, dönence\n- radiohead, reckoner",
+    "age": "6d",
+    "tags": ["music"]
+  },
+  {
+    "text": "keeper, lighthouse notes\n\nthe fog should roll in from the left.\nthe lamp needs oil every night or the ships drift.\nmaybe a radio that only works at 3am.",
+    "age": "11d",
+    "tags": ["games", "ideas"]
+  },
+  {
+    "text": "physics 2, blackbody\n\nrayleigh-jeans fails at high frequencies.\nplanck: energy comes in steps of hν.\nwien's peak moves left as it cools.",
+    "age": "19d",
+    "tags": ["school"]
+  },
+  {
+    "text": "gift ideas\n\n- a good fountain pen\n- the tea set from kadıköy\n- tickets, anything live",
+    "age": "36d"
+  },
+  {
+    "text": "apartment questions\n\nheating: gas or central?\nhow old is the building?\ncan we paint the walls?",
+    "age": "58d",
+    "tags": ["home"]
+  }
+]

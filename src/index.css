@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* The Mac and iOS apps live beside the site (mac/, ios/): none of their
+   words become the site's classes */
+@source not "../mac";
+@source not "../ios";
 /* IBM Plex Mono is self-hosted (fontsource, latin subset): no third-party
    request for the default face, and the offline shell can cache it */
 @import "@fontsource/ibm-plex-mono/latin-300.css";
