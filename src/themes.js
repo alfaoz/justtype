@@ -552,11 +552,8 @@ export const getExampleThemeJson = () => {
 
 // Apply theme CSS variables to document root
 // This works for both built-in and custom themes
-export const applyThemeVariables = async (themeId) => {
-  // An id from the picker, or a whole theme (a catalog entry on hover)
-  const theme = typeof themeId === 'object' && themeId ? themeId : getTheme(themeId);
-  const root = document.documentElement;
-
+// A theme as the CSS variables the app reads (colours and fonts)
+export const themeVars = (theme) => {
   const vars = {
     '--theme-bg': theme.colors.bg,
     '--theme-bg-secondary': theme.colors.bgSecondary,
@@ -588,6 +585,14 @@ export const applyThemeVariables = async (themeId) => {
   vars['--theme-font-ui'] = uiFontFamily;
   vars['--theme-font-writer'] = writerFontFamily;
   vars['--theme-font-code'] = codeFontFamily;
+  return vars;
+};
+
+export const applyThemeVariables = async (themeId) => {
+  // An id from the picker, or a whole theme (a catalog entry on hover)
+  const theme = typeof themeId === 'object' && themeId ? themeId : getTheme(themeId);
+  const root = document.documentElement;
+  const vars = themeVars(theme);
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
   // The loader paints these before the bundle arrives, so the first frame
   // is already the theme (a hovered catalog theme is not kept)

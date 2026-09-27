@@ -896,6 +896,16 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
+// The Mac app's installer: the release src/macRelease.json names, from
+// downloads/mac on this machine (kept out of git and out of the signed build)
+const macRelease = require('../src/macRelease.json');
+app.get('/mac/download', (req, res) => {
+  const name = `justtype-${macRelease.version}.dmg`;
+  res.download(path.join(__dirname, '..', 'downloads', 'mac', name), name, (err) => {
+    if (err && !res.headersSent) res.status(404).send('not found');
+  });
+});
+
 // Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,

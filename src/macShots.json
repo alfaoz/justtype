@@ -1,0 +1,167 @@
+{
+  "size": {
+    "width": 1280,
+    "height": 800
+  },
+  "first": {
+    "color": "rgb(136, 136, 136)",
+    "count": {
+      "height": 20,
+      "width": 142.03125,
+      "x": 96,
+      "y": 758
+    },
+    "editor": {
+      "height": 682,
+      "width": 768,
+      "x": 256,
+      "y": 53
+    },
+    "fontSize": "14px",
+    "opacity": "0.5"
+  },
+  "second": {
+    "color": "rgb(136, 136, 136)",
+    "count": {
+      "height": 20,
+      "width": 133.625,
+      "x": 96,
+      "y": 758
+    },
+    "editor": {
+      "height": 646,
+      "width": 768,
+      "x": 256,
+      "y": 89
+    },
+    "fontSize": "14px",
+    "opacity": "0.5"
+  },
+  "texts": {
+    "writer": "## next few weeks\n\n- istanbul arası - büyük ev ablukada - 25.09\n- deniz tekin - 02.10\n\n- [ ] fix tracking for phase web\n- [x] ~~release justtype mac~~",
+    "math": "if the speed of light were 'changed' to infinity, the energy would also be infinite. \n\nas seen in planck’s blackbody radiation law, **c** is stated explicitly.\n\n$$\nI(\\nu,T)= \\frac{2h\\nu^3}{c^2}\\frac{1}{e^{h\\nu/kT}-1}\n\\\\\\quad\\\\ \\lim_{c\\to \\infty} \\frac{2h\\nu}{c^2} = 0\n$$\n\nwhich leads in the blackbody radiation not happening at all. since no intensity would form, there would be no blackbody radiation happening.",
+    "saved": "## next few weeks\n\n"
+  },
+  "peeks": [
+    {
+      "state": 167,
+      "src": "peek-167.webp",
+      "x": 285,
+      "y": 185,
+      "width": 98,
+      "height": 73
+    },
+    {
+      "state": 173,
+      "src": "peek-173.webp",
+      "x": 285,
+      "y": 185,
+      "width": 98,
+      "height": 73
+    },
+    {
+      "state": 179,
+      "src": "peek-179.webp",
+      "x": 285,
+      "y": 185,
+      "width": 98,
+      "height": 73
+    },
+    {
+      "state": 185,
+      "src": "peek-185.webp",
+      "x": 285,
+      "y": 166,
+      "width": 195,
+      "height": 92
+    },
+    {
+      "state": 191,
+      "src": "peek-191.webp",
+      "x": 285,
+      "y": 166,
+      "width": 195,
+      "height": 92
+    },
+    {
+      "state": 197,
+      "src": "peek-197.webp",
+      "x": 285,
+      "y": 166,
+      "width": 210,
+      "height": 92
+    },
+    {
+      "state": 203,
+      "src": "peek-203.webp",
+      "x": 285,
+      "y": 166,
+      "width": 226,
+      "height": 92
+    },
+    {
+      "state": 215,
+      "src": "peek-215.webp",
+      "x": 285,
+      "y": 166,
+      "width": 226,
+      "height": 92
+    },
+    {
+      "state": 221,
+      "src": "peek-221.webp",
+      "x": 285,
+      "y": 166,
+      "width": 226,
+      "height": 92
+    },
+    {
+      "state": 227,
+      "src": "peek-227.webp",
+      "x": 285,
+      "y": 166,
+      "width": 226,
+      "height": 92
+    },
+    {
+      "state": 233,
+      "src": "peek-233.webp",
+      "x": 285,
+      "y": 107,
+      "width": 287,
+      "height": 151
+    },
+    {
+      "state": 239,
+      "src": "peek-239.webp",
+      "x": 285,
+      "y": 107,
+      "width": 287,
+      "height": 151
+    },
+    {
+      "state": 245,
+      "src": "peek-245.webp",
+      "x": 285,
+      "y": 107,
+      "width": 287,
+      "height": 151
+    },
+    {
+      "state": 251,
+      "src": "peek-251.webp",
+      "x": 285,
+      "y": 107,
+      "width": 287,
+      "height": 151
+    },
+    {
+      "state": 256,
+      "src": "peek-256.webp",
+      "x": 285,
+      "y": 98,
+      "width": 287,
+      "height": 160
+    }
+  ]
+}

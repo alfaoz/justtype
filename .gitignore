@@ -48,3 +48,6 @@ backups/
 # Incident-recovery working data (encrypted user blobs, manifests)
 recovery/
 *.bak-*
+
+# Installers served by the server (the Mac app's DMG), never in git
+/downloads/
