@@ -1,0 +1,251 @@
+/* /mac (components/MacPage.jsx): dark whatever the visitor's theme, the Mac
+   installer's ground. Loaded with the page only. */
+
+html[data-page="mac"],
+html[data-page="mac"] body {
+  background-color: #050505;
+}
+
+.mac-site {
+  --ink: #ececec;
+  --ink-dim: #707070;
+  --ink-faint: #3a3a3a;
+  min-height: 100vh;
+  background: linear-gradient(#0c0c0c, #050505 70svh);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  overflow-x: clip;
+}
+
+/* The top: the icon, the name, the download */
+.mac-hero {
+  min-height: 78svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 16px 24px;
+  background: radial-gradient(520px 340px at 50% 42%, rgb(255 255 255 / 0.05), transparent 70%);
+}
+.mac-hero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  text-align: center;
+}
+.mac-icon {
+  width: 128px;
+  height: 128px;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.mac-title {
+  margin: 0;
+  font-size: clamp(26px, 4vw, 40px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.mac-get {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.mac-download {
+  padding: 11px 28px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #050505;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+.mac-download:hover { background: #fff; }
+.mac-download:active { transform: scale(0.97); }
+.mac-download:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.mac-meta {
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+@media (min-width: 768px) {
+  .mac-icon { width: 160px; height: 160px; }
+}
+
+/* The scene: the stage stays in place while the section scrolls past it */
+.mac-scene {
+  position: relative;
+  height: 800svh;
+  view-timeline: --mac-scene block;
+}
+.mac-stage {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  perspective: 1800px;
+}
+
+/* The line over the window */
+.mac-built {
+  margin: 0;
+  font-size: clamp(18px, 2.2vw, 24px);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+/* The app's window: its pictures, with the app's own writing over them */
+.mac-shots {
+  --w: min(1080px, 92vw, calc((100svh - 170px) * 1.6));
+  position: relative;
+  width: var(--w);
+  aspect-ratio: 1.6;
+  border-radius: calc(var(--w) * 0.028);
+  box-shadow: 0 50px 120px -30px rgb(0 0 0 / 0.9);
+  transform-origin: 50% 100%;
+  isolation: isolate;
+}
+/* A soft light behind it, so the dark window stands off the dark page */
+.mac-shots::before {
+  content: '';
+  position: absolute;
+  inset: -18% -12%;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgb(255 255 255 / 0.08), transparent);
+  pointer-events: none;
+}
+/* The window at its own size (the pictures' points), scaled from MacPage */
+.mac-app {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: none;
+}
+.mac-app img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+.mac-later {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+/* The writer and the counter, on the theme's ground over the picture's */
+.mac-live {
+  position: absolute;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--theme-bg);
+}
+.mac-count {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  line-height: 20px;
+  white-space: nowrap;
+  font-family: var(--theme-font-ui);
+  background: var(--theme-bg);
+}
+.mac-count > div { display: flex; gap: 16px; }
+/* The app's glass card over the math, in and out as the app moves it */
+.mac-peek {
+  position: absolute;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 0.16s ease-in, transform 0.16s ease-in;
+}
+.mac-peek.is-on {
+  opacity: 1;
+  transform: none;
+  transition: opacity 0.24s cubic-bezier(0.2, 0.9, 0.3, 1), transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+/* The red light closes the window, as the Mac's would, onto what was
+   under it all along */
+.mac-close {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  pointer-events: auto;
+  cursor: default;
+}
+.mac-close:focus-visible { outline: 2px solid var(--theme-text); outline-offset: 1px; }
+.mac-under {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(16px, 2vw, 22px);
+  color: var(--ink-dim);
+}
+.mac-shots { transition: box-shadow 0.3s ease; }
+.mac-shots.is-closed { box-shadow: 0 50px 120px -30px rgb(0 0 0 / 0); }
+.mac-app { transition: opacity 0.2s ease-in, scale 0.2s ease-in; }
+.mac-shots.is-closed .mac-app { opacity: 0; scale: 0.96; pointer-events: none; }
+.mac-shots.is-closed .mac-close { pointer-events: none; }
+
+/* The caret where the writing is, though the page never has the focus */
+.mac-live .cm-cursor { display: block; }
+.mac-live .cm-cursorLayer { animation: steps(1) cm-blink 1.2s infinite; }
+
+/* The end: the download again, and the way home */
+.mac-end {
+  min-height: 70svh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  padding: 80px 16px;
+}
+.mac-home {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+.mac-home:hover { color: var(--ink); }
+
+/* The rise, and the top stepping back as the window arrives: tied to the
+   scroll where the browser can */
+@supports (animation-timeline: view()) {
+  .mac-site:not(.is-still) .mac-shots {
+    animation: mac-rise cubic-bezier(0.2, 0.7, 0.3, 1) both;
+    animation-timeline: --mac-scene;
+    animation-range: entry 0% entry 100%;
+  }
+  .mac-site:not(.is-still) .mac-hero-inner {
+    animation: mac-leave linear both;
+    animation-timeline: scroll(root block);
+    animation-range: 0 60svh;
+  }
+}
+@keyframes mac-rise {
+  from { transform: rotateX(24deg) scale(0.86); opacity: 0.6; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes mac-leave {
+  to { transform: translateY(-48px) scale(0.96); opacity: 0; }
+}
+
+/* Without motion: no pinning, the window as it ends */
+.mac-site.is-still .mac-scene { height: auto; padding: 24px 0 80px; }
+.mac-site.is-still .mac-stage { position: static; height: auto; }
+.mac-site.is-still .mac-shots { --w: min(1080px, 92vw); }
+.mac-site.is-still .mac-later { opacity: 1; }

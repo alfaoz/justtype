@@ -1,0 +1,16 @@
+node_modules/
+build/
+build-device/
+build-release/
+shots/
+www/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/CapApp-SPM/.swiftpm/
+ios/App/CapApp-SPM/.build/
+xcuserdata/
+DerivedData/
+*.xcarchive
+.DS_Store

@@ -1,0 +1,21 @@
+{
+  "appId": "io.justtype.app",
+  "appName": "justtype",
+  "webDir": "www",
+  "backgroundColor": "#050505",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": false,
+    "allowsLinkPreview": false
+  },
+  "server": {
+    "hostname": "justtype.io",
+    "allowNavigation": ["justtype.io", "challenges.cloudflare.com"]
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "CapacitorCookies": { "enabled": true },
+    "Keyboard": { "resize": "none" },
+    "StatusBar": { "style": "DARK", "backgroundColor": "#050505", "overlaysWebView": true }
+  }
+}

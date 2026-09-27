@@ -1,0 +1,19 @@
+{
+  "appId": "io.justtype.app",
+  "appName": "justtype",
+  "webDir": "www",
+  "backgroundColor": "#050505",
+  "ios": {
+    "contentInset": "never",
+    "scrollEnabled": false,
+    "allowsLinkPreview": false
+  },
+  "server": {
+    "url": "https://beta.justtype.io",
+    "allowNavigation": ["beta.justtype.io", "justtype.io", "challenges.cloudflare.com"]
+  },
+  "plugins": {
+    "Keyboard": { "resize": "none" },
+    "StatusBar": { "style": "DARK", "backgroundColor": "#050505", "overlaysWebView": false }
+  }
+}

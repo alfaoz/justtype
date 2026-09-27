@@ -1,0 +1,10 @@
+if the speed of light were 'changed' to infinity, the energy would also be infinite. 
+
+as seen in planck’s blackbody radiation law, **c** is stated explicitly.
+
+$$
+I(\nu,T)= \frac{2h\nu^3}{c^2}\frac{1}{e^{h\nu/kT}-1}
+\\\quad\\ \lim_{c\to \infty} \frac{2h\nu}{c^2} = 0
+$$
+
+which leads in the blackbody radiation not happening at all. since no intensity would form, there would be no blackbody radiation happening.

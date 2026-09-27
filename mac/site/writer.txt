@@ -1,0 +1,8 @@
+## next few weeks
+
+- istanbul arası - büyük ev ablukada - 25.09
+- deniz tekin - 02.10
+
+- [ ] fix tracking for phase web
+- [x] ~~release justtype mac~~
+

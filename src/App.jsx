@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Writer } from './components/Writer';
 import { SlateManager } from './components/SlateManager';
 import { PublicViewer } from './components/PublicViewer';
@@ -15,7 +15,6 @@ import { AuthorizeShare } from './components/AuthorizeShare';
 import { Feedback } from './components/Feedback';
 import { Verify } from './components/Verify';
 import { Status } from './components/Status';
-import { MacSoon } from './components/MacSoon';
 import { WhatsNew } from './components/WhatsNew';
 import { CollabJoin } from './components/CollabJoin';
 import { RecoveryKeyModal } from './components/RecoveryKeyModal';
@@ -38,6 +37,9 @@ import { filesFromDataTransfer, itemsFromFiles, importItems } from './importer';
 import { Ico, PenIcon, SlatesIcon, UserIcon } from './components/icons';
 import { useIcons } from './iconsPref';
 import { useToast } from './components/Toast';
+
+// The Mac app's page, fetched only when someone opens /mac
+const MacPage = lazy(() => import('./components/MacPage'));
 
 // Carries the release it announces, so a future version announces itself by
 // bumping this one constant.
@@ -1160,7 +1162,7 @@ export default function App() {
   }
 
   if (view === 'mac') {
-    return <MacSoon />;
+    return <Suspense fallback={null}><MacPage /></Suspense>;
   }
 
   if (view === 'whats-new') {

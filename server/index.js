@@ -896,6 +896,52 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
+// The Mac app's releases, from downloads/mac on this machine (kept out of
+// git and out of the signed build; mac/release.sh --publish puts them
+// there): latest.json names the newest, appcast.xml is Sparkle's feed, and
+// every DMG keeps its own address for the feed to point at
+const macDir = path.join(__dirname, '..', 'downloads', 'mac');
+const macLatest = () => {
+  try { return JSON.parse(fs.readFileSync(path.join(macDir, 'latest.json'), 'utf8')); } catch { return null; }
+};
+// Downloads are counted by day, kind and build, and nothing about who: the
+// page's download (`download`) or the app fetching its own update through
+// Sparkle (`update`). The admin overview shows them.
+db.exec(`CREATE TABLE IF NOT EXISTS mac_downloads (
+  day TEXT NOT NULL, kind TEXT NOT NULL, build TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, kind, build))`);
+const countMacDownload = db.prepare(`INSERT INTO mac_downloads (day, kind, build, count) VALUES (?, ?, ?, 1)
+  ON CONFLICT(day, kind, build) DO UPDATE SET count = count + 1`);
+app.get(['/mac/download', '/mac/download/:file'], (req, res) => {
+  const file = req.params.file || macLatest()?.file;
+  if (!file || !/^justtype-[\w.-]+\.dmg$/.test(file)) return res.status(404).send('not found');
+  // Saved as justtype-<version>.dmg, without the build it is stored under
+  res.download(path.join(macDir, file), file.replace(/-\d{12}\.dmg$/, '.dmg'), (err) => {
+    if (err) { if (!res.headersSent) res.status(404).send('not found'); return; }
+    // Once per whole download: not a HEAD, not a resumed part, not a link preview
+    const agent = req.get('user-agent') || '';
+    const range = req.get('range');
+    if (req.method !== 'GET' || (range && !/^bytes=0-/.test(range))) return;
+    if (/bot|crawl|spider|preview|facebookexternalhit|slack|discord|whatsapp|telegram/i.test(agent)) return;
+    try {
+      countMacDownload.run(new Date().toISOString().slice(0, 10), /Sparkle\//.test(agent) ? 'update' : 'download',
+        (file.match(/-(\d{12})\.dmg$/) || [])[1] || '-');
+    } catch (e) { console.error('Mac download count error:', e.message); }
+  });
+});
+app.get('/mac/latest.json', (req, res) => {
+  const latest = macLatest();
+  res.set('Cache-Control', 'no-cache');
+  if (!latest) return res.status(404).json({ error: 'not_found' });
+  res.json(latest);
+});
+app.get('/mac/appcast.xml', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(macDir, 'appcast.xml'), (err) => {
+    if (err && !res.headersSent) res.status(404).end();
+  });
+});
+
 // Serve static files from dist directory with cache control
 app.use(express.static(path.join(__dirname, '..', 'dist'), {
   maxAge: 0,
@@ -929,6 +975,9 @@ app.use(express.static(path.join(__dirname, '..', 'dist'), {
 // Helper function to parse device info from user agent
 const parseDevice = (userAgent) => {
   if (!userAgent) return 'Unknown Device';
+
+  // The Mac app names itself in its user agent (mac MainWindow.swift)
+  if (/justtype-mac\//.test(userAgent)) return 'Mac app';
 
   // Mobile
   if (/Mobile|Android|iPhone|iPad|iPod/i.test(userAgent)) {
@@ -1110,7 +1159,9 @@ const authenticateToken = (req, res, next) => {
     // Check if session exists in database and update last activity
     try {
       const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-      const result = db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP WHERE ${SESSION_MATCH}`).run(tokenHash, tokenHash);
+      // A session opened in the Mac app before it had its own label gets it
+      const result = db.prepare(`UPDATE sessions SET last_activity = CURRENT_TIMESTAMP, device = COALESCE(?, device) WHERE ${SESSION_MATCH}`)
+        .run(/justtype-mac\//.test(req.headers['user-agent'] || '') ? 'Mac app' : null, tokenHash, tokenHash);
 
       // If no rows were updated, the session doesn't exist (was deleted)
       if (result.changes === 0) {
@@ -4236,6 +4287,17 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
       GROUP BY u.id ORDER BY slates DESC, last_at DESC LIMIT 30
     `).all();
 
+    // The Mac app: its downloads (counts only, see mac_downloads) and who is
+    // signed in on it, from the device label each session already carries
+    // for the account's own sessions list ("Mac app")
+    const macRows = db.prepare('SELECT kind, day, SUM(count) AS count FROM mac_downloads GROUP BY kind, day').all();
+    const today = new Date().toISOString().slice(0, 10);
+    const macCount = (kind, day) => macRows.filter(r => r.kind === kind && (!day || r.day === day)).reduce((n, r) => n + r.count, 0);
+    const macPeople = db.prepare(`
+      SELECT u.username, MAX(s.last_activity) AS last_activity FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.device = 'Mac app' GROUP BY u.id ORDER BY last_activity DESC
+    `).all();
+
     res.json({
       system: {
         uptime: process.uptime(),
@@ -4264,6 +4326,12 @@ app.get('/api/admin/health', authenticateAdmin, (req, res) => {
         newSlates24h,
         newUsers,
         writers
+      },
+      mac: {
+        downloads: macCount('download'),
+        downloadsToday: macCount('download', today),
+        updates: macCount('update'),
+        people: macPeople.slice(0, 50)
       },
       startup: global.startupHealth || null,
       timestamp: new Date().toISOString()

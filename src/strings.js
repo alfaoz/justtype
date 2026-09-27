@@ -1282,10 +1282,16 @@ take care!
     github: 'github'
   },
 
-  // /mac, until the Mac app ships
+  // /mac, the Mac app's page (MacPage.jsx)
   mac: {
     icon: 'justtype for mac',
-    soon: 'coming soon',
+    title: 'justtype for mac',
+    built: 'built for mac.',
+    // Under the window, found by closing it with its red light
+    egg: 'lmao',
+    close: 'close the window',
+    download: 'download',
+    meta: (version, size, system) => `${version} · ${size} · macOS ${system} or later`,
   },
 
   status: {

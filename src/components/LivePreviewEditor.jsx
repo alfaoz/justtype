@@ -142,8 +142,13 @@ const LivePreviewEditor = forwardRef(function LivePreviewEditor({ content, onCha
       lastContentRef.current = next;
       const sel = nextSelRef.current;
       nextSelRef.current = null;
+      // Only what differs after the text both share is replaced, so the
+      // lines before it (and their rendered math) stay as they are
+      const prev = view.state.doc.toString();
+      let from = 0;
+      while (from < prev.length && from < next.length && prev.charCodeAt(from) === next.charCodeAt(from)) from += 1;
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: next },
+        changes: { from, to: prev.length, insert: next.slice(from) },
         selection: clampSel(sel, next.length),
       });
     }
