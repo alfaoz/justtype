@@ -43,11 +43,21 @@ const smooth = ([a, b], v) => {
 const step = ([a, b], v, count) => Math.round(clamp((v - a) / (b - a)) * (count - 1));
 const words = (text) => (text.trim() === '' ? 0 : text.trim().split(/\s+/).length);
 
-function Download() {
+// The newest release: as this build knew it, then as the server says
+// (mac/release.sh --publish puts it there, with no site release needed)
+function useRelease() {
+  const [latest, setLatest] = useState(release);
+  useEffect(() => {
+    fetch('/mac/latest.json').then((r) => (r.ok ? r.json() : null)).then((j) => { if (j?.version) setLatest(j); }).catch(() => {});
+  }, []);
+  return latest;
+}
+
+function Download({ release }) {
   const megabytes = `${(release.bytes / 1e6).toFixed(1)} MB`;
   return (
     <div className="mac-get">
-      <a className="mac-download" href={release.href}>{strings.mac.download}</a>
+      <a className="mac-download" href="/mac/download">{strings.mac.download}</a>
       <span className="mac-meta">{strings.mac.meta(release.version, megabytes, release.system)}</span>
     </div>
   );
@@ -113,6 +123,7 @@ export default function MacPage() {
   }, []);
   const [written, setWritten] = useState(() => (still ? typing.map((states) => states.length - 1) : [0, 0]));
   const [closed, setClosed] = useState(false);
+  const latest = useRelease();
 
   // The page's own ground, under the overscroll too
   useEffect(() => {
@@ -178,7 +189,7 @@ export default function MacPage() {
             className="mac-icon"
           />
           <h1 className="mac-title">{strings.mac.title}</h1>
-          <Download />
+          <Download release={latest} />
         </div>
       </header>
 
@@ -213,7 +224,7 @@ export default function MacPage() {
       </section>
 
       <footer className="mac-end">
-        <Download />
+        <Download release={latest} />
         <a className="mac-home" href="/">{strings.app.logo}</a>
       </footer>
     </div>

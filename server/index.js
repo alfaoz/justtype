@@ -896,13 +896,32 @@ if (fs.existsSync(adminDistPath)) {
   });
 }
 
-// The Mac app's installer: the release src/macRelease.json names, from
-// downloads/mac on this machine (kept out of git and out of the signed build)
-const macRelease = require('../src/macRelease.json');
-app.get('/mac/download', (req, res) => {
-  const name = `justtype-${macRelease.version}.dmg`;
-  res.download(path.join(__dirname, '..', 'downloads', 'mac', name), name, (err) => {
+// The Mac app's releases, from downloads/mac on this machine (kept out of
+// git and out of the signed build; mac/release.sh --publish puts them
+// there): latest.json names the newest, appcast.xml is Sparkle's feed, and
+// every DMG keeps its own address for the feed to point at
+const macDir = path.join(__dirname, '..', 'downloads', 'mac');
+const macLatest = () => {
+  try { return JSON.parse(fs.readFileSync(path.join(macDir, 'latest.json'), 'utf8')); } catch { return null; }
+};
+app.get(['/mac/download', '/mac/download/:file'], (req, res) => {
+  const file = req.params.file || macLatest()?.file;
+  if (!file || !/^justtype-[\w.-]+\.dmg$/.test(file)) return res.status(404).send('not found');
+  // Saved as justtype-<version>.dmg, without the build it is stored under
+  res.download(path.join(macDir, file), file.replace(/-\d{12}\.dmg$/, '.dmg'), (err) => {
     if (err && !res.headersSent) res.status(404).send('not found');
+  });
+});
+app.get('/mac/latest.json', (req, res) => {
+  const latest = macLatest();
+  res.set('Cache-Control', 'no-cache');
+  if (!latest) return res.status(404).json({ error: 'not_found' });
+  res.json(latest);
+});
+app.get('/mac/appcast.xml', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(macDir, 'appcast.xml'), (err) => {
+    if (err && !res.headersSent) res.status(404).end();
   });
 });
 
