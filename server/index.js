@@ -6472,6 +6472,20 @@ runCleanup();
 // Run cleanup every hour
 setInterval(runCleanup, 60 * 60 * 1000);
 
+// The daily admin secret rotation rewrites ADMIN_SECRET in .env and sends
+// SIGHUP. It used to restart the whole app
+// to pick it up: a few seconds of 502s every morning and every collab
+// socket dropped. Only that one value is re-read.
+process.on('SIGHUP', () => {
+  try {
+    const parsed = require('dotenv').parse(fs.readFileSync(path.join(__dirname, '..', '.env')));
+    if (parsed.ADMIN_SECRET) process.env.ADMIN_SECRET = parsed.ADMIN_SECRET;
+    console.log('✓ Admin secret reloaded');
+  } catch (err) {
+    console.error('Admin secret reload failed:', err.message);
+  }
+});
+
 // Run startup health checks and start server
 (async () => {
   try {
