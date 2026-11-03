@@ -1,6 +1,5 @@
 # Shared by the ops scripts that run from root's cron (disk-alert.sh,
-# restore-drill.sh, admin-token-rotator.sh). Sourced, not run; the caller
-# sets APP_DIR first. POSIX sh, so both sh and bash scripts can use it.
+# restore-drill.sh). Sourced, not run; the caller sets APP_DIR first. POSIX sh, so both sh and bash scripts can use it.
 
 # env_get KEY [FILE]: one value out of a dotenv file (the app's .env by
 # default). The file is read, never sourced: a value holding a $ (the admin

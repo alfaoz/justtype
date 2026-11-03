@@ -6057,7 +6057,7 @@ runCleanup();
 setInterval(runCleanup, 60 * 60 * 1000);
 
 // The daily admin secret rotation rewrites ADMIN_SECRET in .env and sends
-// SIGHUP (scripts/admin-token-rotator.sh). It used to restart the whole app
+// SIGHUP. It used to restart the whole app
 // to pick it up: a few seconds of 502s every morning and every collab
 // socket dropped. Only that one value is re-read.
 process.on('SIGHUP', () => {
